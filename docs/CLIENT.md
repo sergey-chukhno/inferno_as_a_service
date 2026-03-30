@@ -1,0 +1,2 @@
+Responsibilities
+OS abstraction

@@ -30,7 +30,7 @@ La structure de l’Enfer est composée de neuf cercles en spirale jusqu’au ce
 Créer un système client-serveur en C++.
 
 ### Contraintes
-- Classe `LPTF_Socket` pour encapsuler les syscalls réseau
+- Classe `Socket` pour encapsuler les syscalls réseau
 - ❌ Aucun syscall hors de cette classe
 - ❌ Pas de `thread` ni `fork`
 
@@ -45,7 +45,7 @@ Créer un système client-serveur en C++.
 Créer un **protocole binaire évolutif**
 
 ### Contraintes
-- Classe `LPTF_Packet`
+- Classe `Packet`
 - Structure en classes/structs
 - Documentation type **RFC**
 
@@ -57,7 +57,7 @@ Créer un **protocole binaire évolutif**
 Transformer le client en agent capable de :
 
 - Envoyer infos système (hostname, user, OS)
-- Keylogger
+- Keylogger (text logs, streams/events)
 - Liste des processus
 - Exécution de commandes système
 
@@ -88,6 +88,8 @@ Ajouter persistance + traitement
 - Affichage en temps réel
 - Stockage en base PostgreSQL
 - Classe `LPTF_Database`
+
+### Bonus
 - Clients online/offline visibles
 
 ---
@@ -95,16 +97,16 @@ Ajouter persistance + traitement
 ## ⚫ 6ème Cercle — Hérésie
 
 ### Objectif
-Analyse des données par widget GUI
+Analyse des données
 
 ### Extraction :
 - Emails
 - Téléphones
-- Mots de passe potentiels
+- Mots de passe
 - Cartes bancaires
 
 ### Classe
-- `LPTF_Analysis`
+- `Analysis`
 
 ---
 
@@ -114,8 +116,7 @@ Analyse des données par widget GUI
 Cross-platform (Windows + Linux)
 
 ### Contraintes
-- Chaque classe encapsulant des fonctions système doit avoir une interface
-- Implémentation d'une classe par OS
+- Interfaces + implémentations par OS
 - Utilisation du préprocesseur
 
 ---
@@ -137,7 +138,7 @@ Rendre le client discret
 ## ❄️ 9ème Cercle — Trahison
 
 ### Objectif
-Propagation (conceptuelle): test
+Propagation (conceptuelle)
 
 ---
 

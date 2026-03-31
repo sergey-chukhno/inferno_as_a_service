@@ -1,0 +1,61 @@
+# ==========================================
+# 9 Cercles de l'Enfer - .gitignore
+# ==========================================
+
+# 1. Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# 2. Precompiled Headers
+*.gch
+*.pch
+
+# 3. Compiled Dynamic & Static Libraries
+*.so
+*.dylib
+*.dll
+*.lai
+*.la
+*.a
+*.lib
+
+# 4. Executables & Build Directories
+*.exe
+*.out
+*.app
+build/
+bin/
+out/
+Release/
+Debug/
+cmake-build-*/
+CMakeCache.txt
+CMakeFiles/
+
+# 5. Qt Specific
+CMakeLists.txt.user
+*.pro.user
+*.pro.user.*
+moc_*.cpp
+moc_*.h
+qrc_*.cpp
+ui_*.h
+Makefile
+Makefile.*
+
+# 6. IDEs & OS Files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.vs/
+
+# ==========================================
+# 7. Project Security Constraints
+# ==========================================
+rules.md
+PROJECT.md

@@ -1,0 +1,43 @@
+graph LR
+    %% Theming Strategy (Modern Dark / Catppuccin)
+    classDef default fill:#1E1E2E,stroke:#45475A,stroke-width:2px,color:#CDD6F4,rx:8px,ry:8px;
+    classDef core fill:#89B4FA,stroke:#11111B,stroke-width:2px,color:#11111B;
+    classDef db fill:#F9E2AF,stroke:#11111B,stroke-width:2px,color:#11111B;
+    classDef ui fill:#A6E3A1,stroke:#11111B,stroke-width:2px,color:#11111B;
+    
+    %% Nodes
+    subgraph Operator_Space [Command Center]
+        UI[Qt Dashboard UI]:::ui
+    end
+
+    subgraph C2_Infrastructure [C2 Server Infrastructure]
+        Dispatcher[Command Dispatcher]:::core
+        DB[(PostgreSQL)]:::db
+        EventLoop[Single-Threaded Event Loop]
+    end
+
+    subgraph Transport_Layer [Network Boundary]
+        TCP{{TCP/IP Transport Streams}}
+    end
+
+    subgraph Target_Machine [Compromised Target Agent]
+        Client[Client Agent]:::core
+        Keylogger[Keylogger]
+        Shell[Remote Shell]
+        Streams[Media Streams]
+    end
+
+    %% Link styles
+    linkStyle default stroke:#CBA6F7,stroke-width:2px,fill:none;
+
+    %% Data Flow Routing (Left to Right)
+    UI <-->|Configuration & View| Dispatcher
+    Dispatcher <-->|Queries| DB
+    Dispatcher <-->|Binary Protocol| EventLoop
+    
+    EventLoop <--> TCP
+    TCP <--> Client
+    
+    Client --- Keylogger
+    Client --- Shell
+    Client --- Streaming

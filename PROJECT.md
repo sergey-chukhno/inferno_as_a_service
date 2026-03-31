@@ -88,8 +88,6 @@ Ajouter persistance + traitement
 - Affichage en temps réel
 - Stockage en base PostgreSQL
 - Classe `LPTF_Database`
-
-### Bonus
 - Clients online/offline visibles
 
 ---
@@ -97,12 +95,12 @@ Ajouter persistance + traitement
 ## ⚫ 6ème Cercle — Hérésie
 
 ### Objectif
-Analyse des données
+Analyse des données par widget GUI
 
 ### Extraction :
 - Emails
 - Téléphones
-- Mots de passe
+- Mots de passe potentiels
 - Cartes bancaires
 
 ### Classe
@@ -116,7 +114,8 @@ Analyse des données
 Cross-platform (Windows + Linux)
 
 ### Contraintes
-- Interfaces + implémentations par OS
+- Chaque classe encapsulant des fonctions système doit avoir une interface
+- Implémentation d'une classe par OS
 - Utilisation du préprocesseur
 
 ---
@@ -138,7 +137,7 @@ Rendre le client discret
 ## ❄️ 9ème Cercle — Trahison
 
 ### Objectif
-Propagation (conceptuelle)
+Propagation (conceptuelle): test
 
 ---
 

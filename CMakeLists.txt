@@ -14,6 +14,7 @@ add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 # ==========================================
 add_library(inferno_common STATIC
     common/src/Socket.cpp
+    common/src/Packet.cpp
 )
 target_include_directories(inferno_common PUBLIC common/include)
 
@@ -42,6 +43,7 @@ add_executable(inferno_tests
     tests/main_test.cpp
     tests/socket_test.cpp
     tests/server_test.cpp
+    tests/packet_test.cpp
     server/src/server.cpp
 )
 target_link_libraries(inferno_tests PRIVATE inferno_common)

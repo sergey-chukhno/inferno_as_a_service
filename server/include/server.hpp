@@ -8,8 +8,8 @@ namespace inferno {
 
 class Server {
 private:
-    Socket              m_listen_socket; // Socket d'écoute principal
-    std::vector<Socket> m_clients;       // Clients connectés
+    Socket              m_listen_socket; 
+    std::vector<Socket> m_clients;       
     uint16_t            m_port;
     bool                m_running;
 
@@ -23,7 +23,7 @@ public:
 
     // Core
     bool start();  // bind + listen
-    void run();    // boucle select()
+    void run();    // select() loop
     void stop();
 
     // Getters

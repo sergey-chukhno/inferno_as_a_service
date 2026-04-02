@@ -1,0 +1,36 @@
+name: Inferno TDD Pipeline
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-and-test:
+    strategy:
+      matrix:  
+        os: [ubuntu-latest, macos-latest]
+        
+    runs-on: ${{ matrix.os }}
+    
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+    
+    - name: Install Dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: brew install ninja cmake
+
+    - name: Install Dependencies (Linux/WSL)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y ninja-build cmake
+
+    - name: Configure CMake
+      run: cmake -B build -S . -G Ninja
+      
+    - name: Native Build
+      run: ninja -C build
+      
+    - name: Execute Native Assertions
+      run: ./build/inferno_tests

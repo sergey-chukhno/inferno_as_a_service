@@ -172,4 +172,12 @@ bool Socket::isValid() const {
     return m_socket_fd != -1;
 }
 
+std::string Socket::getIp() const {
+    return m_ip;
+}
+
+uint16_t Socket::getPort() const {
+    return m_port;
+}
+
 } // namespace inferno

@@ -22,6 +22,7 @@ target_include_directories(inferno_common PUBLIC common/include)
 # ==========================================
 add_executable(inferno_server
     server/src/main.cpp
+    server/src/server.cpp
 )
 target_link_libraries(inferno_server PRIVATE inferno_common)
 

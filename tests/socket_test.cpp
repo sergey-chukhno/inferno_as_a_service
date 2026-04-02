@@ -27,12 +27,4 @@ void test_end_to_end_connection() {
 // We have not implemented a test for sendData and receiveData. 
 // - sendData / receiveData buffer allocations
 
-int main() {
-    std::cout << "\n=== Inferno TDD Suite ===" << std::endl;
-    
-    // Execute all test functions here
-    test_socket_creation();
-    test_end_to_end_connection();
-    std::cout << "=========================\n" << std::endl;
-    return 0;
-}
+

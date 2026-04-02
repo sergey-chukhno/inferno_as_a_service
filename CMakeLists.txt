@@ -39,7 +39,10 @@ target_link_libraries(inferno_client PRIVATE inferno_common)
 # ==========================================
 enable_testing()
 add_executable(inferno_tests
+    tests/main_test.cpp
     tests/socket_test.cpp
+    tests/server_test.cpp
+    server/src/server.cpp
 )
 target_link_libraries(inferno_tests PRIVATE inferno_common)
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)

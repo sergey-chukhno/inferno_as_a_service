@@ -2,6 +2,8 @@
 #include <iostream>
 #include <cassert>
 #include <string>
+#include <cstring>
+#include <arpa/inet.h>
 
 using namespace inferno;
 

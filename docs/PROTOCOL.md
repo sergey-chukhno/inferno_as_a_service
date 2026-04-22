@@ -33,3 +33,7 @@ struct PacketHeader {
 
 ## 4. Endianness
 All multi-byte integers (`uint16_t`, `uint32_t`) MUST be transmitted in Network Byte Order (Big-Endian). Implementations MUST use `htonl()`/`ntohl()` and `htons()`/`ntohs()`.
+
+## 5. Security Constraints
+- **MAX_PAYLOAD_SIZE**: 10,485,760 bytes (10MB). Any packet with a `payload_size` exceeding this limit MUST be rejected to prevent memory exhaustion (OOM) attacks.
+- **Magic Validation**: Deserializers MUST verify the `magic` value (0xDEADBEEF) before allocating any memory for the payload.

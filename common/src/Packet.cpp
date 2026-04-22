@@ -2,6 +2,7 @@
 #include <cstring> // For std::memcpy
 #include <optional>
 #include <vector>
+#include <arpa/inet.h> // For htonl, htons, ntohl, ntohs
 
 namespace inferno {
 
@@ -65,7 +66,13 @@ std::vector<uint8_t> Packet::serialize() const {
     std::vector<uint8_t> buffer;
     buffer.reserve(sizeof(PacketHeader) + m_payload.size());
     
-    const uint8_t* header_ptr = reinterpret_cast<const uint8_t*>(&m_header);
+    PacketHeader network_header = m_header;
+    network_header.magic        = htonl(m_header.magic);
+    network_header.opcode       = htons(m_header.opcode);
+    network_header.payload_size = htonl(m_header.payload_size);
+    network_header.checksum     = htonl(m_header.checksum);
+
+    const uint8_t* header_ptr = reinterpret_cast<const uint8_t*>(&network_header);
     buffer.insert(buffer.end(), header_ptr, header_ptr + sizeof(PacketHeader));
     buffer.insert(buffer.end(), m_payload.begin(), m_payload.end());
     return buffer;
@@ -78,19 +85,35 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data) 
     if (raw_data.size() < sizeof(PacketHeader)) {
         return std::nullopt;            
     }
+
     PacketHeader header;
     std::memcpy(&header, raw_data.data(), sizeof(PacketHeader));
+
+    // Convert from Network Byte Order to Host Byte Order
+    header.magic        = ntohl(header.magic);
+    header.opcode       = ntohs(header.opcode);
+    header.payload_size = ntohl(header.payload_size);
+    header.checksum     = ntohl(header.checksum);
+
     if (header.magic != 0xDEADBEEF) {
         return std::nullopt;
     }
+
+    if (header.payload_size > MAX_PAYLOAD_SIZE) {
+        return std::nullopt; // Protect against OOM attacks
+    }
+
     if (raw_data.size() < sizeof(PacketHeader) + header.payload_size) {
         return std::nullopt;
     }
-    std::vector<uint8_t> payload(raw_data.begin() + sizeof(PacketHeader), raw_data.begin() + sizeof(PacketHeader) + header.payload_size);
+
+    std::vector<uint8_t> payload(raw_data.begin() + sizeof(PacketHeader), 
+                                 raw_data.begin() + sizeof(PacketHeader) + header.payload_size);
 
     if (header.checksum != compute_crc32(payload.data(), payload.size())) {
         return std::nullopt;
     }
+
     return Packet(header, payload);
 }
 

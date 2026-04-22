@@ -9,8 +9,10 @@ extern void test_server_constructors();
 extern void test_server_start();
 
 // External packet tests
-extern void test_packet_serialization();
 extern void test_packet_deserialization();
+extern void test_packet_endianness();
+extern void test_packet_size_limit();
+extern void test_fragmented_deserialization();
 
 int main() {
     std::cout << "\n=== Inferno TDD Suite ===" << std::endl;
@@ -20,8 +22,10 @@ int main() {
     test_end_to_end_connection();
     test_server_constructors();
     test_server_start();
-    test_packet_serialization();
     test_packet_deserialization();
+    test_packet_endianness();
+    test_packet_size_limit();
+    test_fragmented_deserialization();
     
     std::cout << "=========================\n" << std::endl;
     return 0;

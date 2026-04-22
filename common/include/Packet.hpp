@@ -21,6 +21,9 @@ struct PacketHeader {
 #pragma pack(pop)
 
 class Packet {
+public:
+    static constexpr size_t MAX_PAYLOAD_SIZE = 10 * 1024 * 1024; // 10MB limit
+
 private:
     PacketHeader m_header;
     std::vector<uint8_t> m_payload;

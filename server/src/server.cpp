@@ -1,6 +1,7 @@
 #include "../include/server.hpp"
 #include <iostream>
 #include <algorithm> // To use std::remove_if
+#include "../../common/include/Packet.hpp"
 
 namespace inferno {
 
@@ -29,7 +30,7 @@ bool Server::start() {
     }
 
     m_running = true;
-    std::cout << "[Server] Listening on port " << m_port << "\n";
+    std::cout << "[Server] Listening on port " << m_port << std::endl;
     return true;
 }
 
@@ -54,17 +55,14 @@ void Server::run() {
 
         // Add all connected clients to the set
         for (const auto& client : m_clients) {
-            FD_SET(client.getFd(), &read_fds);
-            if (client.getFd() > max_fd)
-                max_fd = client.getFd();
+            FD_SET(client.socket.getFd(), &read_fds);
+            if (client.socket.getFd() > max_fd)
+                max_fd = client.socket.getFd();
         }
 
         // Call select()
-        // select() blocks until at least one fd is ready to read.
-        // Arguments: max_fd + 1, fd_set read, fd_set write, fd_set error, timeout
-        // We pass nullptr for write/error and timeout for 1 second to avoid blocking indefinitely.
         struct timeval timeout;
-        timeout.tv_sec = 1;
+        timeout.tv_sec  = 1;
         timeout.tv_usec = 0;
 
         int activity = ::select(max_fd + 1, &read_fds, nullptr, nullptr, &timeout);
@@ -74,51 +72,48 @@ void Server::run() {
             break;
         }
 
-        // For new client connection
-        // FD_ISSET checks if a specific fd is "ready" in the fd_set.
-
+        // New client connection
         if (FD_ISSET(m_listen_socket.getFd(), &read_fds)) {
-            auto new_client = m_listen_socket.acceptNode();
-            if (new_client.has_value()) {
-                std::cout << "[Server] New client connected: "
-                          << new_client->getIp() << ":"
-                          << new_client->getPort() << "\n";
-                m_clients.push_back(std::move(*new_client));
+            auto new_socket = m_listen_socket.acceptNode();
+            if (new_socket.has_value()) {
+                std::cout << "[Server] New agent connected: "
+                          << new_socket->getIp() << ":"
+                          << new_socket->getPort() << std::endl;
+                
+                // Immediately request system info (Phase 3 requirement)
+                Packet req(static_cast<uint16_t>(Opcode::SYS_REQ_INFO), "");
+                std::vector<uint8_t> data = req.serialize();
+                new_socket->sendData(data);
+
+                m_clients.push_back({std::move(*new_socket), {}});
             }
         }
 
-        // For existing client data
-        // We iterate over the clients and check each one.
-        // We collect the disconnected fds to remove them after the iteration.
-
+        // Existing client data
         std::vector<int> to_remove;
-
         for (auto& client : m_clients) {
-            if (FD_ISSET(client.getFd(), &read_fds)) {
-                std::vector<uint8_t> buffer;
-                ssize_t bytes = client.receiveData(buffer, 4096);
+            if (FD_ISSET(client.socket.getFd(), &read_fds)) {
+                std::vector<uint8_t> raw_chunk;
+                ssize_t bytes = client.socket.receiveData(raw_chunk, 4096);
 
                 if (bytes <= 0) {
-                    // 0 = clean disconnect, <0 = error
-                    std::cout << "[Server] Client " << client.getIp() << " disconnected\n";
-                    to_remove.push_back(client.getFd());
+                    std::cout << "[Server] Agent " << client.socket.getIp() << " disconnected" << std::endl;
+                    to_remove.push_back(client.socket.getFd());
                 } else {
-                    // For now: display what we receive (debug)
-                    std::string msg(buffer.begin(), buffer.end());
-                    std::cout << "[Server] Received from " << client.getIp()
-                              << ": " << msg << "\n";
+                    // Accumulate data
+                    client.buffer.insert(client.buffer.end(), raw_chunk.begin(), raw_chunk.end());
+                    
+                    // Option B: Offload processing to a dedicated method
+                    processPacketBuffer(client);
                 }
             }
         }
 
         // Clean up disconnected clients
-        // We remove the sockets whose fd is in to_remove from the vector.
-        // The Socket is destroyed → its destructor closes the fd automatically.
-
         m_clients.erase(
             std::remove_if(m_clients.begin(), m_clients.end(),
-                [&to_remove](const Socket& s) {
-                    return std::find(to_remove.begin(), to_remove.end(), s.getFd())
+                [&to_remove](const ClientContext& ctx) {
+                    return std::find(to_remove.begin(), to_remove.end(), ctx.socket.getFd())
                            != to_remove.end();
                 }),
             m_clients.end()
@@ -129,12 +124,38 @@ void Server::run() {
 void Server::stop() {
     m_running = false;
     m_clients.clear(); 
-    // m_listen_socket is destroyed by its own destructor
 }
 
 // Getters
 
 bool     Server::isRunning() const { return m_running; }
 uint16_t Server::getPort()   const { return m_port; }
+
+// Static Protocol Helper (Option B)
+void Server::processPacketBuffer(ClientContext& client) {
+    while (true) {
+        auto packet_opt = ::inferno::Packet::deserialize(client.buffer);
+        if (!packet_opt.has_value()) {
+            break; // Not enough data for a full packet yet
+        }
+
+        // Dispatch Packet
+        uint16_t opcode = packet_opt->getOpcode();
+        const auto& payload = packet_opt->getPayload();
+        std::string payload_str(payload.begin(), payload.end());
+
+        if (opcode == static_cast<uint16_t>(Opcode::SYS_RES_INFO)) {
+            std::cout << "[Server] [INFO] Agent " << client.socket.getIp() 
+                      << " Specs: " << payload_str << std::endl;
+        } else {
+            std::cout << "[Server] Received Opcode " << opcode 
+                      << " from " << client.socket.getIp() << std::endl;
+        }
+
+        // Remove processed bytes from the buffer
+        size_t packet_size = sizeof(PacketHeader) + payload.size();
+        client.buffer.erase(client.buffer.begin(), client.buffer.begin() + packet_size);
+    }
+}
 
 } // namespace inferno

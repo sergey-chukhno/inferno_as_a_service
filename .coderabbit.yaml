@@ -1,0 +1,26 @@
+# .coderabbit.yaml
+language: "en-UK"
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  review_status: true
+  collapse_walkthrough: false
+  auto_review:
+    enabled: true
+    drafts: false
+chat:
+  auto_reply: true
+instructions: >
+  Act as a strict Senior C++ Engineer reviewing code for the '9 Cercles de l'Enfer' client-server project.
+  Enforce the following project architecture and constraints strictly:
+  1. ALL networking syscalls MUST be encapsulated within the `Socket` class. Flag any raw syscalls.
+  2. Classes MUST respect the Coplien canonical form (Rule of 3 / Rule of 5).
+  3. Variables MUST remain `const` unless state mutation is rigorously justified.
+  4. NO global variables are allowed. Period.
+  5. Object attributes MUST be private, accessed only via getters/setters.
+  6. Memory MUST be managed exclusively via smart pointers (std::unique_ptr, std::shared_ptr). No raw deletes.
+  7. Protocol schemas (like `Packet` class) MUST be binary and structured.
+  8. Do not suggest multithreading (`std::thread`) or forking (`fork`) as they are explicitly forbidden in this phase.
+  9. Code must be warning-free. Look for implicit conversions or shadow variables.

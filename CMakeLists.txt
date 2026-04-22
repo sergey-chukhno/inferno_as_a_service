@@ -32,6 +32,7 @@ target_link_libraries(inferno_server PRIVATE inferno_common)
 # ==========================================
 add_executable(inferno_client
     client/src/main.cpp
+    client/src/Agent.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 

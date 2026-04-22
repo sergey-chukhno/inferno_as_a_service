@@ -13,10 +13,13 @@ The server operates on a strictly **Single-Threaded Event Loop** architecture to
 ## 2. State Management
 TCP does not guarantee discrete packets; it is a stream. The Server implements a finite state machine (FSM) per client socket to handle partial reads.
 
-### 2.1 The Read State Machine
-1. **STATE_READ_HEADER**: Read `sizeof(PacketHeader)` bytes. Once fully read, parse the `payload_size`. Transition to payload state.
-2. **STATE_READ_PAYLOAD**: Allocate a buffer of `payload_size`. Read incoming bytes until the buffer is full. 
-3. **STATE_DISPATCH**: Verify `checksum`. Pass the complete `Packet` to the Command Dispatcher. Reset to `STATE_READ_HEADER`.
+### 2.1 The Read State Machine (Sliding Buffer Pattern)
+The Server maintains a dedicated `std::vector<uint8_t>` accumulator for each connected client.
+1. **Accumulation**: Incoming TCP bytes are appended to the client's buffer.
+2. **Deserialization**: `Packet::deserialize()` is called on the buffer. It returns `nullopt` if the buffer contains less than `sizeof(PacketHeader)` or if the `payload_size` hasn't fully arrived.
+3. **Dispatch**: Once a full packet is identified, it is passed to `processPacketBuffer()`.
+4. **Sliding**: The processed bytes are removed from the beginning of the buffer using `vector::erase()`.
+5. **Iteration**: The loop repeats until no more complete packets remain in the buffer.
 
 ## 3. Component Interaction
 - **Network Layer**: `Socket` reads raw bytes.

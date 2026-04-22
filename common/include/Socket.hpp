@@ -45,7 +45,8 @@ public:
     bool                  bindNode(const std::string& ip, uint16_t port);
     bool                  listen(int backlog = SOMAXCONN);
     bool                  connectTo(const std::string& ip, uint16_t port);
-    std::optional<Socket> acceptNode(); // Returns a new Socket via move semantics
+    std::optional<Socket> acceptNode();
+    // Returns a new Socket via move semantics
 
     // I/O Operations
     ssize_t sendData(const std::vector<uint8_t>& data) const;

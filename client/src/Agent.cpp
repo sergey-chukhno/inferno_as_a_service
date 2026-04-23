@@ -116,46 +116,44 @@ void Agent::handleDispatching(Packet&& packet) {
 }
 
 void Agent::handleProcessDiscovery() {
-    auto list = m_profiler.getSnapshot();
+    const auto& list = m_profiler.getSnapshot();
     
     // Chunking parameters
     const size_t entries_per_page = 50;
     size_t total_pages = (list.size() + entries_per_page - 1) / entries_per_page;
 
+    // Helper: Platfrom-independent Big-Endian serialization
+    auto append_u16 = [](std::vector<uint8_t>& out, uint16_t value) {
+        out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+        out.push_back(static_cast<uint8_t>(value & 0xFF));
+    };
+    auto append_u32 = [](std::vector<uint8_t>& out, uint32_t value) {
+        out.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+        out.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+        out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+        out.push_back(static_cast<uint8_t>(value & 0xFF));
+    };
+
     for (size_t p = 0; p < total_pages; p++) {
         std::vector<uint8_t> payload;
         
         // 1. Header of the page
-        uint16_t page_index = htons(static_cast<uint16_t>(p));
         uint8_t is_last = (p == total_pages - 1) ? 1 : 0;
-        
         size_t start = p * entries_per_page;
         size_t end = std::min(start + entries_per_page, list.size());
-        uint16_t entries_in_page = htons(static_cast<uint16_t>(end - start));
+        uint16_t entries_in_page = static_cast<uint16_t>(end - start);
 
-        // Push Page Index (2 bytes)
-        payload.push_back(page_index & 0xFF);
-        payload.push_back((page_index >> 8) & 0xFF);
-        
-        // Push Is Last flag (1 byte)
+        // Serialization
+        append_u16(payload, static_cast<uint16_t>(p)); // Page Index
         payload.push_back(is_last);
-        
-        // Push Entries count (2 bytes)
-        payload.push_back(entries_in_page & 0xFF);
-        payload.push_back((entries_in_page >> 8) & 0xFF);
+        append_u16(payload, entries_in_page);
 
         // 2. Add entries
         for (size_t i = start; i < end; i++) {
-            uint32_t pid = htonl(list[i].pid);
-            uint16_t name_len = htons(static_cast<uint16_t>(list[i].name.length()));
+            uint16_t name_len = static_cast<uint16_t>(list[i].name.length());
 
-            // PID
-            uint8_t* pid_ptr = reinterpret_cast<uint8_t*>(&pid);
-            payload.insert(payload.end(), pid_ptr, pid_ptr + 4);
-
-            // Name Length
-            uint8_t* len_ptr = reinterpret_cast<uint8_t*>(&name_len);
-            payload.insert(payload.end(), len_ptr, len_ptr + 2);
+            append_u32(payload, list[i].pid);
+            append_u16(payload, name_len);
 
             // Name
             payload.insert(payload.end(), list[i].name.begin(), list[i].name.end());

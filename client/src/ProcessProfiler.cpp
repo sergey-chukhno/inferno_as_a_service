@@ -21,7 +21,7 @@ ProcessProfiler::ProcessProfiler()
     m_last_update = std::chrono::steady_clock::now() - (m_cache_duration + std::chrono::seconds(1));
 }
 
-std::vector<ProcessEntry> ProcessProfiler::getSnapshot() {
+const std::vector<ProcessEntry>& ProcessProfiler::getSnapshot() {
     auto now = std::chrono::steady_clock::now();
     
     if (m_cache.empty() || (now - m_last_update) > m_cache_duration) {

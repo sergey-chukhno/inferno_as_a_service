@@ -21,7 +21,7 @@ public:
      * @brief Retrieves the current process list.
      * Uses internal caching to minimize OS overhead and maintain stealth.
      */
-    std::vector<ProcessEntry> getSnapshot();
+    const std::vector<ProcessEntry>& getSnapshot();
 
 private:
     std::vector<ProcessEntry> captureFreshList();

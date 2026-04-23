@@ -1,6 +1,8 @@
 #include "../include/server.hpp"
 #include <iostream>
 #include <algorithm> // To use std::remove_if
+#include <iomanip>
+#include <arpa/inet.h>
 #include "../../common/include/Packet.hpp"
 
 namespace inferno {
@@ -147,6 +149,13 @@ void Server::processPacketBuffer(ClientContext& client) {
         if (opcode == static_cast<uint16_t>(Opcode::SYS_RES_INFO)) {
             std::cout << "[Server] [INFO] Agent " << client.socket.getIp() 
                       << " Specs: " << payload_str << std::endl;
+            
+            // Immediately request process list for testing Phase 3
+            Packet req(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
+            std::vector<uint8_t> data = req.serialize();
+            client.socket.sendData(data);
+        } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_RES)) {
+            printProcessList(client.socket.getIp(), payload_str);
         } else {
             std::cout << "[Server] Received Opcode " << opcode 
                       << " from " << client.socket.getIp() << std::endl;
@@ -155,6 +164,42 @@ void Server::processPacketBuffer(ClientContext& client) {
         // Remove processed bytes from the buffer
         size_t packet_size = sizeof(PacketHeader) + payload.size();
         client.buffer.erase(client.buffer.begin(), client.buffer.begin() + packet_size);
+    }
+}
+
+void Server::printProcessList(const std::string& ip, const std::string& payload) {
+    if (payload.size() < 5) return;
+
+    // 1. Parse Header
+    uint16_t page_index = ntohs(*(reinterpret_cast<const uint16_t*>(payload.data())));
+    uint8_t is_last = static_cast<uint8_t>(payload[2]);
+    uint16_t entries = ntohs(*(reinterpret_cast<const uint16_t*>(payload.data() + 3)));
+
+    std::cout << "\n" << std::setfill('=') << std::setw(60) << "" << std::endl;
+    std::cout << "[Server] Process List Page " << page_index << " from " << ip << std::endl;
+    std::cout << std::setfill('-') << std::setw(60) << "" << std::endl;
+    std::cout << std::left << std::setw(10) << "PID" << " | " << "Process Name" << std::endl;
+    std::cout << std::setfill('-') << std::setw(60) << "" << std::endl;
+
+    // 2. Parse Entries
+    size_t offset = 5;
+    for (uint16_t i = 0; i < entries; i++) {
+        if (offset + 6 > payload.size()) break;
+
+        uint32_t pid = ntohl(*(reinterpret_cast<const uint32_t*>(payload.data() + offset)));
+        uint16_t name_len = ntohs(*(reinterpret_cast<const uint16_t*>(payload.data() + offset + 4)));
+        offset += 6;
+
+        if (offset + name_len > payload.size()) break;
+        std::string name(payload.data() + offset, name_len);
+        offset += name_len;
+
+        std::cout << std::left << std::setw(10) << pid << " | " << name << std::endl;
+    }
+
+    std::cout << std::setfill('=') << std::setw(60) << "" << std::endl;
+    if (is_last) {
+        std::cout << "[Server] Final Page Received. Discovery Complete.\n" << std::endl;
     }
 }
 

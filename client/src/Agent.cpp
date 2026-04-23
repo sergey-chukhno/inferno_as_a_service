@@ -6,6 +6,8 @@
 #include <chrono>
 #include <thread>
 #include <sstream>
+#include <arpa/inet.h>
+#include <algorithm>
 
 namespace inferno {
 
@@ -104,10 +106,65 @@ void Agent::handleDispatching(Packet&& packet) {
         Packet res(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
         std::vector<uint8_t> data = res.serialize();
         m_socket.sendData(data);
+    } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {
+        handleProcessDiscovery();
     } else if (opcode == static_cast<uint16_t>(Opcode::PING)) {
         Packet pong(static_cast<uint16_t>(Opcode::PONG), "");
         std::vector<uint8_t> data = pong.serialize();
         m_socket.sendData(data);
+    }
+}
+
+void Agent::handleProcessDiscovery() {
+    auto list = m_profiler.getSnapshot();
+    
+    // Chunking parameters
+    const size_t entries_per_page = 50;
+    size_t total_pages = (list.size() + entries_per_page - 1) / entries_per_page;
+
+    for (size_t p = 0; p < total_pages; p++) {
+        std::vector<uint8_t> payload;
+        
+        // 1. Header of the page
+        uint16_t page_index = htons(static_cast<uint16_t>(p));
+        uint8_t is_last = (p == total_pages - 1) ? 1 : 0;
+        
+        size_t start = p * entries_per_page;
+        size_t end = std::min(start + entries_per_page, list.size());
+        uint16_t entries_in_page = htons(static_cast<uint16_t>(end - start));
+
+        // Push Page Index (2 bytes)
+        payload.push_back(page_index & 0xFF);
+        payload.push_back((page_index >> 8) & 0xFF);
+        
+        // Push Is Last flag (1 byte)
+        payload.push_back(is_last);
+        
+        // Push Entries count (2 bytes)
+        payload.push_back(entries_in_page & 0xFF);
+        payload.push_back((entries_in_page >> 8) & 0xFF);
+
+        // 2. Add entries
+        for (size_t i = start; i < end; i++) {
+            uint32_t pid = htonl(list[i].pid);
+            uint16_t name_len = htons(static_cast<uint16_t>(list[i].name.length()));
+
+            // PID
+            uint8_t* pid_ptr = reinterpret_cast<uint8_t*>(&pid);
+            payload.insert(payload.end(), pid_ptr, pid_ptr + 4);
+
+            // Name Length
+            uint8_t* len_ptr = reinterpret_cast<uint8_t*>(&name_len);
+            payload.insert(payload.end(), len_ptr, len_ptr + 2);
+
+            // Name
+            payload.insert(payload.end(), list[i].name.begin(), list[i].name.end());
+        }
+
+        Packet res(static_cast<uint16_t>(Opcode::PROC_LIST_RES), 
+                  std::string(payload.begin(), payload.end()));
+        
+        m_socket.sendData(res.serialize());
     }
 }
 

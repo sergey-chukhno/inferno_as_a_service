@@ -37,6 +37,8 @@ private:
     std::vector<ClientContext> m_clients;       
     uint16_t                   m_port;
     bool                       m_running;
+
+    static void printProcessList(const std::string& ip, const std::string& payload);
 };
 
 } // namespace inferno

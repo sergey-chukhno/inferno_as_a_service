@@ -2,6 +2,7 @@
 
 #include "../../common/include/Socket.hpp"
 #include "../../common/include/Packet.hpp"
+#include "ProcessProfiler.hpp"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -39,6 +40,7 @@ private:
     void handleConnected();
     void handleListening();
     void handleDispatching(Packet&& packet);
+    void handleProcessDiscovery();
 
     // System Profiler (Gourmandise Subsystem)
     std::string getSystemInfo();
@@ -53,6 +55,7 @@ private:
     Socket m_socket;
     std::atomic<bool> m_running;
     std::vector<uint8_t> m_receive_buffer;
+    ProcessProfiler m_profiler;
 };
 
 } // namespace inferno

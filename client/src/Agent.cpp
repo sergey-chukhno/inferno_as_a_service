@@ -6,6 +6,8 @@
 #include <chrono>
 #include <thread>
 #include <sstream>
+#include <arpa/inet.h>
+#include <algorithm>
 
 namespace inferno {
 
@@ -104,10 +106,63 @@ void Agent::handleDispatching(Packet&& packet) {
         Packet res(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
         std::vector<uint8_t> data = res.serialize();
         m_socket.sendData(data);
+    } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {
+        handleProcessDiscovery();
     } else if (opcode == static_cast<uint16_t>(Opcode::PING)) {
         Packet pong(static_cast<uint16_t>(Opcode::PONG), "");
         std::vector<uint8_t> data = pong.serialize();
         m_socket.sendData(data);
+    }
+}
+
+void Agent::handleProcessDiscovery() {
+    const auto& list = m_profiler.getSnapshot();
+    
+    // Chunking parameters
+    const size_t entries_per_page = 50;
+    size_t total_pages = (list.size() + entries_per_page - 1) / entries_per_page;
+
+    // Helper: Platfrom-independent Big-Endian serialization
+    auto append_u16 = [](std::vector<uint8_t>& out, uint16_t value) {
+        out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+        out.push_back(static_cast<uint8_t>(value & 0xFF));
+    };
+    auto append_u32 = [](std::vector<uint8_t>& out, uint32_t value) {
+        out.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+        out.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+        out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+        out.push_back(static_cast<uint8_t>(value & 0xFF));
+    };
+
+    for (size_t p = 0; p < total_pages; p++) {
+        std::vector<uint8_t> payload;
+        
+        // 1. Header of the page
+        uint8_t is_last = (p == total_pages - 1) ? 1 : 0;
+        size_t start = p * entries_per_page;
+        size_t end = std::min(start + entries_per_page, list.size());
+        uint16_t entries_in_page = static_cast<uint16_t>(end - start);
+
+        // Serialization
+        append_u16(payload, static_cast<uint16_t>(p)); // Page Index
+        payload.push_back(is_last);
+        append_u16(payload, entries_in_page);
+
+        // 2. Add entries
+        for (size_t i = start; i < end; i++) {
+            uint16_t name_len = static_cast<uint16_t>(list[i].name.length());
+
+            append_u32(payload, list[i].pid);
+            append_u16(payload, name_len);
+
+            // Name
+            payload.insert(payload.end(), list[i].name.begin(), list[i].name.end());
+        }
+
+        Packet res(static_cast<uint16_t>(Opcode::PROC_LIST_RES), 
+                  std::string(payload.begin(), payload.end()));
+        
+        m_socket.sendData(res.serialize());
     }
 }
 

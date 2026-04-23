@@ -25,11 +25,13 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Agent Core Architecture**: Implemented an FSM-based `Agent` class (`INIT` -> `CONNECTING` -> `CONNECTED` -> `LISTENING` -> `DISPATCHING`).
 - **Sliding Buffer Accumulator**: Refactored the Server to use `std::vector<uint8_t>` for each client, supporting fragmented TCP streams.
 - **System Profiler**: Integrated POSIX APIs (`gethostname`, `getlogin_r`, `uname`) to extract target metadata.
-- **SOLID Refactoring**: Extracted protocol parsing into `Server::processPacketBuffer` to allow isolated unit testing.
+- **Process Monitor Subsystem**: Implemented `ProcessProfiler` (macOS via `libproc`) to enumerate running processes.
+- **Paged Discovery Protocol**: Designed a chunked transmission schema (`Opcode::PROC_LIST_RES`) to handle large data sets with low detection profile.
+- **Stealth Caching**: Introduced a 30-second timed cache to minimize CPU usage spikes during discovery.
 
 ### Verification Milestone
-- **Identity Handshake**: Verified that the Agent successfully identifies itself upon connection by responding to `SYS_REQ_INFO`.
-- **Manual Verification**: Created `handshake_system_info_test.sh` for repeatable end-to-end validation.
+- **Identity Handshake**: Verified that the Agent successfully identifies itself upon connection.
+- **Intelligence Discovery**: Successfully tested paged process list transmission and table rendering via `process_list_test.sh`.
 
 ---
-*Next: Descending into the Remote Shell Engine...*
+*Next: Establishing Remote Shell capabilities (Circle 4)...*

@@ -1,7 +1,18 @@
 #include "../include/ProcessProfiler.hpp"
+#include <iostream>
+#include <vector>
+#include <string>
+#include <chrono>
+
+#ifdef __APPLE__
 #include <libproc.h>
 #include <unistd.h>
-#include <iostream>
+#elif defined(__linux__)
+#include <dirent.h>
+#include <fstream>
+#include <unistd.h>
+#include <cctype>
+#endif
 
 namespace inferno {
 
@@ -21,19 +32,17 @@ std::vector<ProcessEntry> ProcessProfiler::getSnapshot() {
     return m_cache;
 }
 
+#ifdef __APPLE__
 std::vector<ProcessEntry> ProcessProfiler::captureFreshList() {
     std::vector<ProcessEntry> list;
     
-    // 1. Get the number of processes currently running
     int count = proc_listpids(PROC_ALL_PIDS, 0, nullptr, 0);
     if (count <= 0) return list;
 
-    // 2. Allocate buffer and get PIDs
     std::vector<pid_t> pids(count);
     count = proc_listpids(PROC_ALL_PIDS, 0, pids.data(), static_cast<int>(pids.size() * sizeof(pid_t)));
     if (count <= 0) return list;
 
-    // 3. For each PID, get the name
     for (int i = 0; i < count; i++) {
         if (pids[i] == 0) continue;
 
@@ -42,18 +51,43 @@ std::vector<ProcessEntry> ProcessProfiler::captureFreshList() {
         
         ProcessEntry entry;
         entry.pid = static_cast<uint32_t>(pids[i]);
-        
-        if (ret > 0) {
-            entry.name = std::string(path_buffer);
-        } else {
-            // Handle Access Denied / Dead processes between list and name retrieval
-            entry.name = "<Access Denied / Unknown>";
-        }
+        entry.name = (ret > 0) ? std::string(path_buffer) : "<Access Denied / Unknown>";
         
         list.push_back(std::move(entry));
     }
-
     return list;
 }
+#elif defined(__linux__)
+std::vector<ProcessEntry> ProcessProfiler::captureFreshList() {
+    std::vector<ProcessEntry> list;
+    DIR* dir = opendir("/proc");
+    if (!dir) return list;
+
+    struct dirent* entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        // We only care about directories that are numbers (PIDs)
+        if (entry->d_type == DT_DIR && isdigit(entry->d_name[0])) {
+            uint32_t pid = static_cast<uint32_t>(std::stoul(entry->d_name));
+            
+            // Read name from /proc/[pid]/comm
+            std::string comm_path = "/proc/" + std::string(entry->d_name) + "/comm";
+            std::ifstream comm_file(comm_path);
+            std::string name;
+            
+            if (comm_file >> name) {
+                list.push_back({pid, name});
+            } else {
+                list.push_back({pid, "<Access Denied>"});
+            }
+        }
+    }
+    closedir(dir);
+    return list;
+}
+#else
+std::vector<ProcessEntry> ProcessProfiler::captureFreshList() {
+    return {}; // Unsupported platform
+}
+#endif
 
 } // namespace inferno

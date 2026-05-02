@@ -19,15 +19,14 @@ echo -e "${BOLD}${YELLOW}🔥 [Inferno] Remote Shell Engine Test (Circle 3 — G
 
 # 1. Build
 echo -e "${CYAN}🛠️  [Building] Compiling project...${NC}"
-cmake --build "$BUILD_DIR" 2>&1 | tail -1
-if [ $? -ne 0 ]; then
+if ! cmake --build "$BUILD_DIR" 2>&1 | tail -1; then
     echo -e "${RED}❌ Build failed. Aborting.${NC}"
     exit 1
 fi
 
-# 2. Start Server
+# 2. Start Server — set bootstrap command for this test session only
 echo -e "${CYAN}🚀 [Test] Launching Server on port $TEST_PORT...${NC}"
-$SERVER_BIN $TEST_PORT > "$PROJECT_ROOT/server_output.log" 2>&1 &
+INFERNO_BOOTSTRAP_CMD="whoami" $SERVER_BIN $TEST_PORT > "$PROJECT_ROOT/server_output.log" 2>&1 &
 SERVER_PID=$!
 disown $SERVER_PID
 sleep 1

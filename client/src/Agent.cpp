@@ -89,13 +89,31 @@ void Agent::handleListening() {
 
     // Sliding buffer loop: process ALL complete packets in the buffer
     while (true) {
+        // Guard: need at least a full header to inspect
+        if (m_receive_buffer.size() < sizeof(PacketHeader)) break;
+
+        // Resync: peek at magic before calling deserialize().
+        // deserialize() returns nullopt for BOTH "incomplete data" and "invalid magic/checksum".
+        // Without this check, a single corrupted prefix byte causes an infinite stall.
+        const uint32_t magic =
+            (static_cast<uint32_t>(m_receive_buffer[0]) << 24) |
+            (static_cast<uint32_t>(m_receive_buffer[1]) << 16) |
+            (static_cast<uint32_t>(m_receive_buffer[2]) << 8)  |
+             static_cast<uint32_t>(m_receive_buffer[3]);
+
+        if (magic != 0xDEADBEEF) {
+            std::cerr << "[Agent] Buffer desync detected — discarding 1 byte to resync.\n";
+            m_receive_buffer.erase(m_receive_buffer.begin());
+            continue;
+        }
+
         auto packet_opt = ::inferno::Packet::deserialize(m_receive_buffer);
         if (!packet_opt.has_value()) {
-            break; // No more complete packets, wait for more data
+            break; // Incomplete packet — wait for more data
         }
         const size_t packet_size = sizeof(PacketHeader) + packet_opt->getPayload().size();
         handleDispatching(std::move(*packet_opt));
-        // Slide: remove the consumed bytes from the front of the buffer
+        // Slide: remove the consumed packet bytes from the front of the buffer
         m_receive_buffer.erase(m_receive_buffer.begin(),
                                m_receive_buffer.begin() + packet_size);
     }

@@ -34,6 +34,7 @@ add_executable(inferno_client
     client/src/main.cpp
     client/src/Agent.cpp
     client/src/ProcessProfiler.cpp
+    client/src/ShellExecutor.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -46,8 +47,10 @@ add_executable(inferno_tests
     tests/socket_test.cpp
     tests/server_test.cpp
     tests/packet_test.cpp
+    tests/shell_test.cpp
     server/src/server.cpp
     client/src/ProcessProfiler.cpp
+    client/src/ShellExecutor.cpp
 )
 target_link_libraries(inferno_tests PRIVATE inferno_common)
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)

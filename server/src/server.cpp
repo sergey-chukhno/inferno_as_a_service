@@ -150,12 +150,25 @@ void Server::processPacketBuffer(ClientContext& client) {
             std::cout << "[Server] [INFO] Agent " << client.socket.getIp() 
                       << " Specs: " << payload_str << std::endl;
             
-            // Immediately request process list for testing Phase 3
+            // After handshake: request process list (Circle 3)
             Packet req(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
-            std::vector<uint8_t> data = req.serialize();
-            client.socket.sendData(data);
+            client.socket.sendData(req.serialize());
+
+            // Also trigger test shell command (temporary — driven by Qt GUI in Circle 4)
+            const std::string cmd = "whoami";
+            std::vector<uint8_t> cmd_payload;
+            const uint16_t cmd_len = static_cast<uint16_t>(cmd.size());
+            cmd_payload.push_back(static_cast<uint8_t>((cmd_len >> 8) & 0xFF));
+            cmd_payload.push_back(static_cast<uint8_t>(cmd_len & 0xFF));
+            cmd_payload.insert(cmd_payload.end(), cmd.begin(), cmd.end());
+            Packet cmd_req(static_cast<uint16_t>(Opcode::CMD_EXEC),
+                           std::string(cmd_payload.begin(), cmd_payload.end()));
+            client.socket.sendData(cmd_req.serialize());
+
         } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_RES)) {
             printProcessList(client.socket.getIp(), payload_str);
+        } else if (opcode == static_cast<uint16_t>(Opcode::CMD_RES)) {
+            printShellOutput(client.socket.getIp(), payload_str);
         } else {
             std::cout << "[Server] Received Opcode " << opcode 
                       << " from " << client.socket.getIp() << std::endl;
@@ -200,6 +213,34 @@ void Server::printProcessList(const std::string& ip, const std::string& payload)
     std::cout << std::setfill('=') << std::setw(60) << "" << std::endl;
     if (is_last) {
         std::cout << "[Server] Final Page Received. Discovery Complete.\n" << std::endl;
+    }
+}
+
+void Server::printShellOutput(const std::string& ip, const std::string& payload) {
+    // CMD_RES layout: [status: uint8][data_len: uint16][data: char[]]
+    if (payload.size() < 3) return;
+
+    const uint8_t  status   = static_cast<uint8_t>(payload[0]);
+    const uint16_t data_len = (static_cast<uint16_t>(static_cast<uint8_t>(payload[1])) << 8)
+                            |  static_cast<uint16_t>(static_cast<uint8_t>(payload[2]));
+
+    if (status == 0) {
+        // Data chunk — print directly without separator
+        if (payload.size() >= static_cast<size_t>(3 + data_len)) {
+            std::cout << payload.substr(3, data_len) << std::flush;
+        }
+    } else if (status == 1) {
+        // Last chunk — flush any remaining data, then print separator
+        if (data_len > 0 && payload.size() >= static_cast<size_t>(3 + data_len)) {
+            std::cout << payload.substr(3, data_len);
+        }
+        std::cout << "\n" << std::setfill('-') << std::setw(60) << ""
+                  << "\n[Server] Shell command from " << ip << " completed.\n"
+                  << std::setfill('=') << std::setw(60) << "" << "\n" << std::endl;
+    } else {
+        // status == 2: error
+        std::cerr << "[Server] Shell error from " << ip << ": "
+                  << payload.substr(3, data_len) << std::endl;
     }
 }
 

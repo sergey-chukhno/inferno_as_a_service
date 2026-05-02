@@ -32,6 +32,25 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 ### Verification Milestone
 - **Identity Handshake**: Verified that the Agent successfully identifies itself upon connection.
 - **Intelligence Discovery**: Successfully tested paged process list transmission and table rendering via `process_list_test.sh`.
+- **Remote Shell**: Verified server-initiated `whoami` command is executed by Agent and output streamed back via `remote_shell_test.sh`.
 
 ---
-*Next: Establishing Remote Shell capabilities (Circle 4)...*
+
+## 🔥 Circle 3 (Gourmandise) — Remote Shell Engine — [2026-05-02]
+**Objective**: Enable the Server to execute arbitrary shell commands on the Agent.
+
+### Technical Milestones
+- **ShellExecutor Module**: Implemented a SOLID SRP-compliant `ShellExecutor` class using `popen()` to capture `stdout`+`stderr`.
+- **Chunked Output Protocol**: Defined `CMD_EXEC` (0x0004) and `CMD_RES` (0x0005) binary schemas with a 3-byte header (status + length).
+- **4096-byte Chunk Size**: Chosen to match the system page size and libc I/O buffer for stealth traffic profiling.
+- **Sliding Buffer Fix**: Applied the same sliding buffer accumulation loop to the Agent's `handleListening()` that the Server uses, eliminating the single-packet discard bug.
+- **4 New Unit Tests**: `test_shell_executor_echo`, `_failure`, `_stderr_redirect`, `_chunk_size`.
+
+### Security Architecture Decisions
+- **Stealth Chunking**: 4096-byte output chunks are indistinguishable from SSH/HTTPS traffic at the packet level.
+- **TODO Circle 7**: Evolve `popen()` to non-blocking pipe + `select()` for long-running commands.
+- **TODO Circle 7**: Add inter-chunk jitter for timing fingerprint evasion.
+- **TODO Circle 8**: Encrypt payloads with AES-256-GCM to defeat DPI content inspection.
+
+---
+*Next: Circle 4 (Avarice) — Qt GUI for the Server...*

@@ -33,7 +33,7 @@ struct PacketHeader {
 - `0x0103` : Start/Stop File Stream (Server <-> Client)
 - `0x0104` : Start/Stop Camera/Desktop Event Stream (Server <-> Client)
 
-## 4. Paged Data Structures
+## 4. Data Structures
 
 ### 4.1 Paged Process List (Opcode 0x0007)
 Designed for stealth and resilience, this data structure allows the Agent to transmit the process list in manageable chunks.
@@ -50,9 +50,47 @@ Designed for stealth and resilience, this data structure allows the Agent to tra
 - `uint16_t name_len`
 - `char name[name_len]` (No null terminator)
 
-## 4. Endianness
-All multi-byte integers (`uint16_t`, `uint32_t`) MUST be transmitted in Network Byte Order (Big-Endian). Implementations MUST use `htonl()`/`ntohl()` and `htons()`/`ntohs()`.
+### 4.2 Remote Shell Command (Opcode 0x0004) — CMD_EXEC
+Sent by the Server to the Agent to request execution of a shell command.
 
-## 5. Security Constraints
+| Offset | Size | Type | Description |
+|--------|------|------|-------------|
+| 0      | 2    | uint16 | Command length (N) |
+| 2      | N    | char[] | Command string (no null terminator) |
+
+### 4.3 Remote Shell Response (Opcode 0x0005) — CMD_RES
+Sent by the Agent to the Server, carrying chunked command output.
+
+| Offset | Size | Type | Description |
+|--------|------|------|-------------|
+| 0      | 1    | uint8  | Status: `0` = data chunk, `1` = end of output, `2` = error |
+| 1      | 2    | uint16 | Data length (N) |
+| 3      | N    | char[] | Output chunk |
+
+**Chunking Design Rationale (Stealth):**
+- Output is transmitted in fixed **4096-byte chunks** (system page size).
+- This value was chosen deliberately: it matches the default `libc` I/O buffer size and is
+  identical to the read buffer used by SSH, HTTPS, and most legitimate system daemons.
+  Signature-based DPI (Deep Packet Inspection) and EDR tools cannot distinguish these
+  packets from normal encrypted application traffic.
+- A single large response blob (e.g. 500KB) is a network anomaly flagged by most IDS systems.
+  4096-byte sequential packets are indistinguishable from a standard streaming protocol.
+
+> **TODO Circle 7 (Violence):** Evolve the execution model from blocking `popen()` to a
+> non-blocking pipe integrated into the `select()` event loop to support long-running commands
+> without stalling the Agent's main loop.
+
+> **TODO Circle 7 (Violence):** Add inter-chunk **jitter** (randomized microsecond delay between
+> `CMD_RES` packets) to break timing-based traffic fingerprinting.
+
+> **TODO Circle 8 (Ruse et Tromperie):** Wrap all packet payloads in symmetric encryption
+> (e.g. AES-256-GCM) to defeat DPI content inspection and prevent payload reconstruction
+> by network forensics tools.
+
+## 5. Endianness
+All multi-byte integers (`uint16_t`, `uint32_t`) MUST be transmitted in Network Byte Order (Big-Endian). Implementations MUST use explicit bit-shifting serialization (not `htonl`/`htons` combined with pointer casting, which is not portable across architectures).
+
+## 6. Security Constraints
 - **MAX_PAYLOAD_SIZE**: 10,485,760 bytes (10MB). Any packet with a `payload_size` exceeding this limit MUST be rejected to prevent memory exhaustion (OOM) attacks.
 - **Magic Validation**: Deserializers MUST verify the `magic` value (0xDEADBEEF) before allocating any memory for the payload.
+- **CMD_EXEC Sanitization**: The Agent MUST NOT apply any sanitization to the received command — it executes what the Server sends. Access control is the Server operator's responsibility.

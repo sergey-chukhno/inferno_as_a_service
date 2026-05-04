@@ -2,6 +2,7 @@
 
 #include <string>
 #include <mutex>
+#include <atomic>
 
 #ifdef __APPLE__
 #include <thread>
@@ -36,11 +37,12 @@ public:
 private:
     std::string              m_buffer;
     mutable std::mutex       m_mutex;
-    bool                     m_running;
+    std::atomic<bool>        m_running;
 
 #ifdef __APPLE__
     // Platform Exception: CFRunLoop thread for CGEventTap delivery
     std::thread              m_runloop_thread;
+    CFRunLoopRef             m_runloop;
     CFMachPortRef            m_event_tap;
     CFRunLoopSourceRef       m_runloop_source;
     static CGEventRef        eventCallback(CGEventTapProxy proxy, CGEventType type,

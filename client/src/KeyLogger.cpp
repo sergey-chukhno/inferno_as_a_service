@@ -16,6 +16,7 @@ KeyLogger::KeyLogger() : m_running(false) {
 #ifdef __APPLE__
     m_event_tap = nullptr;
     m_runloop_source = nullptr;
+    m_runloop = nullptr;
 #elif defined(__linux__)
     m_input_fd = -1;
 #endif
@@ -26,7 +27,6 @@ KeyLogger::~KeyLogger() {
 }
 
 bool KeyLogger::isRunning() const {
-    std::lock_guard<std::mutex> lock(m_mutex);
     return m_running;
 }
 
@@ -118,8 +118,8 @@ void KeyLogger::start() {
 
     // Platform Exception: Start the dedicated CFRunLoop thread
     m_runloop_thread = std::thread([this]() {
-        CFRunLoopRef runLoop = CFRunLoopGetCurrent();
-        CFRunLoopAddSource(runLoop, m_runloop_source, kCFRunLoopCommonModes);
+        m_runloop = CFRunLoopGetCurrent();
+        CFRunLoopAddSource(m_runloop, m_runloop_source, kCFRunLoopCommonModes);
         CGEventTapEnable(m_event_tap, true);
         CFRunLoopRun(); // Blocks until CFRunLoopStop is called
     });
@@ -140,6 +140,11 @@ void KeyLogger::stop() {
     if (m_runloop_source && m_event_tap) {
         // Invalidate mach port stops the tap
         CFMachPortInvalidate(m_event_tap);
+    }
+
+    if (m_runloop) {
+        CFRunLoopStop(m_runloop);
+        m_runloop = nullptr;
     }
 
     if (m_runloop_thread.joinable()) {

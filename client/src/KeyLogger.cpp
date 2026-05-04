@@ -126,17 +126,16 @@ void KeyLogger::start() {
 }
 
 void KeyLogger::stop() {
-    std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_running) return;
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_running) return;
+        m_running = false;
+    }
 
     if (m_event_tap) {
         CGEventTapEnable(m_event_tap, false);
     }
     
-    // Stop the thread's runloop
-    // We cannot easily get the thread's runloop from another thread on macOS unless we stored it.
-    // Actually, we can use CFRunLoopStop on the thread's runloop, but we need its reference.
-    // For simplicity and safe teardown without storing CFRunLoopRef, we invalidate the source.
     if (m_runloop_source && m_event_tap) {
         // Invalidate mach port stops the tap
         CFMachPortInvalidate(m_event_tap);
@@ -151,6 +150,8 @@ void KeyLogger::stop() {
         m_runloop_thread.join();
     }
 
+    // Clean up resources that require thread safety
+    std::lock_guard<std::mutex> lock(m_mutex);
     if (m_runloop_source) {
         CFRelease(m_runloop_source);
         m_runloop_source = nullptr;
@@ -159,8 +160,6 @@ void KeyLogger::stop() {
         CFRelease(m_event_tap);
         m_event_tap = nullptr;
     }
-    
-    m_running = false;
 }
 
 #elif defined(__linux__)

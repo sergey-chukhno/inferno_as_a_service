@@ -19,7 +19,7 @@ public:
 
     void start();
     void stop();
-    bool isRunning() const;
+    [[nodiscard]] bool isRunning() const;
 
     // Returns the buffer contents and atomically clears it.
     std::string dump();

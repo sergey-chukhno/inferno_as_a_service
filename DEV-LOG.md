@@ -53,4 +53,21 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **TODO Circle 8**: Encrypt payloads with AES-256-GCM to defeat DPI content inspection.
 
 ---
+
+## 🕵️ Circle 3 (Gourmandise) — Stealth Keylogger Engine — [2026-05-04]
+**Objective**: Implement an OS-abstracted, non-blocking keystroke capture engine.
+
+### Technical Milestones
+- **KeyLogger Engine**: Implemented `KeyLogger.hpp/cpp` using the "Buffer + Dump" architecture.
+- **macOS Native Hook**: Successfully utilized `CGEventTapCreate` to intercept CoreGraphics events.
+- **Thread Encapsulation**: Deployed a localized `std::thread` to host the `CFRunLoop` for the tap, preserving the main Agent FSM's non-blocking constraint.
+- **Protocol Extensibility**: Added `KEYLOG_START` (0x0100), `KEYLOG_STOP` (0x0101), `KEYLOG_DUMP` (0x0102), and `KEYLOG_DATA` (0x0108).
+- **Automated Trigger**: Bound an automated dump request to the end of `PROC_LIST_RES` via `INFERNO_KEYLOG_TRIGGER` to enable robust E2E testing without a GUI.
+- **CI Resilience**: Built an `#ifdef INFERNO_TESTING` bypass to gracefully simulate tap hook creation when macOS Accessibility permissions are absent (e.g., in GitHub Actions).
+
+### Security Architecture Decisions
+- **Buffer Starvation Cap**: Set `MAX_BUFFER_SIZE` to 1MB to prevent host memory exhaustion if the operator goes offline.
+- **Detached Event Handling**: Physical keystroke interception is detached from the networking plane, preventing packet-burst timing signatures.
+
+---
 *Next: Circle 4 (Avarice) — Qt GUI for the Server...*

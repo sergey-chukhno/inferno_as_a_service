@@ -20,6 +20,7 @@ namespace inferno {
         STREAM_FILE = 0x0103,
         STREAM_CAMERA = 0x0104,
         STREAM_DESKTOP = 0x0105,
+        KEYLOG_DATA = 0x0108, // Agent -> Server: keystroke buffer payload
     };
 
 } // namespace inferno

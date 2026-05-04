@@ -31,6 +31,9 @@ bool Server::start() {
         return false;
     }
 
+    // Retrieve the actual bound port (crucial if port 0 was requested for dynamic assignment)
+    m_port = m_listen_socket.getPort();
+
     m_running = true;
     std::cout << "[Server] Listening on port " << m_port << std::endl;
     return true;

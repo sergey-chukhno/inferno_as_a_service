@@ -69,3 +69,14 @@ if(APPLE)
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)
+
+# ==========================================
+# 6. Interactive / Manual Tests
+# ==========================================
+add_executable(inferno_keylogger_interactive
+    tests/keylogger_interactive_test.cpp
+    client/src/KeyLogger.cpp
+)
+if(APPLE)
+    target_link_libraries(inferno_keylogger_interactive PRIVATE ${CORE_GRAPHICS} ${CARBON})
+endif()

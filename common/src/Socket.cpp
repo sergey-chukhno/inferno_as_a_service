@@ -83,7 +83,16 @@ bool Socket::bindNode(const std::string& ip, uint16_t port) {
     }
     
     m_ip = ip;
-    m_port = port;
+    if (port == 0) {
+        socklen_t len = sizeof(addr);
+        if (::getsockname(m_socket_fd, (struct sockaddr *)&addr, &len) == 0) {
+            m_port = ntohs(addr.sin_port);
+        } else {
+            m_port = port;
+        }
+    } else {
+        m_port = port;
+    }
     
     return true; 
 }

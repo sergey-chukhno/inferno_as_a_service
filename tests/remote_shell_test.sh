@@ -25,15 +25,25 @@ if ! cmake --build "$BUILD_DIR" 2>&1 | tail -1; then
 fi
 
 # 2. Start Server — set bootstrap command for this test session only
-echo -e "${CYAN}🚀 [Test] Launching Server on port $TEST_PORT...${NC}"
-INFERNO_BOOTSTRAP_CMD="whoami" $SERVER_BIN $TEST_PORT > "$PROJECT_ROOT/server_output.log" 2>&1 &
+echo -e "${CYAN}🚀 [Test] Launching Server on dynamic OS-assigned port...${NC}"
+INFERNO_BOOTSTRAP_CMD="whoami" "$SERVER_BIN" 0 > "$PROJECT_ROOT/server_output.log" 2>&1 &
 SERVER_PID=$!
 disown $SERVER_PID
 sleep 1
 
+# Extract assigned port from the server logs
+TEST_PORT=$(grep "Listening on port" "$PROJECT_ROOT/server_output.log" | awk '{print $5}')
+if [ -z "$TEST_PORT" ]; then
+    echo -e "${RED}❌ [FAILURE] Server failed to bind to a dynamic port.${NC}"
+    cat "$PROJECT_ROOT/server_output.log"
+    kill $SERVER_PID 2>/dev/null
+    exit 1
+fi
+echo -e "${GREEN}✅ Server successfully bound to port: $TEST_PORT${NC}"
+
 # 3. Start Agent
 echo -e "${CYAN}🕵️  [Test] Launching Agent...${NC}"
-$CLIENT_BIN 127.0.0.1 $TEST_PORT > "$PROJECT_ROOT/client_output.log" 2>&1 &
+"$CLIENT_BIN" 127.0.0.1 "$TEST_PORT" > "$PROJECT_ROOT/client_output.log" 2>&1 &
 CLIENT_PID=$!
 disown $CLIENT_PID
 

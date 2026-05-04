@@ -12,8 +12,9 @@ The Client (Agent) is a modular binary deployed on target machines. It establish
 
 ## 3. Subsystems
 - **System Profiler**: Extracts environment metadata.
-- **Remote Shell Engine**: Executes terminal commands via `popen` or OS equivalents, capturing `stdout`/`stderr` to stream back.
-- **Keylogger Engine**: Buffers keystrokes covertly.
+- **Process Monitor Subsystem**: Extracts the system process list via `libproc` (macOS) and formats it into chunked data packets.
+- **Remote Shell Engine**: Executes terminal commands via `popen` or OS equivalents, capturing `stdout`/`stderr` to stream back in 4096-byte chunks.
+- **Keylogger Engine**: Implements an OS-abstracted "Buffer + Dump" hook via `CGEventTap` on macOS, running within a detached `std::thread` to prevent FSM blocking.
 - **Event Streaming Engine**: Capabilities to capture and format secondary hardware telemetry (Camera, Screen snapshots, File indexing) representing 3rd Cercle functionalities.
 
 ## 4. Error Handling

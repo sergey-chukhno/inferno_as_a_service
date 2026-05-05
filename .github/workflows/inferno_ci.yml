@@ -24,17 +24,13 @@ jobs:
     
     - name: Install Dependencies (macOS)
       if: runner.os == 'macOS'
-      run: brew install ninja cmake
+      run: brew install ninja cmake qt
 
     - name: Install Dependencies (Linux/WSL)
       if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y ninja-build cmake libgl1-mesa-dev
-
-    - name: Install Qt
-      uses: jurplel/install-qt-action@v3
-      with:
-        version: '6.7.2'
-        arch: ${{ matrix.qt_arch }}
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build cmake libgl1-mesa-dev qt6-base-dev qt6-base-private-dev
 
     - name: Configure CMake
       run: cmake -B build -S . -G Ninja

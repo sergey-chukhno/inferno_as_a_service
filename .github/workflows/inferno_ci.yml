@@ -21,7 +21,15 @@ jobs:
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
-    
+
+    - name: Cache Build Directory
+      uses: actions/cache@v4
+      with:
+        path: build
+        key: ${{ runner.os }}-build-${{ hashFiles('**/CMakeLists.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-build-
+
     - name: Install Dependencies (macOS)
       if: runner.os == 'macOS'
       run: brew install ninja cmake qt

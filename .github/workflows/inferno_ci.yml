@@ -24,7 +24,13 @@ jobs:
 
     - name: Install Dependencies (Linux/WSL)
       if: runner.os == 'Linux'
-      run: sudo apt-get update && sudo apt-get install -y ninja-build cmake
+      run: sudo apt-get update && sudo apt-get install -y ninja-build cmake libgl1-mesa-dev
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: '6.10.1'
+        modules: 'qtbase'
 
     - name: Configure CMake
       run: cmake -B build -S . -G Ninja

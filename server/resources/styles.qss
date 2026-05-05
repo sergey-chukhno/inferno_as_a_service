@@ -1,0 +1,135 @@
+/* 
+ * Inferno-as-a-Service: Dark Hacker Theme
+ * Designed for Circle 4 (Avarice)
+ */
+
+QMainWindow {
+    background-color: #0a0a0a;
+    color: #00ff41;
+}
+
+QSplitter::handle {
+    background-color: #1a1a1a;
+}
+
+/* Agent Sidebar */
+QListWidget, QTreeWidget {
+    background-color: #0d0d0d;
+    border: 1px solid #1a1a1a;
+    color: #00ff41;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 13px;
+    padding: 5px;
+}
+
+QListWidget::item:selected, QTreeWidget::item:selected {
+    background-color: #1a1a1a;
+    border: 1px solid #00ff41;
+    color: #ffffff;
+}
+
+/* Monospaced Consoles */
+QPlainTextEdit {
+    background-color: #000000;
+    color: #00ff41;
+    font-family: "Courier New", Courier, monospace;
+    font-size: 14px;
+    border: 1px solid #1a1a1a;
+    selection-background-color: #00ff41;
+    selection-color: #000000;
+}
+
+/* Toolbars and Buttons */
+QToolBar {
+    background-color: #0a0a0a;
+    border-bottom: 1px solid #1a1a1a;
+    spacing: 10px;
+    padding: 5px;
+}
+
+QPushButton {
+    background-color: #0d0d0d;
+    color: #00ff41;
+    border: 1px solid #00ff41;
+    padding: 5px 15px;
+    font-weight: bold;
+    border-radius: 2px;
+}
+
+QPushButton:hover {
+    background-color: #00ff41;
+    color: #000000;
+}
+
+QPushButton:pressed, QPushButton:checked {
+    background-color: #0d0d0d;
+    color: #00ff41;
+    border: 2px solid #00ff41;
+}
+
+/* Icon-only Buttons (Refresh, etc) */
+QPushButton#iconButton {
+    background-color: transparent;
+    border: 1px solid #1a1a1a;
+    border-radius: 4px;
+    padding: 4px;
+    min-width: 40px;
+    min-height: 40px;
+}
+
+QPushButton#iconButton:hover {
+    border: 1px solid #00ff41;
+    background-color: #0d0d0d;
+}
+
+/* Styled Context Menu */
+QMenu {
+    background-color: #0a0a0a;
+    color: #00ff41;
+    border: 1px solid #1a1a1a;
+}
+
+QMenu::item {
+    padding: 8px 24px;
+}
+
+QMenu::item:selected {
+    background-color: #1a1a1a;
+    color: #00ff41;
+    border: 1px solid #00ff41;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #1a1a1a;
+    margin: 4px 8px;
+}
+
+/* Scrollbars */
+QScrollBar:vertical {
+    border: none;
+    background: #0a0a0a;
+    width: 10px;
+    margin: 0px;
+}
+
+QScrollBar::handle:vertical {
+    background: #1a1a1a;
+    min-height: 20px;
+}
+
+QScrollBar::handle:vertical:hover {
+    background: #00ff41;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+}
+
+/* Labels */
+QLabel {
+    color: #00ff41;
+    font-weight: bold;
+    font-family: "Impact", sans-serif;
+    letter-spacing: 1px;
+}

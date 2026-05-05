@@ -59,3 +59,8 @@ Makefile.*
 # ==========================================
 rules.md
 PROJECT.md
+assets/
+design/
+*.txt
+*.sh
+!CMakeLists.txt

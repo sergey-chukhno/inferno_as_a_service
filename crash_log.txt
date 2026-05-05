@@ -1,0 +1,20 @@
+(lldb) target create "./build/inferno_keylogger_interactive"
+Current executable set to '/Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/build/inferno_keylogger_interactive' (arm64).
+(lldb) run
+
+🔥 Starting Manual Keylogger Test...
+✅ KeyLogger is active (Invisible to OS activity monitor).
+⏱️  You have 1 seconds. Click on any window (browser, notes, etc.) and type something...
+
+1... Process 16751 launched: '/Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/build/inferno_keylogger_interactive' (arm64)
+Process 16751 stopped
+* thread #1, queue = 'com.apple.main-thread', stop reason = EXC_BREAKPOINT (code=1, subcode=0x19f31e3e4)
+    frame #0: 0x000000019f31e3e4 CoreFoundation`__CFCheckCFInfoPACSignature + 44
+CoreFoundation`__CFCheckCFInfoPACSignature:
+->  0x19f31e3e4 <+44>: brk    #0xc470
+    0x19f31e3e8 <+48>: ret    
+
+CoreFoundation`__CFCheckCFInfoPACSignature_Bridged:
+    0x19f31e3ec <+0>:  tbnz   x0, #0x3f, 0x19f31e43c    ; <+80>
+    0x19f31e3f0 <+4>:  ldr    x9, [x0]
+Target 0: (inferno_keylogger_interactive) stopped.

@@ -94,6 +94,12 @@ void KeyLogger::start() {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_running) return;
 
+#ifdef INFERNO_TESTING
+    std::cerr << "[KeyLogger] INFERNO_TESTING is active. Bypassing tap creation completely.\n";
+    m_running = true;
+    return;
+#endif
+
     CGEventMask eventMask = CGEventMaskBit(kCGEventKeyDown);
     
     // Note: kCGHIDEventTap requires root or Accessibility permissions.
@@ -104,13 +110,7 @@ void KeyLogger::start() {
 
     if (!m_event_tap) {
         std::cerr << "[KeyLogger] Failed to create CGEventTap. Needs Accessibility permissions.\n";
-#ifndef INFERNO_TESTING
         return;
-#else
-        std::cerr << "[KeyLogger] INFERNO_TESTING is active. Bypassing tap creation and simulating start.\n";
-        m_running = true;
-        return;
-#endif
     }
 
     m_runloop_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, m_event_tap, 0);

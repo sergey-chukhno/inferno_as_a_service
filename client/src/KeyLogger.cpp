@@ -132,34 +132,42 @@ void KeyLogger::stop() {
         m_running = false;
     }
 
+    // 1. Disable the tap so it stops receiving events
     if (m_event_tap) {
         CGEventTapEnable(m_event_tap, false);
     }
     
-    if (m_runloop_source && m_event_tap) {
-        // Invalidate mach port stops the tap
-        CFMachPortInvalidate(m_event_tap);
-    }
-
+    // 2. Stop the RunLoop gracefully
     if (m_runloop) {
+        if (m_runloop_source) {
+            CFRunLoopRemoveSource(m_runloop, m_runloop_source, kCFRunLoopCommonModes);
+        }
         CFRunLoopStop(m_runloop);
-        m_runloop = nullptr;
     }
 
+    // 3. Wait for the background thread to fully exit before invalidating
     if (m_runloop_thread.joinable()) {
         m_runloop_thread.join();
     }
 
-    // Clean up resources that require thread safety
+    // 4. Clean up CoreFoundation resources sequentially and safely
     std::lock_guard<std::mutex> lock(m_mutex);
+    
+    if (m_event_tap) {
+        CFMachPortInvalidate(m_event_tap);
+    }
+
     if (m_runloop_source) {
         CFRelease(m_runloop_source);
         m_runloop_source = nullptr;
     }
+    
     if (m_event_tap) {
         CFRelease(m_event_tap);
         m_event_tap = nullptr;
     }
+    
+    m_runloop = nullptr;
 }
 
 #elif defined(__linux__)

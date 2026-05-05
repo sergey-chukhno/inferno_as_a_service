@@ -3,14 +3,16 @@
 ## 1. Keylogger Engine (Circle 3 — Implemented)
 Captures keystrokes stealthily using an OS event hook.
 - **macOS**: `CGEventTap` via CoreGraphics — system-wide keyboard hook. Encapsulated in a localized `std::thread` to host the `CFRunLoop` ensuring the main FSM is never blocked.
-- **Linux**: `/dev/input/eventX` — raw kernel input device polling (Stub structure complete, to be fully implemented).
+  - *Note on Stealth (2026)*: This method requires Transparency, Consent, and Control (TCC) Accessibility permissions. In Circle 8 (Ruse et Tromperie), this will be upgraded to use **Process Injection/Dylib Hijacking** (targeting apps that already have TCC permissions like Discord/Zoom) to achieve true APT-level invisibility without prompting the user.
+- **Linux**: `/dev/input/eventX` — raw kernel input device polling (Stub structure complete).
+  - *Implementation Notes (Circle 7)*: Unlike macOS, Linux does not require complex UI abstractions (Wayland/X11), but it *does* require `root` or `input` group privileges to read `/dev/input/`. Implementation will use standard C++ file reading, but operational deployment will require a privilege escalation exploit wrapper.
 - **Buffering**: Keystrokes are buffered locally in `KeyLogger::m_buffer` with a strict `MAX_BUFFER_SIZE` of 1MB to prevent starvation. The server operator
   requests a flush via `KEYLOG_DUMP (0x0102)`. The Agent responds with `KEYLOG_DATA (0x0108)` containing Sequence Number, Timestamp, and Keystrokes.
 - **Window Context** (future): Capture the active window title alongside keystrokes to give
   forensic context to typed strings. Planned for Circle 8 (Ruse et Tromperie).
 
-> **Circle 8 Evolution**: Upgrade to full stealth streaming with jitter thread +
-> PONG piggybacking + AES-256-GCM. See PROTOCOL.md for full design TODOs.
+> **Circle 8 Evolution**: Upgrade to full stealth streaming with Jitter Threading +
+> PONG piggybacking + AES-256-GCM + Process Injection. See PROTOCOL.md for full design TODOs.
 
 ---
 

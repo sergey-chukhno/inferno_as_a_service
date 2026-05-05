@@ -61,8 +61,25 @@ QPushButton:hover {
     color: #000000;
 }
 
-QPushButton:pressed {
-    background-color: #008f25;
+QPushButton:pressed, QPushButton:checked {
+    background-color: #0d0d0d;
+    color: #00ff41;
+    border: 2px solid #00ff41;
+}
+
+/* Icon-only Buttons (Refresh, etc) */
+QPushButton#iconButton {
+    background-color: transparent;
+    border: 1px solid #1a1a1a;
+    border-radius: 4px;
+    padding: 4px;
+    min-width: 40px;
+    min-height: 40px;
+}
+
+QPushButton#iconButton:hover {
+    border: 1px solid #00ff41;
+    background-color: #0d0d0d;
 }
 
 /* Scrollbars */

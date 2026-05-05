@@ -1,0 +1,11 @@
+<!DOCTYPE RCC><RCC version="1.0">
+<qresource prefix="/">
+    <file>styles.qss</file>
+    <file>branding_skull.png</file>
+    <file>icon_shell.png</file>
+    <file>icon_refresh.png</file>
+    <file>icon_scan.png</file>
+    <file>icon_eye_closed.png</file>
+    <file>icon_eye_open.png</file>
+</qresource>
+</RCC>

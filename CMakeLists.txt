@@ -33,7 +33,12 @@ target_include_directories(inferno_common PUBLIC common/include)
 add_executable(inferno_server
     server/src/main.cpp
     server/src/server.cpp
+    server/src/MainWindow.cpp
+    server/src/DataStreamWidget.cpp
     server/include/server.hpp
+    server/include/MainWindow.hpp
+    server/include/DataStreamWidget.hpp
+    server/resources/styles.qrc
 )
 target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core)
 

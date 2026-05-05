@@ -14,5 +14,6 @@
     <file>icon_paste.png</file>
     <file>icon_search.png</file>
     <file>icon_clear.png</file>
+    <file>icon_history.png</file>
 </qresource>
 </RCC>

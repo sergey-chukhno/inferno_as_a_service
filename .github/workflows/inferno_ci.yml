@@ -10,7 +10,11 @@ jobs:
   build-and-test:
     strategy:
       matrix:  
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            qt_arch: gcc_64
+          - os: macos-latest
+            qt_arch: clang_64
         
     runs-on: ${{ matrix.os }}
     
@@ -30,7 +34,7 @@ jobs:
       uses: jurplel/install-qt-action@v3
       with:
         version: '6.8.1'
-        arch: 'clang_64'
+        arch: ${{ matrix.qt_arch }}
 
     - name: Configure CMake
       run: cmake -B build -S . -G Ninja

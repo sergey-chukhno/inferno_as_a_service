@@ -82,6 +82,29 @@ QPushButton#iconButton:hover {
     background-color: #0d0d0d;
 }
 
+/* Styled Context Menu */
+QMenu {
+    background-color: #0a0a0a;
+    color: #00ff41;
+    border: 1px solid #1a1a1a;
+}
+
+QMenu::item {
+    padding: 8px 24px;
+}
+
+QMenu::item:selected {
+    background-color: #1a1a1a;
+    color: #00ff41;
+    border: 1px solid #00ff41;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #1a1a1a;
+    margin: 4px 8px;
+}
+
 /* Scrollbars */
 QScrollBar:vertical {
     border: none;

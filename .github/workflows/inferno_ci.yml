@@ -26,7 +26,7 @@ jobs:
       uses: actions/cache@v4
       with:
         path: build
-        key: ${{ runner.os }}-build-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.c', '**/*.cc', '**/*.cpp', '**/*.cxx', '**/*.h', '**/*.hh', '**/*.hpp', '**/*.hxx') }}
+        key: ${{ runner.os }}-build-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.c', '**/*.cc', '**/*.cpp', '**/*.cxx', '**/*.h', '**/*.hh', '**/*.hpp', '**/*.hxx', '**/*.qrc', '**/*.qss', '**/*.ui', 'server/resources/**') }}
 
     - name: Install Dependencies (macOS)
       if: runner.os == 'macOS'

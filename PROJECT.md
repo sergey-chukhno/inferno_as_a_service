@@ -66,7 +66,7 @@ Transformer le client en agent capable de :
 
 ---
 
-## 🟣 4ème Cercle — Avarice
+## 🟣 4ème Cercle — Avarice [COMPLETED]
 
 ### Objectif
 Créer une GUI avec Qt

@@ -39,10 +39,17 @@ private slots:
     void updateRadarAnimation();
     void toggleKeylogState(bool active);
     void pollKeylogger();
+    void highlightSearchMatches(const QString& text);
+    void applyVisualHighlighting();
+    void filterKeylogStream(const QString& text);
+    void loadTelemetryHistory();
+    void loadKeylogHistory();
 
 private:
     void setupUI();
     void loadStyleSheet();
+    void appendToTelemetry(const QString& text);
+    void appendToKeylog(const QString& text);
 
     Server* m_server;
 
@@ -52,12 +59,18 @@ private:
     QPlainTextEdit* m_keylogStream;
     QLabel*         m_statusLabel;
     QLineEdit*      m_searchBox;
+    QLineEdit*      m_keylogSearchBox;
+    
+    // History Buffers
+    QStringList     m_telemetryHistory;
+    QStringList     m_keylogHistory;
     
     // Animation State
     QPushButton*    m_btnScan;
     QPushButton*    m_btnKeylog;
     QTimer*         m_radarTimer;
     QTimer*         m_keylogPollTimer;
+    QTimer*         m_searchDebounceTimer;
     int             m_radarAngle;
 };
 

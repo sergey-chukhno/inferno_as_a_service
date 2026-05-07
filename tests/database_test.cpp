@@ -2,18 +2,46 @@
 #include <iostream>
 #include <cassert>
 #include <QCoreApplication>
+#include <QFile>
+#include <QTextStream>
+
+void loadEnv(const QString& path = ".env") {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+
+    QTextStream in(&file);
+    while (!in.atEnd()) {
+        QString line = in.readLine().trimmed();
+        if (line.isEmpty() || line.startsWith("#")) continue;
+        
+        QStringList parts = line.split("=", Qt::SkipEmptyParts);
+        if (parts.size() >= 2) {
+            QString key = parts.at(0).trimmed();
+            QString value = parts.mid(1).join("=").trimmed();
+            qputenv(key.toLocal8Bit().constData(), value.toLocal8Bit());
+        }
+    }
+}
 
 void test_db_singleton() {
     std::cout << "[TEST] Testing Database Singleton & Initialization..." << std::endl;
     
-    // Attempt initialization with environment variables or tactical defaults
-    QString dbHost = qEnvironmentVariable("INFERNO_DB_HOST", "127.0.0.1");
-    int dbPort = qEnvironmentVariable("INFERNO_DB_PORT", "5432").toInt();
-    QString dbName = qEnvironmentVariable("INFERNO_DB_NAME", "inferno_db");
-    QString dbUser = qEnvironmentVariable("INFERNO_DB_USER", "operator");
-    QString dbPass = qEnvironmentVariable("INFERNO_DB_PASSWORD", "inferno_password_2026");
+    // Load Tactical Secrets
+    loadEnv();
+    
+    // Attempt initialization with environment variables
+    QString dbHost = qEnvironmentVariable("INFERNO_DB_HOST");
+    int dbPort = qEnvironmentVariable("INFERNO_DB_PORT").toInt();
+    QString dbName = qEnvironmentVariable("INFERNO_DB_NAME");
+    QString dbUser = qEnvironmentVariable("INFERNO_DB_USER");
+    QString dbPass = qEnvironmentVariable("INFERNO_DB_PASSWORD");
 
-    bool ok = inferno::Inferno_Database::instance().initialize(dbHost, dbPort, dbName, dbUser, dbPass);
+    bool ok = inferno::Inferno_Database::instance().initialize(
+        dbHost.isEmpty() ? "127.0.0.1" : dbHost, 
+        dbPort > 0 ? dbPort : 5432, 
+        dbName.isEmpty() ? "inferno_db" : dbName, 
+        dbUser.isEmpty() ? "operator" : dbUser, 
+        dbPass);
     
     if (!ok) {
         std::cerr << "[FAIL] Database initialization failed. Ensure Postgres is running." << std::endl;

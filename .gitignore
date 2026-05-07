@@ -57,6 +57,7 @@ Makefile.*
 # ==========================================
 # 7. Project Security Constraints
 # ==========================================
+.env
 rules.md
 PROJECT.md
 assets/

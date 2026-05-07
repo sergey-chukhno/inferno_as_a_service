@@ -45,6 +45,11 @@ jobs:
     - name: Execute Native Assertions
       env:
         INFERNO_TESTING: 1
+        INFERNO_DB_HOST: localhost
+        INFERNO_DB_PORT: 5432
+        INFERNO_DB_NAME: inferno_db
+        INFERNO_DB_USER: operator
+        INFERNO_DB_PASSWORD: inferno_password_2026
         # Fix for Linux (Noble)
         QT_PLUGIN_PATH_LINUX: /usr/lib/x86_64-linux-gnu/qt6/plugins
         # Fix for macOS (Homebrew)
@@ -83,5 +88,10 @@ jobs:
     - name: Execute Native Assertions
       env:
         INFERNO_TESTING: 1
+        INFERNO_DB_HOST: localhost
+        INFERNO_DB_PORT: 5432
+        INFERNO_DB_NAME: inferno_db
+        INFERNO_DB_USER: operator
+        INFERNO_DB_PASSWORD: inferno_password_2026
         QT_PLUGIN_PATH: /opt/homebrew/lib/qt6/plugins
       run: ./build/inferno_tests

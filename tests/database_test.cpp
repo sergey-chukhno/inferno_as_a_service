@@ -6,8 +6,12 @@
 #include <QTextStream>
 #include <QUuid>
 
-void loadEnv(const QString& path) {
-    QFile file(path);
+void loadEnv(const QString& binaryPath) {
+    QFile file(binaryPath);
+    if (!file.exists()) {
+        file.setFileName(QCoreApplication::applicationDirPath() + "/../.env");
+    }
+
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
 
     QTextStream in(&file);

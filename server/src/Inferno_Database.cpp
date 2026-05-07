@@ -148,19 +148,24 @@ int Inferno_Database::registerAgent(const QString& uuid, const QString& ip, cons
     }
 
     // PostgreSQL 16 Implementation - SECURE & STABLE
-    // 1. Perform Secure UPSERT (No RETURNING to avoid driver portal bugs)
-    query.prepare("INSERT INTO agents (uuid, ip_address, hostname, os_info, last_seen, is_online) "
-                  "VALUES (:uuid, :ip, :host, :os, CURRENT_TIMESTAMP, TRUE) "
-                  "ON CONFLICT (uuid) DO UPDATE SET "
-                  "ip_address = EXCLUDED.ip_address, hostname = EXCLUDED.hostname, os_info = EXCLUDED.os_info, "
-                  "last_seen = EXCLUDED.last_seen, is_online = EXCLUDED.is_online");
-    
-    query.bindValue(":uuid", uuid);
-    query.bindValue(":ip", ip);
-    query.bindValue(":host", hostname);
-    query.bindValue(":os", osInfo);
+    // 1. Perform Secure UPSERT using Driver-Sanitized Dynamic SQL (Bypass QPSQL portal bugs)
+    QSqlField f_uuid("", QMetaType::fromType<QString>()); f_uuid.setValue(uuid);
+    QSqlField f_ip("", QMetaType::fromType<QString>()); f_ip.setValue(ip);
+    QSqlField f_host("", QMetaType::fromType<QString>()); f_host.setValue(hostname);
+    QSqlField f_os("", QMetaType::fromType<QString>()); f_os.setValue(osInfo);
 
-    if (!query.exec()) {
+    QString upsertSql = QString(
+        "INSERT INTO agents (uuid, ip_address, hostname, os_info, last_seen, is_online) "
+        "VALUES (%1, %2, %3, %4, CURRENT_TIMESTAMP, TRUE) "
+        "ON CONFLICT (uuid) DO UPDATE SET "
+        "ip_address = EXCLUDED.ip_address, hostname = EXCLUDED.hostname, os_info = EXCLUDED.os_info, "
+        "last_seen = EXCLUDED.last_seen, is_online = EXCLUDED.is_online"
+    ).arg(m_db.driver()->formatValue(f_uuid))
+     .arg(m_db.driver()->formatValue(f_ip))
+     .arg(m_db.driver()->formatValue(f_host))
+     .arg(m_db.driver()->formatValue(f_os));
+
+    if (!query.exec(upsertSql)) {
         qDebug() << "[Database] Error in UPSERT agent:" << query.lastError().text();
         return -1;
     }
@@ -180,12 +185,18 @@ bool Inferno_Database::logTelemetry(const QString& uuid, const QString& type, co
         return false;
     }
     QSqlQuery query(m_db);
-    query.prepare("INSERT INTO telemetry (agent_uuid, type, content) VALUES (:uuid, :type, :content)");
-    query.bindValue(":uuid", uuid);
-    query.bindValue(":type", type);
-    query.bindValue(":content", content);
+    
+    // Perform Insert using Driver-Sanitized Dynamic SQL (Bypass QPSQL portal bugs)
+    QSqlField f_uuid("", QMetaType::fromType<QString>()); f_uuid.setValue(uuid);
+    QSqlField f_type("", QMetaType::fromType<QString>()); f_type.setValue(type);
+    QSqlField f_content("", QMetaType::fromType<QString>()); f_content.setValue(content);
 
-    if (!query.exec()) {
+    QString sql = QString("INSERT INTO telemetry (agent_uuid, type, content) VALUES (%1, %2, %3)")
+        .arg(m_db.driver()->formatValue(f_uuid))
+        .arg(m_db.driver()->formatValue(f_type))
+        .arg(m_db.driver()->formatValue(f_content));
+
+    if (!query.exec(sql)) {
         qDebug() << "[Database] Error logging telemetry:" << query.lastError().text();
         return false;
     }

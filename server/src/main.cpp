@@ -8,10 +8,17 @@
 #include <QFile>
 #include <QTextStream>
 
-void loadEnv(const QString& path) {
-    QFile file(path);
+void loadEnv(const QString& binaryPath) {
+    // Probe 1: Application Binary Directory (Production/Bundle)
+    QFile file(binaryPath);
+    
+    // Probe 2: Project Root (Development) - fallback
+    if (!file.exists()) {
+        file.setFileName(QCoreApplication::applicationDirPath() + "/../.env");
+    }
+
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        qDebug() << "[Config] No .env found at" << path << "- Using system environment.";
+        qDebug() << "[Config] No .env found at" << binaryPath << "or root - Using system environment.";
         return;
     }
 

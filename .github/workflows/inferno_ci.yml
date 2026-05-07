@@ -7,12 +7,10 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
+  # Linux Job - Matches Required Check: build-and-test (ubuntu-latest, gcc_64)
+  linux-build:
+    name: build-and-test (ubuntu-latest, gcc_64)
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16
@@ -33,18 +31,10 @@ jobs:
       uses: actions/checkout@v4
 
     - name: Install Dependencies (Linux)
-      if: runner.os == 'Linux'
       run: |
         sudo apt-get update
         sudo apt-get install -y ninja-build cmake libgl1-mesa-dev qt6-base-dev qt6-sql-psql libpq-dev
-        # Fix permissions for the schema
         PGPASSWORD=inferno_password_2026 psql -h localhost -U operator -d inferno_db -c "GRANT ALL ON SCHEMA public TO operator;"
-
-    - name: Install Dependencies (macOS)
-      if: runner.os == 'macOS'
-      run: |
-        brew install ninja cmake qt
-        # Postgres is already running as a service in this workflow, so no brew install needed here
 
     - name: Configure CMake
       run: cmake -B build -S . -G Ninja
@@ -55,6 +45,33 @@ jobs:
     - name: Execute Native Assertions
       env:
         INFERNO_TESTING: 1
-        # Ensure Linux can find the system SQL plugins
         QT_PLUGIN_PATH: /usr/lib/x86_64-linux-gnu/qt6/plugins
+      run: ./build/inferno_tests
+
+  # macOS Job - Matches Required Check: build-and-test (macos-latest, clang_64)
+  macos-build:
+    name: build-and-test (macos-latest, clang_64)
+    runs-on: macos-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies (macOS)
+      run: |
+        brew install ninja cmake qt postgresql@16
+        brew services start postgresql@16
+        sleep 10 # Wait for PG to fully start
+        psql postgres -c "CREATE DATABASE inferno_db;"
+        psql postgres -c "CREATE USER operator WITH PASSWORD 'inferno_password_2026';"
+        psql postgres -c "GRANT ALL PRIVILEGES ON DATABASE inferno_db TO operator;"
+
+    - name: Configure CMake
+      run: cmake -B build -S . -G Ninja
+      
+    - name: Native Build
+      run: ninja -C build
+      
+    - name: Execute Native Assertions
+      env:
+        INFERNO_TESTING: 1
       run: ./build/inferno_tests

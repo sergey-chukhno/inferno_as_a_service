@@ -30,11 +30,11 @@ bool Inferno_Database::initialize(const QString& host, int port, const QString& 
     }
 
     if (!m_db.open()) {
-        qDebug() << "[Database] CRITICAL: Failed to connect to PostgreSQL:" << m_db.lastError().text();
+        qDebug() << "[Database] CRITICAL: Failed to open" << m_db.driverName() << "connection:" << m_db.lastError().text();
         return false;
     }
 
-    qDebug() << "[Database] Successfully connected to PostgreSQL.";
+    qDebug() << "[Database] Successfully connected via" << m_db.driverName();
     return createTables();
 }
 

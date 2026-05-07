@@ -65,7 +65,6 @@ private:
     Inferno_Database& operator=(const Inferno_Database&) = delete;
 
     bool createTables();
-    int getAgentInternalId(const QString& uuid);
 
     QSqlDatabase m_db;
 };

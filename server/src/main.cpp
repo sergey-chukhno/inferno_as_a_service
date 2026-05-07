@@ -9,7 +9,13 @@ int main(int argc, char** argv) {
     QApplication app(argc, argv);
 
     // Initialize Database Persistence (Circle 5)
-    if (!inferno::Inferno_Database::instance().initialize("127.0.0.1", 5432, "inferno_db", "operator", "inferno_password_2026")) {
+    QString dbHost = qEnvironmentVariable("INFERNO_DB_HOST", "127.0.0.1");
+    int dbPort = qEnvironmentVariable("INFERNO_DB_PORT", "5432").toInt();
+    QString dbName = qEnvironmentVariable("INFERNO_DB_NAME", "inferno_db");
+    QString dbUser = qEnvironmentVariable("INFERNO_DB_USER", "operator");
+    QString dbPass = qEnvironmentVariable("INFERNO_DB_PASSWORD", "inferno_password_2026");
+
+    if (!inferno::Inferno_Database::instance().initialize(dbHost, dbPort, dbName, dbUser, dbPass)) {
         qDebug() << "[Server] WARNING: Continuing WITHOUT persistence. Database is offline.";
     }
 

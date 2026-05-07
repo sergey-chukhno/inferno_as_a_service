@@ -6,8 +6,14 @@
 void test_db_singleton() {
     std::cout << "[TEST] Testing Database Singleton & Initialization..." << std::endl;
     
-    // Attempt initialization with test credentials
-    bool ok = inferno::Inferno_Database::instance().initialize("127.0.0.1", 5432, "inferno_db", "operator", "inferno_password_2026");
+    // Attempt initialization with environment variables or tactical defaults
+    QString dbHost = qEnvironmentVariable("INFERNO_DB_HOST", "127.0.0.1");
+    int dbPort = qEnvironmentVariable("INFERNO_DB_PORT", "5432").toInt();
+    QString dbName = qEnvironmentVariable("INFERNO_DB_NAME", "inferno_db");
+    QString dbUser = qEnvironmentVariable("INFERNO_DB_USER", "operator");
+    QString dbPass = qEnvironmentVariable("INFERNO_DB_PASSWORD", "inferno_password_2026");
+
+    bool ok = inferno::Inferno_Database::instance().initialize(dbHost, dbPort, dbName, dbUser, dbPass);
     
     if (!ok) {
         std::cerr << "[FAIL] Database initialization failed. Ensure Postgres is running." << std::endl;

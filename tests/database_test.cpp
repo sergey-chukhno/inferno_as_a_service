@@ -26,6 +26,7 @@ void test_db_agent_registration() {
     int id1 = inferno::Inferno_Database::instance().registerAgent(test_uuid, ip, "TestBox", "macOS 15");
     int id2 = inferno::Inferno_Database::instance().registerAgent(test_uuid, ip, "TestBox", "macOS 15");
     
+    assert(id1 > 0 && "Agent registration should return a valid ID");
     assert(id1 == id2 && "Duplicate registration should return the same ID via ON CONFLICT UPSERT");
     
     std::cout << "[PASS] Agent UPSERT logic verified (ID: " << id1 << ")." << std::endl;

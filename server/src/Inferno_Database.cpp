@@ -143,17 +143,20 @@ int Inferno_Database::registerAgent(const QString& uuid, const QString& ip, cons
         return -1;
     }
 
-    // PostgreSQL 16 Implementation - Using dynamic execution to bypass QPSQL prepared statement bugs
-    QString sql = QString(
-        "INSERT INTO agents (uuid, ip_address, hostname, os_info, last_seen, is_online) "
-        "VALUES ('%1', '%2', '%3', '%4', CURRENT_TIMESTAMP, TRUE) "
-        "ON CONFLICT (uuid) DO UPDATE SET "
-        "ip_address = EXCLUDED.ip_address, hostname = EXCLUDED.hostname, os_info = EXCLUDED.os_info, "
-        "last_seen = EXCLUDED.last_seen, is_online = EXCLUDED.is_online "
-        "RETURNING id"
-    ).arg(uuid, ip, hostname, osInfo);
+    // PostgreSQL 16 Implementation - SECURE: Using prepared statements to prevent SQL Injection
+    query.prepare("INSERT INTO agents (uuid, ip_address, hostname, os_info, last_seen, is_online) "
+                  "VALUES (:uuid, :ip, :host, :os, CURRENT_TIMESTAMP, TRUE) "
+                  "ON CONFLICT (uuid) DO UPDATE SET "
+                  "ip_address = EXCLUDED.ip_address, hostname = EXCLUDED.hostname, os_info = EXCLUDED.os_info, "
+                  "last_seen = EXCLUDED.last_seen, is_online = EXCLUDED.is_online "
+                  "RETURNING id");
+    
+    query.bindValue(":uuid", uuid);
+    query.bindValue(":ip", ip);
+    query.bindValue(":host", hostname);
+    query.bindValue(":os", osInfo);
 
-    if (query.exec(sql) && query.next()) {
+    if (query.exec() && query.next()) {
         return query.value(0).toInt();
     } else {
         qDebug() << "[Database] Error registering agent:" << query.lastError().text();

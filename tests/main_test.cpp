@@ -25,8 +25,18 @@ extern void test_keylogger_init_state();
 extern void test_keylogger_start_stop();
 extern void test_keylogger_dump_clears_buffer();
 extern void test_keylogger_capacity_limit();
+extern void test_db_singleton();
+extern void test_db_agent_registration();
+extern void test_db_telemetry_history();
+extern void test_db_keylog_history();
+extern void test_db_loot_persistence();
 
-int main() {
+#include <QCoreApplication>
+
+int main(int argc, char* argv[]) {
+    // QSqlDatabase and other Qt components require a QCoreApplication instance
+    QCoreApplication app(argc, argv);
+
     std::cout << "\n=== Inferno TDD Suite ===" << std::endl;
     
     test_socket_creation();
@@ -46,6 +56,13 @@ int main() {
     test_keylogger_start_stop();
     test_keylogger_dump_clears_buffer();
     test_keylogger_capacity_limit();
+    
+    // Circle 5 Persistence Tests
+    test_db_singleton();
+    test_db_agent_registration();
+    test_db_telemetry_history();
+    test_db_keylog_history();
+    test_db_loot_persistence();
     
     std::cout << "=========================\n" << std::endl;
     return 0;

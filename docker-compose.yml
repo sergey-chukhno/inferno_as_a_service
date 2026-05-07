@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  inferno-db:
+    image: postgres:16-alpine
+    container_name: inferno_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: ${INFERNO_DB_NAME:-inferno_db}
+      POSTGRES_USER: ${INFERNO_DB_USER:-operator}
+      POSTGRES_PASSWORD: ${INFERNO_DB_PASSWORD:?set INFERNO_DB_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - inferno_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  inferno_data:
+    driver: local

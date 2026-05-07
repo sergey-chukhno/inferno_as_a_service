@@ -2,41 +2,39 @@ name: Inferno TDD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "feat/server/Database-Wrath" ]
   pull_request:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
-    strategy:
-      matrix:  
-        include:
-          - os: ubuntu-latest
-            qt_arch: gcc_64
-          - os: macos-latest
-            qt_arch: clang_64
-        
-    runs-on: ${{ matrix.os }}
-    
+  # Linux Job - Matches Required Check: build-and-test (ubuntu-latest, gcc_64)
+  linux-build:
+    name: build-and-test (ubuntu-latest, gcc_64)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: inferno_db
+          POSTGRES_USER: operator
+          POSTGRES_PASSWORD: inferno_password_2026
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Cache Build Directory
-      uses: actions/cache@v4
-      with:
-        path: build
-        key: ${{ runner.os }}-build-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.c', '**/*.cc', '**/*.cpp', '**/*.cxx', '**/*.h', '**/*.hh', '**/*.hpp', '**/*.hxx', '**/*.qrc', '**/*.qss', '**/*.ui', 'server/resources/**') }}
-
-    - name: Install Dependencies (macOS)
-      if: runner.os == 'macOS'
-      run: brew install ninja cmake qt
-
-    - name: Install Dependencies (Linux/WSL)
-      if: runner.os == 'Linux'
+    - name: Install Dependencies (Linux)
       run: |
         sudo apt-get update
-        sudo apt-get install -y ninja-build cmake libgl1-mesa-dev qt6-base-dev qt6-base-private-dev
+        sudo apt-get install -y ninja-build cmake libgl1-mesa-dev qt6-base-dev libqt6sql6-psql libpq-dev
+        PGPASSWORD=inferno_password_2026 psql -h localhost -U operator -d inferno_db -c "GRANT ALL ON SCHEMA public TO operator;"
 
     - name: Configure CMake
       run: cmake -B build -S . -G Ninja
@@ -47,4 +45,53 @@ jobs:
     - name: Execute Native Assertions
       env:
         INFERNO_TESTING: 1
+        INFERNO_DB_HOST: localhost
+        INFERNO_DB_PORT: 5432
+        INFERNO_DB_NAME: inferno_db
+        INFERNO_DB_USER: operator
+        INFERNO_DB_PASSWORD: inferno_password_2026
+        # Fix for Linux (Noble)
+        QT_PLUGIN_PATH_LINUX: /usr/lib/x86_64-linux-gnu/qt6/plugins
+        # Fix for macOS (Homebrew)
+        QT_PLUGIN_PATH_MACOS: /opt/homebrew/lib/qt6/plugins
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          export QT_PLUGIN_PATH=$QT_PLUGIN_PATH_LINUX
+        else
+          export QT_PLUGIN_PATH=$QT_PLUGIN_PATH_MACOS
+        fi
+        ./build/inferno_tests
+
+  # macOS Job - Matches Required Check: build-and-test (macos-latest, clang_64)
+  macos-build:
+    name: build-and-test (macos-latest, clang_64)
+    runs-on: macos-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install Dependencies (macOS)
+      run: |
+        brew install ninja cmake qt postgresql@16
+        brew services start postgresql@16
+        sleep 10 # Wait for PG to fully start
+        psql postgres -c "CREATE DATABASE inferno_db;"
+        psql postgres -c "CREATE USER operator WITH PASSWORD 'inferno_password_2026';"
+        psql postgres -c "GRANT ALL PRIVILEGES ON DATABASE inferno_db TO operator;"
+
+    - name: Configure CMake
+      run: cmake -B build -S . -G Ninja
+      
+    - name: Native Build
+      run: ninja -C build
+      
+    - name: Execute Native Assertions
+      env:
+        INFERNO_TESTING: 1
+        INFERNO_DB_HOST: localhost
+        INFERNO_DB_PORT: 5432
+        INFERNO_DB_NAME: inferno_db
+        INFERNO_DB_USER: operator
+        INFERNO_DB_PASSWORD: inferno_password_2026
+        QT_PLUGIN_PATH: /opt/homebrew/lib/qt6/plugins
       run: ./build/inferno_tests

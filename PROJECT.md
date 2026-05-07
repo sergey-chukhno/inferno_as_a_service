@@ -79,18 +79,19 @@ Créer une GUI avec Qt
 
 ---
 
-## 🔴 5ème Cercle — Colère
+## 🔴 5ème Cercle — Colère [COMPLETED]
 
 ### Objectif
-Ajouter persistance + traitement
+Ajouter persistance + traitement forensic.
 
 ### Features
-- Affichage en temps réel
-- Stockage en base PostgreSQL
-- Classe `LPTF_Database`
-
-### Bonus
-- Clients online/offline visibles
+- Affichage en temps réel (Signal/Slot)
+- Stockage en base PostgreSQL 16
+- Classe `Inferno_Database` (Singleton)
+- Hardware-based UUID Fingerprinting
+- Loot persistence (BYTEA) pour exfiltration binaire
+- Reconnexion automatique et tracking online/offline
+- OPSEC-hardened configuration (.env loader)
 
 ---
 

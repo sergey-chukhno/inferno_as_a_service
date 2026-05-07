@@ -44,8 +44,9 @@ int main(int argc, char** argv) {
 
     // Strict OPSEC Check: Require database credentials
     if (dbPass.isEmpty()) {
-        qDebug() << "[Database] CRITICAL ERROR: Database credentials NOT found in environment or .env file!";
-        qDebug() << "[Database] Please copy .env.example to .env and configure your secrets.";
+        qCritical() << "[Database] CRITICAL ERROR: Database credentials NOT found in environment or .env file!";
+        qCritical() << "[Database] Please copy .env.example to .env and configure your secrets.";
+        return 1;
     }
 
     if (!inferno::Inferno_Database::instance().initialize(

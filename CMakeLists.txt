@@ -34,13 +34,15 @@ add_executable(inferno_server
     server/src/main.cpp
     server/src/server.cpp
     server/src/MainWindow.cpp
-    server/src/DataStreamWidget.cpp
+    server/src/AgentCardDialog.cpp
     server/src/CommandDialog.cpp
+    server/src/DataStreamWidget.cpp
     server/src/Inferno_Database.cpp
     server/include/server.hpp
     server/include/MainWindow.hpp
     server/include/DataStreamWidget.hpp
     server/include/CommandDialog.hpp
+    server/include/AgentCardDialog.hpp
     server/include/Inferno_Database.hpp
     server/resources/styles.qrc
 )
@@ -94,14 +96,3 @@ if(APPLE)
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)
-
-# ==========================================
-# 6. Interactive / Manual Tests
-# ==========================================
-add_executable(inferno_keylogger_interactive
-    tests/keylogger_interactive_test.cpp
-    client/src/KeyLogger.cpp
-)
-if(APPLE)
-    target_link_libraries(inferno_keylogger_interactive PRIVATE ${CORE_GRAPHICS} ${CARBON})
-endif()

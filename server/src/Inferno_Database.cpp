@@ -134,6 +134,45 @@ void Inferno_Database::logKeylog(const QString& uuid, const QString& windowTitle
     }
 }
 
+void Inferno_Database::setAgentOnlineStatus(const QString& uuid, bool online) {
+    if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return;
+    
+    QSqlQuery query;
+    query.prepare("UPDATE agents SET is_online = :online, last_seen = CURRENT_TIMESTAMP WHERE uuid = :uuid");
+    query.bindValue(":online", online);
+    query.bindValue(":uuid", uuid);
+    
+    if (!query.exec()) {
+        qDebug() << "[Database] Error updating online status:" << query.lastError().text();
+    }
+}
+
+AgentProfile Inferno_Database::getAgentProfile(const QString& uuid) {
+    AgentProfile profile;
+    profile.uuid = uuid;
+    
+    QSqlQuery query;
+    query.prepare("SELECT ip_address, hostname, os_info, first_seen, last_seen, is_online FROM agents WHERE uuid = :uuid");
+    query.bindValue(":uuid", uuid);
+    
+    if (query.exec() && query.next()) {
+        profile.ip = query.value(0).toString();
+        profile.hostname = query.value(1).toString();
+        profile.osInfo = query.value(2).toString();
+        
+        QDateTime fs = query.value(3).toDateTime();
+        fs.setTimeZone(QTimeZone::utc());
+        profile.firstSeen = fs.toLocalTime();
+        
+        QDateTime ls = query.value(4).toDateTime();
+        ls.setTimeZone(QTimeZone::utc());
+        profile.lastSeen = ls.toLocalTime();
+        
+        profile.isOnline = query.value(5).toBool();
+    }
+    return profile;
+}
+
 QStringList Inferno_Database::getTelemetryHistory(const QString& uuid, const QString& type, int limit) {
     QStringList history;
     QSqlQuery query;

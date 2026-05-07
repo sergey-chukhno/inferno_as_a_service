@@ -4,6 +4,7 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QTextStream>
+#include <QUuid>
 
 void loadEnv(const QString& path) {
     QFile file(path);
@@ -44,8 +45,8 @@ void test_db_singleton() {
         dbPass);
     
     if (!ok) {
-        std::cerr << "[FAIL] Database initialization failed. Ensure Postgres is running." << std::endl;
-        return;
+        std::cerr << "[FATAL] Database initialization failed. Aborting TDD suite." << std::endl;
+        exit(1);
     }
 
     std::cout << "[PASS] Database connected successfully." << std::endl;
@@ -54,34 +55,39 @@ void test_db_singleton() {
 void test_db_agent_registration() {
     std::cout << "[TEST] Testing Agent Registration (UUID persistence)..." << std::endl;
     
-    QString test_uuid = "TEST-UUID-999";
+    // Use dynamic UUID to prevent stale record verification
+    QString test_uuid = "TEST-REG-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
     QString ip = "192.168.1.50";
     
     int id1 = inferno::Inferno_Database::instance().registerAgent(test_uuid, ip, "TestBox", "macOS 15");
-    int id2 = inferno::Inferno_Database::instance().registerAgent(test_uuid, ip, "TestBox", "macOS 15");
-    
-    assert(id1 > 0 && "Agent registration should return a valid ID");
-    assert(id1 == id2 && "Duplicate registration should return the same ID via ON CONFLICT UPSERT");
-    
-    std::cout << "[PASS] Agent UPSERT logic verified (ID: " << id1 << ")." << std::endl;
+    assert(id1 > 0 && "Agent registration should return valid SQL ID");
+
+    // Second registration (UPSERT)
+    int id2 = inferno::Inferno_Database::instance().registerAgent(test_uuid, "10.0.0.5", "TestBox-Updated", "macOS 15.1");
+    assert(id1 == id2 && "UPSERT should return the same internal ID for the same UUID");
+
+    std::cout << "[PASS] Agent UPSERT logic verified (ID: " << id2 << ")." << std::endl;
 }
 
 void test_db_telemetry_history() {
     std::cout << "[TEST] Testing Telemetry History retrieval..." << std::endl;
     
-    QString test_uuid = "TEST-UUID-999";
-    inferno::Inferno_Database::instance().logTelemetry(test_uuid, "TEST", "Persistence Verification Signal 0x01");
+    QString test_uuid = "TEST-TEL-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
+    QString marker = "Verification-Signal-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(12);
     
+    inferno::Inferno_Database::instance().registerAgent(test_uuid, "127.0.0.1", "HistBox", "Linux");
+    inferno::Inferno_Database::instance().logTelemetry(test_uuid, "TEST", marker);
+
     QStringList history = inferno::Inferno_Database::instance().getTelemetryHistory(test_uuid);
-    
+
     bool found = false;
     for (const QString& line : history) {
-        if (line.contains("Persistence Verification Signal 0x01")) {
+        if (line.contains(marker)) {
             found = true;
             break;
         }
     }
-    
+
     assert(found && "Telemetry record should be retrievable from SQL");
     std::cout << "[PASS] Telemetry persistence verified." << std::endl;
 }
@@ -89,16 +95,17 @@ void test_db_telemetry_history() {
 void test_db_keylog_history() {
     std::cout << "[TEST] Testing Keylog History retrieval..." << std::endl;
     
-    QString test_uuid = "TEST-UUID-999";
-    QString key_data = "Tactical Keystroke Data 2026";
+    QString test_uuid = "TEST-KEY-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
+    QString marker = "Keystroke-Data-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(12);
     
-    bool ok = inferno::Inferno_Database::instance().logKeylog(test_uuid, key_data);
+    inferno::Inferno_Database::instance().registerAgent(test_uuid, "127.0.0.1", "KeyBox", "Linux");
+    bool ok = inferno::Inferno_Database::instance().logKeylog(test_uuid, marker);
     assert(ok && "Keylog should be saved to SQL");
     
     QStringList history = inferno::Inferno_Database::instance().getKeylogHistory(test_uuid, 10);
     bool found = false;
     for (const QString& entry : history) {
-        if (entry.contains(key_data)) {
+        if (entry.contains(marker)) {
             found = true;
             break;
         }
@@ -111,8 +118,11 @@ void test_db_keylog_history() {
 void test_db_loot_persistence() {
     std::cout << "[TEST] Testing Loot (Binary) persistence..." << std::endl;
     
-    QString test_uuid = "TEST-UUID-999";
+    QString test_uuid = "TEST-LOOT-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
     QByteArray test_data = QByteArray::fromHex("89504E470D0A1A0A"); // PNG Header
+    
+    // Register agent first (PostgreSQL requires a valid reference)
+    inferno::Inferno_Database::instance().registerAgent(test_uuid, "127.0.0.1", "LootBox", "Linux");
     
     bool ok = inferno::Inferno_Database::instance().logLoot(test_uuid, "screenshot.png", "image/png", test_data);
     assert(ok && "Loot logging should return true");

@@ -5,7 +5,7 @@
 #include <QFile>
 #include <QTextStream>
 
-void loadEnv(const QString& path = ".env") {
+void loadEnv(const QString& path) {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
 
@@ -26,8 +26,8 @@ void loadEnv(const QString& path = ".env") {
 void test_db_singleton() {
     std::cout << "[TEST] Testing Database Singleton & Initialization..." << std::endl;
     
-    // Load Tactical Secrets
-    loadEnv();
+    // Load Tactical Secrets - Anchored to Binary Location
+    loadEnv(QCoreApplication::applicationDirPath() + "/.env");
     
     // Attempt initialization with environment variables
     QString dbHost = qEnvironmentVariable("INFERNO_DB_HOST");

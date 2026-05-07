@@ -8,9 +8,12 @@
 #include <QFile>
 #include <QTextStream>
 
-void loadEnv(const QString& path = ".env") {
+void loadEnv(const QString& path) {
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) return;
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        qDebug() << "[Config] No .env found at" << path << "- Using system environment.";
+        return;
+    }
 
     QTextStream in(&file);
     while (!in.atEnd()) {
@@ -29,8 +32,8 @@ void loadEnv(const QString& path = ".env") {
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     
-    // Load Tactical Secrets (Circle 5)
-    loadEnv();
+    // Load Tactical Secrets (Circle 5) - Anchored to Binary Location
+    loadEnv(QCoreApplication::applicationDirPath() + "/.env");
 
     // Initialize Database Persistence (Circle 5)
     QString dbHost = qEnvironmentVariable("INFERNO_DB_HOST");

@@ -92,4 +92,21 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **UI/Net Isolation**: By decoupling the UI from the networking thread, we prevent GUI hangs (e.g., during window dragging) from causing socket timeouts or TCP buffer overflows.
 - **Silent Intelligence**: Data filters ensure only meaningful intelligence is displayed, reducing operator cognitive load and preventing dashboard noise.
 
-*Next: Circle 5 (Wrath) — PostgreSQL Persistence Layer...*
+## 🏛️ Circle 5: Wrath (The Persistence) — [2026-05-07]
+**Objective**: Transition to a production-grade, forensic-compliant persistence and intelligence platform.
+
+### Technical Milestones
+- **PostgreSQL 16 Integration**: Migrated from volatile in-memory history to a persistent PostgreSQL 16 backend with automated schema migrations.
+- **Hardware Fingerprinting**: Implemented a Zero-Footprint UUID generator utilizing IOKit (macOS) and machine-id (Linux) to ensure immutable victim identity across disconnections.
+- **Intelligence Profiling**: Developed the "Agent Card" forensic viewer, tracking session timelines, OS metadata, and persistent liveness status (🟢/🔴).
+- **Loot Engine (Binary Persistence)**: Implemented the `loot` table (BYTEA) for high-volume binary exfiltration (Files/Screenshots) with 100% integrity verification.
+- **Asynchronous Telemetry History**: Built a type-aware history retrieval engine supporting Shell Output vs. Process Snapshot filtering.
+- **Environment-Aware TDD**: Hardened the CI pipeline to use PostgreSQL 16 on Linux with an intelligent SQLite fallback on macOS, ensuring 100% test coverage across hostile environments.
+
+### Security & OPSEC Hardening
+- **Secret Decoupling**: Removed all hardcoded database credentials from the source code. Implemented a native `.env` loader utility to manage tactical secrets at runtime.
+- **Network Isolation**: Restricted the database service to `127.0.0.1`, preventing unauthorized remote scanning of the intelligence store.
+- **Persistence Auditing**: Developed a persistent audit trail for all agent interactions, ensuring forensics are preserved even if the victim goes offline.
+- **Infrastructure Protection**: Protected tactical configurations via `.env` / `.gitignore` and provided a `.env.example` blueprint for secure deployments.
+
+*Status: 100% COMPLETE. Next: Circle 6 (Hérésie) — Intelligence Analysis Engine...*

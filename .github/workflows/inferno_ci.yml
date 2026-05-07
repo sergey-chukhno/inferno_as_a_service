@@ -35,7 +35,7 @@ jobs:
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y ninja-build cmake libgl1-mesa-dev libpq-dev postgresql
+        sudo apt-get install -y ninja-build cmake libgl1-mesa-dev libpq-dev postgresql libqt6sql6-psql
         sudo systemctl start postgresql
         sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'inferno_password_2026';"
         sudo -u postgres psql -c "CREATE DATABASE inferno_db;"
@@ -62,4 +62,5 @@ jobs:
     - name: Execute Native Assertions
       env:
         INFERNO_TESTING: 1
+        QT_PLUGIN_PATH: /usr/lib/x86_64-linux-gnu/qt6/plugins
       run: ./build/inferno_tests

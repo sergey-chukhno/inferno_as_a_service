@@ -78,19 +78,11 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Qt6 Infrastructure**: Integrated Qt6 Widgets/Core/Gui into the CMake build system with `AUTOMOC` support.
 - **Asynchronous Signal Migration**: Refactored `inferno::Server` to inherit from `QObject`, replacing blocking/CLI logging with a thread-safe Signal/Slot architecture.
 - **Worker Thread Model**: Designed the server to run in a dedicated `QThread`, ensuring UI responsiveness during heavy telemetry throughput.
-- **Design System established**: Created `styles.qss` defining the "Inferno" aesthetic (Neon Green on Deep Charcoal).
-- **High-Fidelity MainWindow**: Implemented a three-pane layout (Agents, Telemetry, Keylogs) using a robust `QSplitter` architecture.
-- **Interactive Animation Engine**: 
-    *   **Rotating Radar**: Implemented a `QTimer`-driven rotation for the Scan button.
-    *   **State-Based Surveillance**: Developed a toggleable Eye icon system with distinct 'closed' and 'active neon' states.
-    *   **Tactical Data Stream**: Built a multi-line, high-density binary/hex scrolling footer for real-time visual feedback.
-- **Asset Optimization**: Migrated from sprite-sheets to dedicated state-based PNG assets for pixel-perfect icon rendering.
-
-### Circle 4 (Avarice): High-Fidelity C2 Dashboard
-- **Dashboard Architecture**: Transitioned to a premium 3-pane Qt6 interface with dark "Neon-on-Charcoal" aesthetics.
+- **High-Fidelity Dashboard**: Implemented a 3-pane layout (Agents, Telemetry, Keylogs) with a dark "Neon-on-Charcoal" design system.
 - **Surveillance Pulse**: Implemented real-time keystroke polling (1.5s interval) with smart silence suppression.
 - **Intelligence Auditing**: Developed a robust instant-filtering engine for telemetry and keystrokes using atomic regex splitting and historical session buffers.
 - **Operator UX**: Unified utility iconography (Copy, Paste, Search, History) and implemented tactical timestamping `[HH:mm:ss]`.
+- **Animation Engine**: Developed a `QTimer`-driven radar rotation and state-based surveillance toggle logic.
 - **Protocol Stability**: Fixed binary payload truncation issues and hardened the agent-server command dispatch loop.
 - **CI/CD Maturity**: Integrated Qt6 SDK into GitHub Actions with cross-platform build caching for macOS and Linux.
 

@@ -246,6 +246,8 @@ AgentProfile Inferno_Database::getAgentProfile(const QString& uuid) {
         profile.lastSeen = ls.toLocalTime();
         
         profile.isOnline = query.value(5).toBool();
+    } else if (query.lastError().isValid()) {
+        qDebug() << "[Database] Error fetching agent profile for" << uuid << ":" << query.lastError().text();
     }
     return profile;
 }

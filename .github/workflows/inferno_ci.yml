@@ -12,8 +12,10 @@ jobs:
       matrix:  
         include:
           - os: ubuntu-latest
+            qt_version: 6.5.0
             qt_arch: gcc_64
           - os: macos-latest
+            qt_version: 6.5.0
             qt_arch: clang_64
         
     runs-on: ${{ matrix.os }}
@@ -22,21 +24,34 @@ jobs:
     - name: Checkout Code
       uses: actions/checkout@v4
 
-    - name: Cache Build Directory
-      uses: actions/cache@v4
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
       with:
-        path: build
-        key: ${{ runner.os }}-build-${{ hashFiles('**/CMakeLists.txt', '**/*.cmake', '**/*.c', '**/*.cc', '**/*.cpp', '**/*.cxx', '**/*.h', '**/*.hh', '**/*.hpp', '**/*.hxx', '**/*.qrc', '**/*.qss', '**/*.ui', 'server/resources/**') }}
+        version: ${{ matrix.qt_version }}
+        arch: ${{ matrix.qt_arch }}
+        modules: 'qtbase qtsql'
 
-    - name: Install Dependencies (macOS)
-      if: runner.os == 'macOS'
-      run: brew install ninja cmake qt
-
-    - name: Install Dependencies (Linux/WSL)
+    - name: Install System Dependencies (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y ninja-build cmake libgl1-mesa-dev qt6-base-dev qt6-base-private-dev
+        sudo apt-get install -y ninja-build cmake libgl1-mesa-dev libpq-dev postgresql
+        sudo systemctl start postgresql
+        sudo -u postgres psql -c "ALTER USER postgres PASSWORD 'inferno_password_2026';"
+        sudo -u postgres psql -c "CREATE DATABASE inferno_db;"
+        sudo -u postgres psql -c "CREATE USER operator WITH PASSWORD 'inferno_password_2026';"
+        sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE inferno_db TO operator;"
+        sudo -u postgres psql -d inferno_db -c "GRANT ALL ON SCHEMA public TO operator;"
+
+    - name: Install System Dependencies (macOS)
+      if: runner.os == 'macOS'
+      run: |
+        brew install ninja cmake postgresql@16
+        brew services start postgresql@16
+        sleep 5
+        psql postgres -c "CREATE DATABASE inferno_db;"
+        psql postgres -c "CREATE USER operator WITH PASSWORD 'inferno_password_2026';"
+        psql postgres -c "GRANT ALL PRIVILEGES ON DATABASE inferno_db TO operator;"
 
     - name: Configure CMake
       run: cmake -B build -S . -G Ninja

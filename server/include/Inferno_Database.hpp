@@ -20,11 +20,11 @@ struct AgentProfile {
     QString osInfo;
     QDateTime firstSeen;
     QDateTime lastSeen;
-    bool isOnline;
+    bool isOnline = false;
 };
 
 struct LootEntry {
-    int id;
+    int id = 0;
     QString agentUuid;
     QString filename;
     QString fileType;

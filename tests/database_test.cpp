@@ -86,6 +86,28 @@ void test_db_telemetry_history() {
     std::cout << "[PASS] Telemetry persistence verified." << std::endl;
 }
 
+void test_db_keylog_history() {
+    std::cout << "[TEST] Testing Keylog History retrieval..." << std::endl;
+    
+    QString test_uuid = "TEST-UUID-999";
+    QString key_data = "Tactical Keystroke Data 2026";
+    
+    bool ok = inferno::Inferno_Database::instance().logKeylog(test_uuid, key_data);
+    assert(ok && "Keylog should be saved to SQL");
+    
+    QStringList history = inferno::Inferno_Database::instance().getKeylogHistory(test_uuid, 10);
+    bool found = false;
+    for (const QString& entry : history) {
+        if (entry.contains(key_data)) {
+            found = true;
+            break;
+        }
+    }
+    
+    assert(found && "Keylog record should be retrievable from SQL via JOIN");
+    std::cout << "[PASS] Keylog history persistence verified." << std::endl;
+}
+
 void test_db_loot_persistence() {
     std::cout << "[TEST] Testing Loot (Binary) persistence..." << std::endl;
     

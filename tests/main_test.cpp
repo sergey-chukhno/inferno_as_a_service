@@ -28,6 +28,7 @@ extern void test_keylogger_capacity_limit();
 extern void test_db_singleton();
 extern void test_db_agent_registration();
 extern void test_db_telemetry_history();
+extern void test_db_keylog_history();
 extern void test_db_loot_persistence();
 
 #include <QCoreApplication>
@@ -60,6 +61,7 @@ int main(int argc, char* argv[]) {
     test_db_singleton();
     test_db_agent_registration();
     test_db_telemetry_history();
+    test_db_keylog_history();
     test_db_loot_persistence();
     
     std::cout << "=========================\n" << std::endl;

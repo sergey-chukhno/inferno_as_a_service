@@ -50,10 +50,19 @@ bool Inferno_Database::createTables() {
 
     if (driver == "QSQLITE") {
         // SQLite Compatible Schema
-        query.exec("CREATE TABLE IF NOT EXISTS agents (id INTEGER PRIMARY KEY AUTOINCREMENT, uuid VARCHAR(64) UNIQUE, ip_address VARCHAR(45), hostname TEXT, os_info TEXT, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_online BOOLEAN DEFAULT TRUE)");
-        query.exec("CREATE TABLE IF NOT EXISTS telemetry (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_uuid VARCHAR(64), type VARCHAR(32), content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
-        query.exec("CREATE TABLE IF NOT EXISTS keylogs (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, data TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
-        query.exec("CREATE TABLE IF NOT EXISTS loot (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, filename TEXT, file_type VARCHAR(32), content BLOB, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)");
+        const QStringList schemas = {
+            "CREATE TABLE IF NOT EXISTS agents (id INTEGER PRIMARY KEY AUTOINCREMENT, uuid VARCHAR(64) UNIQUE, ip_address VARCHAR(45), hostname TEXT, os_info TEXT, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_online BOOLEAN DEFAULT TRUE)",
+            "CREATE TABLE IF NOT EXISTS telemetry (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_uuid VARCHAR(64), type VARCHAR(32), content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS keylogs (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, data TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS loot (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, filename TEXT, file_type VARCHAR(32), content BLOB, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+        };
+
+        for (const QString& sql : schemas) {
+            if (!query.exec(sql)) {
+                qDebug() << "[Database] SQLite schema error:" << query.lastError().text();
+                return false;
+            }
+        }
         return true;
     }
 

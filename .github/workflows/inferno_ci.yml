@@ -45,8 +45,17 @@ jobs:
     - name: Execute Native Assertions
       env:
         INFERNO_TESTING: 1
-        QT_PLUGIN_PATH: /usr/lib/x86_64-linux-gnu/qt6/plugins
-      run: ./build/inferno_tests
+        # Fix for Linux (Noble)
+        QT_PLUGIN_PATH_LINUX: /usr/lib/x86_64-linux-gnu/qt6/plugins
+        # Fix for macOS (Homebrew)
+        QT_PLUGIN_PATH_MACOS: /opt/homebrew/lib/qt6/plugins
+      run: |
+        if [ "$RUNNER_OS" == "Linux" ]; then
+          export QT_PLUGIN_PATH=$QT_PLUGIN_PATH_LINUX
+        else
+          export QT_PLUGIN_PATH=$QT_PLUGIN_PATH_MACOS
+        fi
+        ./build/inferno_tests
 
   # macOS Job - Matches Required Check: build-and-test (macos-latest, clang_64)
   macos-build:
@@ -74,4 +83,5 @@ jobs:
     - name: Execute Native Assertions
       env:
         INFERNO_TESTING: 1
+        QT_PLUGIN_PATH: /opt/homebrew/lib/qt6/plugins
       run: ./build/inferno_tests

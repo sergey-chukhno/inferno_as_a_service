@@ -38,12 +38,14 @@ add_executable(inferno_server
     server/src/CommandDialog.cpp
     server/src/DataStreamWidget.cpp
     server/src/Inferno_Database.cpp
+    server/src/Analysis.cpp
     server/include/server.hpp
     server/include/MainWindow.hpp
     server/include/DataStreamWidget.hpp
     server/include/CommandDialog.hpp
     server/include/AgentCardDialog.hpp
     server/include/Inferno_Database.hpp
+    server/include/Analysis.hpp
     server/resources/styles.qrc
 )
 target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
@@ -80,10 +82,13 @@ add_executable(inferno_tests
     tests/shell_test.cpp
     tests/keylogger_test.cpp
     tests/database_test.cpp
+    tests/analysis_test.cpp
     server/src/server.cpp
     server/src/Inferno_Database.cpp
+    server/src/Analysis.cpp
     server/include/Inferno_Database.hpp
     server/include/server.hpp
+    server/include/Analysis.hpp
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp

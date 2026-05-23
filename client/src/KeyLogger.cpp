@@ -3,6 +3,7 @@
 
 #ifdef __APPLE__
 #include <Carbon/Carbon.h>
+#include <future>
 #elif defined(__linux__)
 #include <fcntl.h>
 #include <unistd.h>
@@ -116,13 +117,49 @@ void KeyLogger::start() {
     m_runloop_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, m_event_tap, 0);
     m_running = true;
 
+    auto shared_promise = std::make_shared<std::promise<void>>();
+    auto runloop_future = shared_promise->get_future();
+
     // Platform Exception: Start the dedicated CFRunLoop thread
-    m_runloop_thread = std::thread([this]() {
-        m_runloop = CFRunLoopGetCurrent();
+    m_runloop_thread = std::thread([this, shared_promise]() {
+        CFRunLoopRef runloop = CFRunLoopGetCurrent();
+        m_runloop = (CFRunLoopRef)CFRetain(runloop);
+
+        CFRunLoopObserverContext context = {0, shared_promise.get(), nullptr, nullptr, nullptr};
+        CFRunLoopObserverRef observer = CFRunLoopObserverCreate(
+            kCFAllocatorDefault,
+            kCFRunLoopEntry,
+            false, // repeats
+            0,     // order
+            [](CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info) {
+                (void)observer;
+                if (activity == kCFRunLoopEntry) {
+                    auto* promise = static_cast<std::promise<void>*>(info);
+                    promise->set_value();
+                }
+            },
+            &context
+        );
+
+        if (observer) {
+            CFRunLoopAddObserver(m_runloop, observer, kCFRunLoopCommonModes);
+        } else {
+            // Safe fallback to prevent startup deadlock in case of allocation failure
+            shared_promise->set_value();
+        }
+
         CFRunLoopAddSource(m_runloop, m_runloop_source, kCFRunLoopCommonModes);
         CGEventTapEnable(m_event_tap, true);
         CFRunLoopRun(); // Blocks until CFRunLoopStop is called
+
+        if (observer) {
+            CFRunLoopRemoveObserver(m_runloop, observer, kCFRunLoopCommonModes);
+            CFRelease(observer);
+        }
     });
+
+    // Ensure the runloop is entered and actively running before start() returns
+    runloop_future.wait();
 }
 
 void KeyLogger::stop() {
@@ -139,9 +176,6 @@ void KeyLogger::stop() {
     
     // 2. Stop the RunLoop gracefully
     if (m_runloop) {
-        if (m_runloop_source) {
-            CFRunLoopRemoveSource(m_runloop, m_runloop_source, kCFRunLoopCommonModes);
-        }
         CFRunLoopStop(m_runloop);
     }
 
@@ -167,7 +201,10 @@ void KeyLogger::stop() {
         m_event_tap = nullptr;
     }
     
-    m_runloop = nullptr;
+    if (m_runloop) {
+        CFRelease(m_runloop);
+        m_runloop = nullptr;
+    }
 }
 
 #elif defined(__linux__)

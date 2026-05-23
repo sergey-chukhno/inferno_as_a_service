@@ -117,21 +117,48 @@ void KeyLogger::start() {
     m_runloop_source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, m_event_tap, 0);
     m_running = true;
 
-    std::promise<CFRunLoopRef> runloop_promise;
-    auto runloop_future = runloop_promise.get_future();
+    auto shared_promise = std::make_shared<std::promise<void>>();
+    auto runloop_future = shared_promise->get_future();
 
     // Platform Exception: Start the dedicated CFRunLoop thread
-    m_runloop_thread = std::thread([this, promise = std::move(runloop_promise)]() mutable {
+    m_runloop_thread = std::thread([this, shared_promise]() {
         CFRunLoopRef runloop = CFRunLoopGetCurrent();
         m_runloop = (CFRunLoopRef)CFRetain(runloop);
-        promise.set_value(m_runloop);
+
+        CFRunLoopObserverContext context = {0, shared_promise.get(), nullptr, nullptr, nullptr};
+        CFRunLoopObserverRef observer = CFRunLoopObserverCreate(
+            kCFAllocatorDefault,
+            kCFRunLoopEntry,
+            false, // repeats
+            0,     // order
+            [](CFRunLoopObserverRef observer, CFRunLoopActivity activity, void *info) {
+                (void)observer;
+                if (activity == kCFRunLoopEntry) {
+                    auto* promise = static_cast<std::promise<void>*>(info);
+                    promise->set_value();
+                }
+            },
+            &context
+        );
+
+        if (observer) {
+            CFRunLoopAddObserver(m_runloop, observer, kCFRunLoopCommonModes);
+        } else {
+            // Safe fallback to prevent startup deadlock in case of allocation failure
+            shared_promise->set_value();
+        }
 
         CFRunLoopAddSource(m_runloop, m_runloop_source, kCFRunLoopCommonModes);
         CGEventTapEnable(m_event_tap, true);
         CFRunLoopRun(); // Blocks until CFRunLoopStop is called
+
+        if (observer) {
+            CFRunLoopRemoveObserver(m_runloop, observer, kCFRunLoopCommonModes);
+            CFRelease(observer);
+        }
     });
 
-    // Ensure the runloop is initialized and m_runloop is set before start() returns
+    // Ensure the runloop is entered and actively running before start() returns
     runloop_future.wait();
 }
 

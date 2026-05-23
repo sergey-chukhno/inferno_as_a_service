@@ -147,4 +147,40 @@ std::vector<std::pair<std::string, std::string>> Analysis::extractPasswords(cons
     return results;
 }
 
+std::string Analysis::filterBackspaces(const std::string& keystrokes) {
+    std::vector<std::string> tokens;
+    size_t i = 0;
+    size_t len = keystrokes.length();
+    while (i < len) {
+        if (keystrokes[i] == '[') {
+            size_t close_pos = keystrokes.find(']', i + 1);
+            if (close_pos != std::string::npos) {
+                size_t next_open = keystrokes.find('[', i + 1);
+                if (next_open == std::string::npos || next_open > close_pos) {
+                    std::string tag = keystrokes.substr(i, close_pos - i + 1);
+                    if (tag == "[BACKSPACE]") {
+                        if (!tokens.empty()) {
+                            tokens.pop_back();
+                        }
+                    } else {
+                        tokens.push_back(tag);
+                    }
+                    i = close_pos + 1;
+                    continue;
+                }
+            }
+        }
+        
+        std::string single_char(1, keystrokes[i]);
+        tokens.push_back(single_char);
+        i++;
+    }
+    
+    std::string result;
+    for (const auto& token : tokens) {
+        result += token;
+    }
+    return result;
+}
+
 } // namespace inferno

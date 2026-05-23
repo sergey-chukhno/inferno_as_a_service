@@ -21,6 +21,9 @@ public:
 
     // Luhn algorithm verification helper
     static bool validateLuhn(const std::string& card_number);
+
+    // Filters [BACKSPACE] tags out of keystroke buffers dynamically
+    static std::string filterBackspaces(const std::string& keystrokes);
 };
 
 } // namespace inferno

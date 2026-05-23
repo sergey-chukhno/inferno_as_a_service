@@ -70,6 +70,7 @@ public:
     // Retrieval for Auditing
     QStringList getTelemetryHistory(const QString& uuid, const QString& type = "ALL", int limit = 1000);
     QStringList getKeylogHistory(const QString& uuid, int limit = 1000);
+    QString getRawKeylogsChronological(const QString& uuid);
 
 private:
     explicit Inferno_Database(QObject* parent = nullptr);

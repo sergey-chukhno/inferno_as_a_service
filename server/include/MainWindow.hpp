@@ -60,6 +60,7 @@ private:
     void loadStyleSheet();
     void appendToTelemetry(const QString& text);
     void appendToKeylog(const QString& text);
+    int runAnalysisPipeline(const QString& uuid, const std::string& text, const QString& contextLabel);
 
     Server* m_server;
 

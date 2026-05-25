@@ -43,6 +43,13 @@ void test_analysis_data_extraction() {
     }
     assert(phone_found && "Phone value mismatch");
 
+    // Test filtering false positive phone numbers (IPs, dates, datetimes, timestamps)
+    std::string false_positives_sample = 
+        "Valid phone is +33 6 12 34 56 78 but do not match IP 192.168.1.1 or dates like 2026-05-03 or timestamps 2026-05-03 07.45.54.";
+    auto extracted_phones = inferno::Analysis::extractPhones(false_positives_sample);
+    assert(extracted_phones.size() == 1 && "Should only extract 1 valid phone number, filtering out false positives");
+    assert(extracted_phones[0].find("6 12 34 56 78") != std::string::npos && "Extracted number is wrong");
+
     // 3. Credit Card Extraction
     auto cards = inferno::Analysis::extractCreditCards(sample);
     assert(cards.size() >= 1 && "Should extract at least 1 valid card");

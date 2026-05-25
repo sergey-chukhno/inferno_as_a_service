@@ -316,7 +316,7 @@ QStringList Inferno_Database::getTelemetryHistory(const QString& uuid, const QSt
     if (!type.isEmpty() && type != "ALL") {
         sql += "AND type = :type ";
     }
-    sql += "ORDER BY timestamp DESC LIMIT :limit";
+    sql += "ORDER BY timestamp DESC, id DESC LIMIT :limit";
 
     query.prepare(sql);
     query.bindValue(":uuid", uuid);
@@ -347,7 +347,7 @@ QStringList Inferno_Database::getKeylogHistory(const QString& uuid, int limit) {
     query.prepare("SELECT k.timestamp, k.data FROM keylogs k "
                   "JOIN agents a ON a.id = k.agent_id "
                   "WHERE a.uuid = :uuid "
-                  "ORDER BY k.timestamp DESC LIMIT :limit");
+                  "ORDER BY k.timestamp DESC, k.id DESC LIMIT :limit");
     query.bindValue(":uuid", uuid);
     query.bindValue(":limit", limit);
 
@@ -370,7 +370,7 @@ QString Inferno_Database::getRawKeylogsChronological(const QString& uuid) {
     query.prepare("SELECT k.data FROM keylogs k "
                   "JOIN agents a ON a.id = k.agent_id "
                   "WHERE a.uuid = :uuid "
-                  "ORDER BY k.timestamp ASC");
+                  "ORDER BY k.timestamp ASC, k.id ASC");
     query.bindValue(":uuid", uuid);
 
     QString fullLog;
@@ -425,7 +425,7 @@ QList<IntelEntry> Inferno_Database::getIntelligence(const QString& uuid, const Q
     if (!typeFilter.isEmpty() && typeFilter != "ALL") {
         sql += "AND data_type = :type ";
     }
-    sql += "ORDER BY timestamp DESC";
+    sql += "ORDER BY timestamp DESC, id DESC";
 
     query.prepare(sql);
     query.bindValue(":uuid", uuid);

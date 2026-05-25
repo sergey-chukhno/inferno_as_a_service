@@ -352,6 +352,7 @@ void MainWindow::setupUI() {
         "QTableWidget::item { padding: 8px; }"
         "QTableWidget::item:selected { background: #00ff41; color: #000; }"
         "QHeaderView::section { background: #0c0c0c; color: #888; border: 1px solid #1a1a1a; padding: 6px; font-weight: bold; }"
+        "QTableCornerButton::section { background: #0c0c0c; border: 1px solid #1a1a1a; }"
     );
     m_intelTable->horizontalHeader()->setStretchLastSection(true);
     m_intelTable->horizontalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);

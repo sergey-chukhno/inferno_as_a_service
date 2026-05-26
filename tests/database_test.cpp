@@ -1,4 +1,4 @@
-#include "../server/include/Inferno_Database.hpp"
+#include "../server/include/database/Inferno_Database.hpp"
 #include <iostream>
 #include <cassert>
 #include <QCoreApplication>

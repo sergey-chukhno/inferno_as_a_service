@@ -95,19 +95,22 @@ Ajouter persistance + traitement forensic.
 
 ---
 
-## ⚫ 6ème Cercle — Hérésie
+## ⚫ 6ème Cercle — Hérésie [COMPLETED]
 
 ### Objectif
-Analyse des données
+Analyse des données et extraction d'intelligence forensic en temps réel.
 
-### Extraction :
-- Emails
-- Téléphones
-- Mots de passe
-- Cartes bancaires
+### Extraction et Traitement
+- **Emails** : Capture via regex RFC-compliante.
+- **Téléphones** : Validation dynamique avec élimination des faux-positifs (IPs, dates, timestamps).
+- **Mots de passe** : Heuristiques contextuelles et détection des séquences `[TAB]credential[ENTER]`.
+- **Cartes bancaires** : Filtrage numérique et validation par **Algorithme de Luhn**.
+- **Backspace Filtering** : Reconstitution chronologique des frappes en exécutant rétroactivement les corrections `[BACKSPACE]`.
+- **Sous-chaînes & Déduplication** : Fusion temps réel des séquences de saisies croissantes dans la base de données.
 
-### Classe
-- `Analysis`
+### Classes Clés
+- `Analysis` (Extraction & Regex)
+- `IntelAnalysisService` (Business logic singleton service)
 
 ---
 

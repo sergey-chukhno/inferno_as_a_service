@@ -8,6 +8,11 @@ This directory contains the Command & Control Server application, acting as the 
 - **Persistence**: `Database` class encapsulating PostgreSQL queries to save client data eternally.
 - **GUI**: The Qt Application loop rendering connected endpoints in real-time.
 
-### Inner Structure
-- `/include/`: Header files (`.hpp`).
-- `/src/`: Implementation files (`.cpp`).
+### Inner Structure (Clean Architecture Modular Layout)
+- **`/include/` and `/src/`**: Divided into domain layers:
+  - `network/` : Low-level socket multiplexing loop (`Server`).
+  - `database/` : Storage schema migrations and persistent database queries (`Inferno_Database`).
+  - `services/` : Core business analysis logic (`Analysis`, `IntelAnalysisService`).
+  - `ui/` : Coordinator presenting layouts (`MainWindow`).
+  - `ui/components/` : Independent UI panels (`TelemetryPanel`, `KeylogPanel`, `IntelligencePanel`) and custom dialogs.
+  - `resources/` : UI asset files (images, custom QSS styling constants).

@@ -1,9 +1,9 @@
 #include <QApplication>
 #include <QThread>
 #include <QDebug>
-#include "../include/server.hpp"
-#include "../include/MainWindow.hpp"
-#include "../include/Inferno_Database.hpp"
+#include "../include/network/server.hpp"
+#include "../include/ui/MainWindow.hpp"
+#include "../include/database/Inferno_Database.hpp"
 
 #include <QFile>
 #include <QTextStream>

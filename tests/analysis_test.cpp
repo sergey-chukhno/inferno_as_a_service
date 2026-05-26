@@ -1,5 +1,5 @@
-#include "../server/include/Analysis.hpp"
-#include "../server/include/Inferno_Database.hpp"
+#include "../server/include/services/Analysis.hpp"
+#include "../server/include/database/Inferno_Database.hpp"
 #include <iostream>
 #include <cassert>
 #include <QUuid>
@@ -88,15 +88,33 @@ void test_analysis_db_persistence() {
     bool r1 = inferno::Inferno_Database::instance().logIntelligence(test_uuid, "EMAIL", "target@domain.com", "Found in console");
     assert(r1 && "Email log failed");
 
-    // Log duplicate - should succeed but be ignored via UPSERT/ON CONFLICT
+    // Log duplicate - should return false because it's ignored/discarded
     bool r2 = inferno::Inferno_Database::instance().logIntelligence(test_uuid, "EMAIL", "target@domain.com", "Found in console duplicate");
-    assert(r2 && "Duplicate log should return success");
+    assert(!r2 && "Duplicate log should return false (ignored)");
 
     // Fetch findings
     auto list = inferno::Inferno_Database::instance().getIntelligence(test_uuid);
     assert(list.size() == 1 && "Database should only have 1 unique email due to uniqueness constraint");
     assert(list[0].value == "target@domain.com" && "Value mismatch in retrieved intel");
     assert(list[0].dataType == "EMAIL" && "Type mismatch in retrieved intel");
+
+    // Test Substring Merging and Deduplication (e.g. growing phone numbers)
+    bool p1 = inferno::Inferno_Database::instance().logIntelligence(test_uuid, "PHONE", "+3374418", "Part 1");
+    assert(p1 && "Initial phone part log failed");
+
+    bool p2 = inferno::Inferno_Database::instance().logIntelligence(test_uuid, "PHONE", "+33744181920", "Part 2");
+    assert(p2 && "Extended phone part log failed");
+
+    bool p3 = inferno::Inferno_Database::instance().logIntelligence(test_uuid, "PHONE", "+337441819201", "Part 3");
+    assert(p3 && "Final phone part log failed");
+
+    // Logging a shorter substring should be discarded
+    bool p4 = inferno::Inferno_Database::instance().logIntelligence(test_uuid, "PHONE", "+33744181920", "Part 2 duplicate");
+    assert(!p4 && "Shorter phone subset should be discarded (return false)");
+
+    auto phoneList = inferno::Inferno_Database::instance().getIntelligence(test_uuid, "PHONE");
+    assert(phoneList.size() == 1 && "Should only have 1 merged phone entry in DB");
+    assert(phoneList[0].value == "+337441819201" && "Phone number should be the fully extended version");
 
     // Clear findings
     bool r3 = inferno::Inferno_Database::instance().clearIntelligence(test_uuid);

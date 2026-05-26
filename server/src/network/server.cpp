@@ -1,4 +1,4 @@
-#include "../include/server.hpp"
+#include "../../include/network/server.hpp"
 #include <iostream>
 #include <algorithm> // To use std::remove_if
 #include <iomanip>

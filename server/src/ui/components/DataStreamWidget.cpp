@@ -1,4 +1,4 @@
-#include "../include/DataStreamWidget.hpp"
+#include "../../../include/ui/components/DataStreamWidget.hpp"
 #include <QHBoxLayout>
 #include <QRandomGenerator>
 

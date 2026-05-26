@@ -1,4 +1,4 @@
-#include "../server/include/server.hpp"
+#include "../server/include/network/server.hpp"
 #include <iostream>
 #include <cassert>
 

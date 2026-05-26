@@ -7,6 +7,7 @@ extern void test_end_to_end_connection();
 // External server tests
 extern void test_server_constructors();
 extern void test_server_start();
+extern void test_server_disconnect_agent();
 
 // External packet tests
 extern void test_packet_deserialization();
@@ -30,6 +31,7 @@ extern void test_db_agent_registration();
 extern void test_db_telemetry_history();
 extern void test_db_keylog_history();
 extern void test_db_loot_persistence();
+extern void test_db_multithreaded_read();
 
 // Circle 6 Analysis Tests
 extern void test_analysis_luhn_validation();
@@ -50,6 +52,7 @@ int main(int argc, char* argv[]) {
     test_end_to_end_connection();
     test_server_constructors();
     test_server_start();
+    test_server_disconnect_agent();
     test_packet_deserialization();
     test_packet_endianness();
     test_packet_size_limit();
@@ -70,6 +73,7 @@ int main(int argc, char* argv[]) {
     test_db_telemetry_history();
     test_db_keylog_history();
     test_db_loot_persistence();
+    test_db_multithreaded_read();
     
     // Circle 6 Analysis Tests
     test_analysis_luhn_validation();

@@ -33,6 +33,7 @@ public:
     void requestProcessList(const QString& ip);
     void toggleKeylogger(const QString& ip, bool active);
     void requestKeylogDump(const QString& ip);
+    void disconnectAgent(const QString& ip);
 
     // Getters
     [[nodiscard]] bool     isRunning() const;

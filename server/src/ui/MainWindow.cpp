@@ -22,6 +22,7 @@
 #include <QListWidget>
 #include <QHeaderView>
 #include <QDebug>
+#include <QThread>
 
 namespace inferno {
 
@@ -365,11 +366,18 @@ void MainWindow::showAgentContextMenu(const QPoint& pos) {
     QListWidgetItem* item = m_agentList->itemAt(pos);
     if (!item) return;
 
+    m_agentList->setCurrentItem(item);
+
     QMenu menu(this);
     menu.addAction("Execute Shell...", this, &MainWindow::executeShellCommand);
     menu.addAction("Refresh Processes", this, &MainWindow::requestProcessList);
     menu.addSeparator();
-    menu.addAction("Disconnect Agent");
+    
+    QAction* disconnectAction = menu.addAction("Disconnect Agent");
+    connect(disconnectAction, &QAction::triggered, this, [this, item]() {
+        QString agentIp = item->data(Qt::UserRole).toString();
+        m_server->disconnectAgent(agentIp);
+    });
     
     menu.exec(m_agentList->mapToGlobal(pos));
 }
@@ -403,9 +411,18 @@ void MainWindow::requestProcessList() {
 }
 
 void MainWindow::handleForceScan(const QString& uuid) {
-    onStatusMessage("Scanning historical logs for agent...");
-    int new_findings = IntelAnalysisService::instance().runHistoricalScan(uuid);
-    onStatusMessage(QString("Scan complete. Identified %1 new findings.").arg(new_findings));
+    onStatusMessage("Scanning historical logs for agent in background...");
+    
+    QThread* thread = QThread::create([this, uuid]() {
+        int new_findings = IntelAnalysisService::instance().runHistoricalScan(uuid);
+        
+        QMetaObject::invokeMethod(this, [this, new_findings]() {
+            onStatusMessage(QString("Scan complete. Identified %1 new findings.").arg(new_findings));
+        }, Qt::QueuedConnection);
+    });
+
+    connect(thread, &QThread::finished, thread, &QThread::deleteLater);
+    thread->start();
 }
 
 void MainWindow::handleAgentSelectionChanged() {

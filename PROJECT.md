@@ -185,3 +185,9 @@ Propagation (conceptuelle)
 - Winsock / sockets
 - Qt
 - PostgreSQL
+
+---
+
+## 🚀 Horizon — Enterprise Evolution Roadmap
+
+Refer to the [Roadmap Forward](file:///Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/docs/ROADMAP_FORWARD.md) document for post-Circle 9 architectural, scalability, and AI-enhanced milestones.

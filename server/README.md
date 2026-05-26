@@ -9,6 +9,7 @@ This directory contains the Command & Control Server application, acting as the 
 - **GUI**: The Qt Application loop rendering connected endpoints in real-time.
 
 ### Inner Structure (Clean Architecture Modular Layout)
+
 - **`/include/` and `/src/`**: Divided into domain layers:
   - `network/` : Low-level socket multiplexing loop (`Server`).
   - `database/` : Storage schema migrations and persistent database queries (`Inferno_Database`).

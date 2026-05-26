@@ -110,9 +110,11 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Infrastructure Protection**: Protected tactical configurations via `.env` / `.gitignore` and provided a `.env.example` blueprint for secure deployments.
 
 ## 🕵️ Circle 6: Hérésie (Intelligence Analysis Engine) — [2026-05-25]
+
 **Objective**: Parse incoming keystroke sequences and telemetry in real-time or historically to extract classified data.
 
 ### Technical Milestones
+
 - **Analysis Utility Module**: Created a static utility class `Analysis` exposing regex classification pipelines.
   - **Emails**: Captures RFC-compliant formats.
   - **Phone Numbers**: Grouping filter that captures diverse international telephone formats (7 to 15 digits) while strictly filtering out false positives such as IP addresses, dates, and timestamp prefixes.
@@ -123,15 +125,18 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Sub-string Merging & Deduplication**: Hardened `Inferno_Database::logIntelligence` to merge growing real-time entries (e.g., updating database record `+33744181920` to `+337441819201` as the user continues typing) and automatically discard redundant intermediate substrings.
 
 ### Security Rationale
+
 - **Target Profiling**: Focused regex extractions dramatically reduce the size of the exfiltrated database, reducing storage footprint and network traffic overhead.
 - **Deduplication Engine**: De-clutters the operator dashboard and prevents database write amplification during continuous keystroke logging.
 
 ---
 
 ## 🏗️ Clean Architecture & SOLID Refactoring — [2026-05-26]
+
 **Objective**: Address technical debt, enforce SRP/DRY/KISS, and modularize the server codebase into clean layer abstractions.
 
 ### Technical Milestones
+
 - **Modular Directory Reorganization**: Reorganized the flat `server/` workspace into distinct clean architectural layers:
   - `server/include/network/` & `server/src/network/` (Network communication layers)
   - `server/include/database/` & `server/src/database/` (Data persistence layers)
@@ -146,6 +151,7 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
   - Bound UI updates to the service's `intelligenceUpdated` signal, separating visual updates from the database stream.
 
 ### Verification Milestone
+
 - **Full Compile**: Reconfigured CMake target sources to compile successfully under the new directory layout.
 - **TDD Success**: Verified that all **22 unit tests** in the test suite (`inferno_tests`) pass successfully, proving zero regression.
 

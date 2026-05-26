@@ -108,6 +108,7 @@ void MainWindow::setupUI() {
     agentHeader->addStretch();
     m_btnScan = new QPushButton();
     m_btnScan->setObjectName("iconButton");
+    m_btnScan->setCheckable(true);
     m_btnScan->setFixedSize(40, 40);
     m_btnScan->setIcon(QIcon(":/icon_scan.png"));
     m_btnScan->setIconSize(QSize(32, 32));
@@ -318,8 +319,10 @@ void MainWindow::toggleScan() {
         m_radarTimer->stop();
         QPixmap pixmap(":/icon_scan.png");
         m_btnScan->setIcon(QIcon(pixmap));
+        m_btnScan->setChecked(false);
     } else {
         m_radarTimer->start(50);
+        m_btnScan->setChecked(true);
     }
 }
 

@@ -203,7 +203,7 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
     
     QListWidgetItem* item = nullptr;
     for (int i = 0; i < m_agentList->count(); ++i) {
-        if (m_agentList->item(i)->data(Qt::UserRole).toString() == ip) {
+        if (m_agentList->item(i)->data(Qt::UserRole + 1).toString() == uuid) {
             item = m_agentList->item(i);
             break;
         }
@@ -215,6 +215,7 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
         item->setData(Qt::UserRole + 1, uuid);
     } else {
         item->setText("🟢 " + displayInfo);
+        item->setData(Qt::UserRole, ip); // Update volatile IP for command routing
     }
     
     QString lowerInfo = info.toLower();

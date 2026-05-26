@@ -80,6 +80,7 @@ private:
     Inferno_Database& operator=(const Inferno_Database&) = delete;
 
     bool createTables();
+    QSqlDatabase getDatabaseConnection() const;
 
     QSqlDatabase m_db;
 };

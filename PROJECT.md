@@ -4,12 +4,6 @@
 
 ---
 
-## 🌑 Introduction
-
-La structure de l’Enfer est composée de neuf cercles en spirale jusqu’au centre de la Terre.
-
----
-
 ## 🚪 L’Ante-Enfer
 
 ### Règles générales
@@ -27,14 +21,17 @@ La structure de l’Enfer est composée de neuf cercles en spirale jusqu’au ce
 ## 🟢 1er Cercle — Les Limbes
 
 ### Objectif
+
 Créer un système client-serveur en C++.
 
 ### Contraintes
+
 - Classe `Socket` pour encapsuler les syscalls réseau
 - ❌ Aucun syscall hors de cette classe
 - ❌ Pas de `thread` ni `fork`
 
 ### Validation
+
 - Le serveur gère plusieurs clients simultanément
 
 ---
@@ -42,9 +39,11 @@ Créer un système client-serveur en C++.
 ## 🟡 2ème Cercle — Luxure
 
 ### Objectif
+
 Créer un **protocole binaire évolutif**
 
 ### Contraintes
+
 - Classe `Packet`
 - Structure en classes/structs
 - Documentation type **RFC**
@@ -54,6 +53,7 @@ Créer un **protocole binaire évolutif**
 ## 🟠 3ème Cercle — Gourmandise
 
 ### Objectif
+
 Transformer le client en agent capable de :
 
 - Envoyer infos système (hostname, user, OS)
@@ -62,6 +62,7 @@ Transformer le client en agent capable de :
 - Exécution de commandes système
 
 ### Important
+
 - Tout doit être défini dans le protocole
 
 ---
@@ -69,9 +70,11 @@ Transformer le client en agent capable de :
 ## 🟣 4ème Cercle — Avarice [COMPLETED]
 
 ### Objectif
+
 Créer une GUI avec Qt
 
 ### Fonctionnalités
+
 - Liste des clients connectés
 - IP de chaque client
 - Exécution des commandes
@@ -82,9 +85,11 @@ Créer une GUI avec Qt
 ## 🔴 5ème Cercle — Colère [COMPLETED]
 
 ### Objectif
+
 Ajouter persistance + traitement forensic.
 
 ### Features
+
 - Affichage en temps réel (Signal/Slot)
 - Stockage en base PostgreSQL 16
 - Classe `Inferno_Database` (Singleton)
@@ -95,28 +100,36 @@ Ajouter persistance + traitement forensic.
 
 ---
 
-## ⚫ 6ème Cercle — Hérésie
+## ⚫ 6ème Cercle — Hérésie [COMPLETED]
 
 ### Objectif
-Analyse des données
 
-### Extraction :
-- Emails
-- Téléphones
-- Mots de passe
-- Cartes bancaires
+Analyse des données et extraction d'intelligence forensic en temps réel.
 
-### Classe
-- `Analysis`
+### Extraction et Traitement
+
+- **Emails** : Capture via regex RFC-compliante.
+- **Téléphones** : Validation dynamique avec élimination des faux-positifs (IPs, dates, timestamps).
+- **Mots de passe** : Heuristiques contextuelles et détection des séquences `[TAB]credential[ENTER]`.
+- **Cartes bancaires** : Filtrage numérique et validation par **Algorithme de Luhn**.
+- **Backspace Filtering** : Reconstitution chronologique des frappes en exécutant rétroactivement les corrections `[BACKSPACE]`.
+- **Sous-chaînes & Déduplication** : Fusion temps réel des séquences de saisies croissantes dans la base de données.
+
+### Classes Clés
+
+- `Analysis` (Extraction & Regex)
+- `IntelAnalysisService` (Business logic singleton service)
 
 ---
 
 ## 🔥 7ème Cercle — Violence
 
 ### Objectif
+
 Cross-platform (Windows + Linux)
 
 ### Contraintes
+
 - Interfaces + implémentations par OS
 - Utilisation du préprocesseur
 
@@ -125,9 +138,11 @@ Cross-platform (Windows + Linux)
 ## 🕶️ 8ème Cercle — Ruse et Tromperie
 
 ### Objectif
+
 Rendre le client discret
 
 ### Features
+
 - Cacher la console
 - Wrapper
 - Installation discrète
@@ -139,6 +154,7 @@ Rendre le client discret
 ## ❄️ 9ème Cercle — Trahison
 
 ### Objectif
+
 Propagation (conceptuelle)
 
 ---

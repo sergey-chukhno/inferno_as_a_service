@@ -1,4 +1,6 @@
-#include "../server/include/server.hpp"
+#include "../server/include/network/server.hpp"
+#include "Socket.hpp"
+#include <QThread>
 #include <iostream>
 #include <cassert>
 
@@ -29,4 +31,44 @@ void test_server_start() {
     assert(!s2.start() && "Second server binding to same port should fail");
     
     std::cout << "[PASS] test_server_start" << std::endl;
+}
+
+void test_server_disconnect_agent() {
+    Server s(0);
+    assert(s.start() && "Server should start");
+    uint16_t port = s.getPort();
+
+    QThread thread;
+    s.moveToThread(&thread);
+    QObject::connect(&thread, &QThread::started, &s, &Server::run);
+    thread.start();
+
+    // Now connect a client socket
+    Socket client;
+    assert(client.connectTo("127.0.0.1", port) && "Client should connect");
+
+    // Wait a brief moment to let server accept connection
+    QThread::msleep(100);
+
+    // Read the initial SYS_REQ_INFO packet sent by the server on connect
+    std::vector<uint8_t> buf;
+    ssize_t initial_bytes = client.receiveData(buf, 1024);
+    assert(initial_bytes > 0 && "Should receive initial SYS_REQ_INFO packet");
+
+    // Call disconnectAgent on client's IP
+    s.disconnectAgent("127.0.0.1");
+
+    // Wait a brief moment for the disconnection to propagate
+    QThread::msleep(100);
+
+    // Try to receive from client, it should fail / indicate EOF
+    ssize_t bytes = client.receiveData(buf, 1024);
+    assert(bytes <= 0 && "Client connection should have been closed/shut down by the server");
+
+    // Clean up
+    s.stop();
+    thread.quit();
+    thread.wait();
+
+    std::cout << "[PASS] test_server_disconnect_agent" << std::endl;
 }

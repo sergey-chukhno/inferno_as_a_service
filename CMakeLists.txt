@@ -32,20 +32,29 @@ target_include_directories(inferno_common PUBLIC common/include)
 # ==========================================
 add_executable(inferno_server
     server/src/main.cpp
-    server/src/server.cpp
-    server/src/MainWindow.cpp
-    server/src/AgentCardDialog.cpp
-    server/src/CommandDialog.cpp
-    server/src/DataStreamWidget.cpp
-    server/src/Inferno_Database.cpp
-    server/src/Analysis.cpp
-    server/include/server.hpp
-    server/include/MainWindow.hpp
-    server/include/DataStreamWidget.hpp
-    server/include/CommandDialog.hpp
-    server/include/AgentCardDialog.hpp
-    server/include/Inferno_Database.hpp
-    server/include/Analysis.hpp
+    server/src/network/server.cpp
+    server/src/ui/MainWindow.cpp
+    server/src/ui/components/AgentCardDialog.cpp
+    server/src/ui/components/CommandDialog.cpp
+    server/src/ui/components/DataStreamWidget.cpp
+    server/src/ui/components/TelemetryPanel.cpp
+    server/src/ui/components/KeylogPanel.cpp
+    server/src/ui/components/IntelligencePanel.cpp
+    server/src/database/Inferno_Database.cpp
+    server/src/services/Analysis.cpp
+    server/src/services/IntelAnalysisService.cpp
+    server/include/network/server.hpp
+    server/include/ui/MainWindow.hpp
+    server/include/ui/StyleSheets.hpp
+    server/include/ui/components/DataStreamWidget.hpp
+    server/include/ui/components/CommandDialog.hpp
+    server/include/ui/components/AgentCardDialog.hpp
+    server/include/ui/components/TelemetryPanel.hpp
+    server/include/ui/components/KeylogPanel.hpp
+    server/include/ui/components/IntelligencePanel.hpp
+    server/include/database/Inferno_Database.hpp
+    server/include/services/Analysis.hpp
+    server/include/services/IntelAnalysisService.hpp
     server/resources/styles.qrc
 )
 target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
@@ -83,12 +92,12 @@ add_executable(inferno_tests
     tests/keylogger_test.cpp
     tests/database_test.cpp
     tests/analysis_test.cpp
-    server/src/server.cpp
-    server/src/Inferno_Database.cpp
-    server/src/Analysis.cpp
-    server/include/Inferno_Database.hpp
-    server/include/server.hpp
-    server/include/Analysis.hpp
+    server/src/network/server.cpp
+    server/src/database/Inferno_Database.cpp
+    server/src/services/Analysis.cpp
+    server/include/database/Inferno_Database.hpp
+    server/include/network/server.hpp
+    server/include/services/Analysis.hpp
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp

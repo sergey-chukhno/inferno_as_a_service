@@ -1,10 +1,11 @@
-#include "../server/include/Inferno_Database.hpp"
+#include "../server/include/database/Inferno_Database.hpp"
 #include <iostream>
 #include <cassert>
 #include <QCoreApplication>
 #include <QFile>
 #include <QTextStream>
 #include <QUuid>
+#include <QThread>
 
 void loadEnv(const QString& binaryPath) {
     QFile file(binaryPath);
@@ -132,4 +133,32 @@ void test_db_loot_persistence() {
     assert(ok && "Loot logging should return true");
     
     std::cout << "[PASS] Loot (BYTEA) persistence verified." << std::endl;
+}
+
+class DbReaderThread : public QThread {
+    QString m_uuid;
+    bool& m_success;
+public:
+    DbReaderThread(const QString& uuid, bool& success) : m_uuid(uuid), m_success(success) {}
+protected:
+    void run() override {
+        // Retrieve telemetry history from this thread
+        QStringList hist = inferno::Inferno_Database::instance().getTelemetryHistory(m_uuid);
+        m_success = !hist.isEmpty();
+    }
+};
+
+void test_db_multithreaded_read() {
+    std::cout << "[TEST] Testing Multithreaded Database Reads..." << std::endl;
+    QString test_uuid = "TEST-MT-" + QUuid::createUuid().toString(QUuid::WithoutBraces).left(8);
+    inferno::Inferno_Database::instance().registerAgent(test_uuid, "127.0.0.1", "MTBox", "Linux");
+    inferno::Inferno_Database::instance().logTelemetry(test_uuid, "TEST", "ThreadSafeCheck");
+
+    bool success = false;
+    DbReaderThread reader(test_uuid, success);
+    reader.start();
+    reader.wait();
+
+    assert(success && "Telemetries should be successfully read from the worker thread");
+    std::cout << "[PASS] Multithreaded database reads verified." << std::endl;
 }

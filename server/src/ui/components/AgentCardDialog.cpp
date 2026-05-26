@@ -1,4 +1,4 @@
-#include "../include/AgentCardDialog.hpp"
+#include "../../../include/ui/components/AgentCardDialog.hpp"
 #include <QFrame>
 #include <QIcon>
 #include <QPushButton>

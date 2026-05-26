@@ -1,4 +1,4 @@
-#include "../include/CommandDialog.hpp"
+#include "../../../include/ui/components/CommandDialog.hpp"
 #include <QIcon>
 #include <QApplication>
 #include <QClipboard>

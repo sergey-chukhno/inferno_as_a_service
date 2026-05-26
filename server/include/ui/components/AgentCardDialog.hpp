@@ -4,7 +4,7 @@
 #include <QVBoxLayout>
 #include <QLabel>
 #include <QDateTime>
-#include "Inferno_Database.hpp"
+#include "../../database/Inferno_Database.hpp"
 
 namespace inferno {
 

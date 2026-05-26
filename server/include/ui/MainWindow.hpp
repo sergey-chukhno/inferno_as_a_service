@@ -8,6 +8,7 @@
 #include <QTabWidget>
 #include <QTimer>
 #include <QMap>
+#include <QSet>
 #include "../../common/include/Packet.hpp" // For any socket layer if needed, server header includes it
 #include "../network/server.hpp"
 
@@ -71,6 +72,7 @@ private:
     QTimer*         m_radarTimer;
     QTimer*         m_keylogPollTimer;
     int             m_radarAngle;
+    QSet<QString>   m_activeKeylogIps;
 };
 
 } // namespace inferno

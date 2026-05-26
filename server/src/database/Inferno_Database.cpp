@@ -50,7 +50,7 @@ void Inferno_Database::close() {
 }
 
 QSqlDatabase Inferno_Database::getDatabaseConnection() const {
-    if (QThread::currentThread() == QCoreApplication::instance()->thread()) {
+    if (QThread::currentThread() == QCoreApplication::instance()->thread() || m_db.driverName() == "QSQLITE") {
         return m_db;
     }
     

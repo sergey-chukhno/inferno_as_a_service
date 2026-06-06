@@ -260,7 +260,11 @@ void Server::disconnectAgent(const QString& ip) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
             if (client.socket.isValid()) {
+#ifdef _WIN32
+                ::shutdown(client.socket.getFd(), SD_BOTH);
+#else
                 ::shutdown(client.socket.getFd(), SHUT_RDWR);
+#endif
             }
             break;
         }

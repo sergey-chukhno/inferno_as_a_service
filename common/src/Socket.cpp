@@ -170,7 +170,12 @@ ssize_t Socket::sendData(const std::vector<uint8_t>& data) const {
     if (!isValid()) {
         return -1;
     }
-    ssize_t send_bytes = ::send(m_socket_fd, reinterpret_cast<const char*>(data.data()), data.size(), 0); 
+#ifdef _WIN32
+    int len = static_cast<int>(data.size());
+#else
+    size_t len = data.size();
+#endif
+    ssize_t send_bytes = ::send(m_socket_fd, reinterpret_cast<const char*>(data.data()), len, 0); 
     return send_bytes; 
 }
 
@@ -179,7 +184,12 @@ ssize_t Socket::receiveData(std::vector<uint8_t>& buffer, size_t max_bytes) cons
         return -1;
     }
     buffer.resize(max_bytes);
-    ssize_t read_bytes = ::recv(m_socket_fd, reinterpret_cast<char*>(buffer.data()), max_bytes, 0);
+#ifdef _WIN32
+    int len = static_cast<int>(max_bytes);
+#else
+    size_t len = max_bytes;
+#endif
+    ssize_t read_bytes = ::recv(m_socket_fd, reinterpret_cast<char*>(buffer.data()), len, 0);
 
     if (read_bytes > 0) {
         buffer.resize(read_bytes);

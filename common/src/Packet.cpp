@@ -2,7 +2,14 @@
 #include <cstring> // For std::memcpy
 #include <optional>
 #include <vector>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#else
 #include <arpa/inet.h> // For htonl, htons, ntohl, ntohs
+#endif
 
 namespace inferno {
 

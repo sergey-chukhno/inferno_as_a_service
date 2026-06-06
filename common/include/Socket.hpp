@@ -40,7 +40,7 @@ public:
     Socket();
 
     // Custom constructor used internally by acceptNode()
-    Socket(int fd, const std::string& ip, uint16_t port);
+    Socket(socket_t fd, const std::string& ip, uint16_t port);
 
     // Destructor
     ~Socket();

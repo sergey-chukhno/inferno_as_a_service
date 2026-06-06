@@ -54,7 +54,7 @@ void Agent::run() {
             case AgentState::DISPATCHING:
                 // Handled internally in handleListening
                 break;
-            case AgentState::ERROR:
+            case AgentState::ERROR_STATE:
                 std::cerr << "[Agent] Terminal Error State reached. Restarting INIT.\n";
                 m_state = AgentState::INIT;
                 break;

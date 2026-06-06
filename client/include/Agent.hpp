@@ -17,7 +17,7 @@ enum class AgentState {
     CONNECTED,
     LISTENING,
     DISPATCHING,
-    ERROR
+    ERROR_STATE
 };
 
 class Agent {

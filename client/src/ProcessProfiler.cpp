@@ -107,13 +107,21 @@ std::vector<ProcessEntry> ProcessProfiler::captureFreshList() {
         ProcessEntry entry;
         entry.pid = static_cast<uint32_t>(pe32.th32ProcessID);
 #ifdef UNICODE
-        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pe32.szExeFile, -1, NULL, 0, NULL, NULL);
-        std::string name(size_needed, 0);
-        WideCharToMultiByte(CP_UTF8, 0, pe32.szExeFile, -1, &name[0], size_needed, NULL, NULL);
-        if (!name.empty() && name.back() == '\0') {
-            name.pop_back();
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pe32.szExeFile, -1, nullptr, 0, nullptr, nullptr);
+        if (size_needed <= 0) {
+            entry.name = "<Unknown>";
+        } else {
+            std::string name(static_cast<size_t>(size_needed), '\0');
+            int converted = WideCharToMultiByte(CP_UTF8, 0, pe32.szExeFile, -1, &name[0], size_needed, nullptr, nullptr);
+            if (converted <= 0) {
+                entry.name = "<Unknown>";
+            } else {
+                if (!name.empty() && name.back() == '\0') {
+                    name.pop_back();
+                }
+                entry.name = std::move(name);
+            }
         }
-        entry.name = name;
 #else
         entry.name = std::string(pe32.szExeFile);
 #endif

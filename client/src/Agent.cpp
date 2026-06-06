@@ -314,7 +314,7 @@ void Agent::handleProcessDiscovery() {
 std::string Agent::getHardwareUUID() {
 #ifdef _WIN32
     HKEY hKey;
-    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", 0, KEY_READ | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
         char value[256] = {0};
         DWORD value_length = sizeof(value);
         if (RegQueryValueExA(hKey, "MachineGuid", NULL, NULL, reinterpret_cast<LPBYTE>(value), &value_length) == ERROR_SUCCESS) {

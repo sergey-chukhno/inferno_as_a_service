@@ -4,11 +4,21 @@
 #include <optional>
 
 #ifdef _WIN32
-#include <mutex>
-static std::once_flag wsa_init_flag;
-static void initWinsock() {
-    WSADATA wsaData;
-    WSAStartup(MAKEWORD(2, 2), &wsaData);
+static bool initWinsock() {
+    struct WinsockManager {
+        bool initialized = false;
+        WinsockManager() {
+            WSADATA wsaData{};
+            initialized = (::WSAStartup(MAKEWORD(2, 2), &wsaData) == 0);
+        }
+        ~WinsockManager() {
+            if (initialized) {
+                ::WSACleanup();
+            }
+        }
+    };
+    static WinsockManager manager;
+    return manager.initialized;
 }
 #endif
 
@@ -17,7 +27,7 @@ namespace inferno {
 // Default Constructor
 Socket::Socket() : m_socket_fd(INVALID_SOCKET), m_ip(""), m_port(0) {
 #ifdef _WIN32
-    std::call_once(wsa_init_flag, initWinsock);
+    initWinsock();
 #endif
 }
 
@@ -25,7 +35,7 @@ Socket::Socket() : m_socket_fd(INVALID_SOCKET), m_ip(""), m_port(0) {
 Socket::Socket(socket_t fd, const std::string& ip, uint16_t port)
     : m_socket_fd(fd), m_ip(ip), m_port(port) {
 #ifdef _WIN32
-    std::call_once(wsa_init_flag, initWinsock);
+    initWinsock();
 #endif
 }
 
@@ -80,6 +90,11 @@ Socket& Socket::operator=(Socket&& other) noexcept {
 // Core Networking Logic
 
 bool Socket::bindNode(const std::string& ip, uint16_t port) {
+#ifdef _WIN32
+    if (!initWinsock()) {
+        return false;
+    }
+#endif
     m_socket_fd = ::socket(AF_INET, SOCK_STREAM, 0); 
 
     if (m_socket_fd == INVALID_SOCKET) {
@@ -131,6 +146,11 @@ bool Socket::connectTo(const std::string& ip, uint16_t port) {
     if (m_socket_fd != INVALID_SOCKET) {
         return false;
     }
+#ifdef _WIN32
+    if (!initWinsock()) {
+        return false;
+    }
+#endif
     m_socket_fd = ::socket(AF_INET, SOCK_STREAM, 0);
     if (m_socket_fd == INVALID_SOCKET) {
         return false;

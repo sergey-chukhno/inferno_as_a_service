@@ -20,6 +20,8 @@ Inferno_Database::~Inferno_Database() {
 }
 
 bool Inferno_Database::initialize(const QString& host, int port, const QString& dbName, const QString& user, const QString& password) {
+    bool connected = false;
+
     if (QSqlDatabase::isDriverAvailable("QPSQL")) {
         m_db = QSqlDatabase::addDatabase("QPSQL");
         m_db.setHostName(host);
@@ -27,16 +29,27 @@ bool Inferno_Database::initialize(const QString& host, int port, const QString& 
         m_db.setDatabaseName(dbName);
         m_db.setUserName(user);
         m_db.setPassword(password);
+        m_db.setConnectOptions("connect_timeout=3");
         qDebug() << "[Database] Initializing with PostgreSQL 16...";
-    } else {
-        m_db = QSqlDatabase::addDatabase("QSQLITE");
-        m_db.setDatabaseName(":memory:");
-        qDebug() << "[Database] WARNING: QPSQL driver not found. Falling back to in-memory SQLite for logic verification.";
+        
+        if (m_db.open()) {
+            connected = true;
+        } else {
+            qDebug() << "[Database] WARNING: PostgreSQL connection failed:" << m_db.lastError().text() << ". Falling back to in-memory SQLite.";
+            m_db = QSqlDatabase();
+            QSqlDatabase::removeDatabase(QSqlDatabase::defaultConnection);
+        }
     }
 
-    if (!m_db.open()) {
-        qDebug() << "[Database] CRITICAL: Failed to open" << m_db.driverName() << "connection:" << m_db.lastError().text();
-        return false;
+    if (!connected) {
+        m_db = QSqlDatabase::addDatabase("QSQLITE");
+        m_db.setDatabaseName(":memory:");
+        qDebug() << "[Database] WARNING: Falling back to in-memory SQLite for logic verification.";
+        
+        if (!m_db.open()) {
+            qDebug() << "[Database] CRITICAL: Failed to open SQLite connection:" << m_db.lastError().text();
+            return false;
+        }
     }
 
     qDebug() << "[Database] Successfully connected via" << m_db.driverName();

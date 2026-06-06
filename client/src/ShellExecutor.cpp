@@ -3,6 +3,11 @@
 #include <cstdio>
 #include <stdexcept>
 
+#ifdef _WIN32
+#define popen _popen
+#define pclose _pclose
+#endif
+
 namespace inferno {
 
 ShellExecutor::Result ShellExecutor::execute(const std::string& command) const {

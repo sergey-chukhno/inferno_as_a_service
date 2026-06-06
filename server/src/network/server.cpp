@@ -2,7 +2,14 @@
 #include <iostream>
 #include <algorithm> // To use std::remove_if
 #include <iomanip>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#else
 #include <arpa/inet.h>
+#endif
 #include "../../common/include/Packet.hpp"
 
 namespace inferno {
@@ -253,7 +260,11 @@ void Server::disconnectAgent(const QString& ip) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
             if (client.socket.isValid()) {
+#ifdef _WIN32
+                ::shutdown(client.socket.getFd(), SD_BOTH);
+#else
                 ::shutdown(client.socket.getFd(), SHUT_RDWR);
+#endif
             }
             break;
         }

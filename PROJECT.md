@@ -185,3 +185,9 @@ Propagation (conceptuelle)
 - Winsock / sockets
 - Qt
 - PostgreSQL
+
+---
+
+## 🚀 Horizon — Enterprise Evolution Roadmap
+
+Refer to the [Roadmap Forward](docs/ROADMAP_FORWARD.md) document for post-Circle 9 architectural, scalability, mTLS 1.3 transport, binary protocol encryption, EDR system call hook evasion, remote teamserver collaboration, and AI-enhanced forensics milestones.

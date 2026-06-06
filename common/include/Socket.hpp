@@ -5,17 +5,30 @@
 #include <cstdint>
 #include <optional>
 
-// WSL/Linux headers
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <basetsd.h> // For SSIZE_T
+using socket_t = SOCKET;
+using ssize_t = SSIZE_T;
+#else
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <unistd.h>
+using socket_t = int;
+#define INVALID_SOCKET (-1)
+#define SOCKET_ERROR (-1)
+#endif
 
 namespace inferno {
 
 class Socket {
 private:
-    int         m_socket_fd;
+    socket_t    m_socket_fd;
     std::string m_ip;
     uint16_t    m_port;
 
@@ -53,7 +66,7 @@ public:
     ssize_t receiveData(std::vector<uint8_t>& buffer, size_t max_bytes) const;
 
     // Getters
-    [[nodiscard]] int         getFd()    const;
+    [[nodiscard]] socket_t    getFd()    const;
     [[nodiscard]] bool        isValid()  const;
     [[nodiscard]] std::string getIp()    const;
     [[nodiscard]] uint16_t    getPort()  const;

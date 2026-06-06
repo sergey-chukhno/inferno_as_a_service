@@ -40,6 +40,9 @@ extern void test_analysis_db_persistence();
 extern void test_analysis_backspace_filtering();
 extern void test_analysis_chronological_keylogs();
 
+// Circle 7 Process Profiler Tests
+extern void test_process_profiler_snapshot();
+
 #include <QCoreApplication>
 
 int main(int argc, char* argv[]) {
@@ -81,6 +84,9 @@ int main(int argc, char* argv[]) {
     test_analysis_db_persistence();
     test_analysis_backspace_filtering();
     test_analysis_chronological_keylogs();
+
+    // Circle 7 Process Profiler Tests
+    test_process_profiler_snapshot();
     
     std::cout << "=========================\n" << std::endl;
     return 0;

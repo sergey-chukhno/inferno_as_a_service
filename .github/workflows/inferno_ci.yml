@@ -95,3 +95,32 @@ jobs:
         INFERNO_DB_PASSWORD: inferno_password_2026
         QT_PLUGIN_PATH: /opt/homebrew/lib/qt6/plugins
       run: ./build/inferno_tests
+
+  windows-build:
+    name: build-and-test (windows-latest, msvc)
+    runs-on: windows-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        aqtversion: '==3.1.*'
+        version: '6.6.0'
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2019_64'
+        modules: 'qtbase'
+
+    - name: Configure CMake
+      run: cmake -B build -S .
+
+    - name: Build Targets
+      run: cmake --build build --target inferno_client inferno_tests --config Debug
+
+    - name: Execute Native Assertions
+      env:
+        INFERNO_TESTING: 1
+      run: .\build\Debug\inferno_tests.exe
+

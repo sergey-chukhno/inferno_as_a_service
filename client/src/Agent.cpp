@@ -1,15 +1,23 @@
 #include "../include/Agent.hpp"
 #include <iostream>
-#include <unistd.h>
-#include <sys/utsname.h>
-#include <pwd.h>
 #include <chrono>
 #include <thread>
 #include <sstream>
-#include <arpa/inet.h>
 #include <algorithm>
 #include <ctime>
 #include <fstream>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <lmcons.h>
+#else
+#include <unistd.h>
+#include <sys/utsname.h>
+#include <pwd.h>
+#endif
 
 #ifdef __APPLE__
 #include <IOKit/IOKitLib.h>
@@ -304,7 +312,19 @@ void Agent::handleProcessDiscovery() {
 }
 
 std::string Agent::getHardwareUUID() {
-#ifdef __APPLE__
+#ifdef _WIN32
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Cryptography", 0, KEY_READ | KEY_WOW64_64KEY, &hKey) == ERROR_SUCCESS) {
+        char value[256] = {0};
+        DWORD value_length = sizeof(value);
+        if (RegQueryValueExA(hKey, "MachineGuid", NULL, NULL, reinterpret_cast<LPBYTE>(value), &value_length) == ERROR_SUCCESS) {
+            RegCloseKey(hKey);
+            return "WIN-" + std::string(value);
+        }
+        RegCloseKey(hKey);
+    }
+    return "Unknown-Windows-UUID";
+#elif defined(__APPLE__)
     io_registry_entry_t matching = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPlatformExpertDevice"));
     if (!matching) return "Unknown-Mac";
     
@@ -346,14 +366,31 @@ std::string Agent::getSystemInfo() {
 }
 
 std::string Agent::getHostname() {
+#ifdef _WIN32
+    char buffer[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD size = sizeof(buffer);
+    if (GetComputerNameA(buffer, &size)) {
+        return std::string(buffer);
+    }
+    return "Unknown-Windows-Host";
+#else
     char hostname[256];
     if (gethostname(hostname, sizeof(hostname)) == 0) {
         return std::string(hostname);
     }
     return "Unknown";
+#endif
 }
 
 std::string Agent::getUsername() {
+#ifdef _WIN32
+    char buffer[UNLEN + 1];
+    DWORD size = sizeof(buffer);
+    if (GetUserNameA(buffer, &size)) {
+        return std::string(buffer);
+    }
+    return "Unknown-Windows-User";
+#else
     char username[256];
     if (getlogin_r(username, sizeof(username)) == 0) {
         return std::string(username);
@@ -364,9 +401,31 @@ std::string Agent::getUsername() {
         return std::string(pw->pw_name);
     }
     return "Unknown";
+#endif
 }
 
 std::string Agent::getOSVersion() {
+#ifdef _WIN32
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        char prodName[256] = {0};
+        char displayVersion[256] = {0};
+        DWORD prodNameLen = sizeof(prodName);
+        DWORD displayVersionLen = sizeof(displayVersion);
+        
+        RegQueryValueExA(hKey, "ProductName", NULL, NULL, reinterpret_cast<LPBYTE>(prodName), &prodNameLen);
+        RegQueryValueExA(hKey, "DisplayVersion", NULL, NULL, reinterpret_cast<LPBYTE>(displayVersion), &displayVersionLen);
+        RegCloseKey(hKey);
+        
+        std::stringstream ss;
+        ss << "Windows " << (prodName[0] ? prodName : "OS");
+        if (displayVersion[0]) {
+            ss << " (" << displayVersion << ")";
+        }
+        return ss.str();
+    }
+    return "Windows OS";
+#else
     struct utsname buffer;
     if (uname(&buffer) == 0) {
         std::stringstream ss;
@@ -374,6 +433,7 @@ std::string Agent::getOSVersion() {
         return ss.str();
     }
     return "Linux/Generic";
+#endif
 }
 
 } // namespace inferno

@@ -1,20 +1,33 @@
 #include "Socket.hpp"
-#include <sys/socket.h>
-#include <unistd.h>
 #include <utility> // For std::move
 #include <string>
 #include <optional>
-#include <arpa/inet.h>
-#include <netinet/in.h>
+
+#ifdef _WIN32
+#include <mutex>
+static std::once_flag wsa_init_flag;
+static void initWinsock() {
+    WSADATA wsaData;
+    WSAStartup(MAKEWORD(2, 2), &wsaData);
+}
+#endif
 
 namespace inferno {
 
 // Default Constructor
-Socket::Socket() : m_socket_fd(-1), m_ip(""), m_port(0) {}
+Socket::Socket() : m_socket_fd(INVALID_SOCKET), m_ip(""), m_port(0) {
+#ifdef _WIN32
+    std::call_once(wsa_init_flag, initWinsock);
+#endif
+}
 
 // Custom Constructor for Accept() overrides
-Socket::Socket(int fd, const std::string& ip, uint16_t port)
-    : m_socket_fd(fd), m_ip(ip), m_port(port) {}
+Socket::Socket(socket_t fd, const std::string& ip, uint16_t port)
+    : m_socket_fd(fd), m_ip(ip), m_port(port) {
+#ifdef _WIN32
+    std::call_once(wsa_init_flag, initWinsock);
+#endif
+}
 
 // Destructor
 Socket::~Socket() {
@@ -23,9 +36,13 @@ Socket::~Socket() {
 
 // Safe Closure Hook
 void Socket::closeSocket() noexcept {
-    if (m_socket_fd != -1) {
+    if (m_socket_fd != INVALID_SOCKET) {
+#ifdef _WIN32
+        ::closesocket(m_socket_fd);
+#else
         ::close(m_socket_fd);
-        m_socket_fd = -1;
+#endif
+        m_socket_fd = INVALID_SOCKET;
     }
 }
 
@@ -37,7 +54,7 @@ Socket::Socket(Socket&& other) noexcept
 {
     // We "steal" the resources and nullify the donor's socket file descriptor. 
     // If we don't nullify 'other.m_socket_fd', its destructor will close the socket!
-    other.m_socket_fd = -1;
+    other.m_socket_fd = INVALID_SOCKET;
     other.m_port = 0;
 }
 
@@ -54,7 +71,7 @@ Socket& Socket::operator=(Socket&& other) noexcept {
         m_port = other.m_port;
 
         // Step 3: Nullify the donor
-        other.m_socket_fd = -1;
+        other.m_socket_fd = INVALID_SOCKET;
         other.m_port = 0;
     }
     return *this;
@@ -65,11 +82,11 @@ Socket& Socket::operator=(Socket&& other) noexcept {
 bool Socket::bindNode(const std::string& ip, uint16_t port) {
     m_socket_fd = ::socket(AF_INET, SOCK_STREAM, 0); 
 
-    if (m_socket_fd == -1) {
+    if (m_socket_fd == INVALID_SOCKET) {
         return false;
     }
     int opt = 1; 
-    ::setsockopt(m_socket_fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    ::setsockopt(m_socket_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
     
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -77,7 +94,7 @@ bool Socket::bindNode(const std::string& ip, uint16_t port) {
 
     ::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
 
-    if (::bind(m_socket_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (::bind(m_socket_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closeSocket(); //we clean it if bind fails
         return false;
     }
@@ -102,25 +119,25 @@ bool Socket::listen(int backlog) {
         return false;
     }
 
-    if (::listen(m_socket_fd, backlog) < 0) {
+    if (::listen(m_socket_fd, backlog) == SOCKET_ERROR) {
         return false;
     }
     return true; 
 }
 
 bool Socket::connectTo(const std::string& ip, uint16_t port) {
-    if (m_socket_fd != -1) {
+    if (m_socket_fd != INVALID_SOCKET) {
         return false;
     }
     m_socket_fd = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (m_socket_fd == -1) {
+    if (m_socket_fd == INVALID_SOCKET) {
         return false;
     }
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
     addr.sin_port = htons(port);
     ::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
-    if (::connect(m_socket_fd, (struct sockaddr*)&addr, sizeof(addr)) < 0) {
+    if (::connect(m_socket_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
         closeSocket();
         return false;
     }
@@ -136,8 +153,8 @@ std::optional<Socket> Socket::acceptNode() {
     struct sockaddr_in client_addr{};
     socklen_t addr_len = sizeof(client_addr);
 
-    int client_fd = ::accept(m_socket_fd, (struct sockaddr*)&client_addr, &addr_len);
-    if (client_fd == -1) {
+    socket_t client_fd = ::accept(m_socket_fd, (struct sockaddr*)&client_addr, &addr_len);
+    if (client_fd == INVALID_SOCKET) {
         return std::nullopt;
     }
     char client_ip[INET_ADDRSTRLEN];
@@ -153,7 +170,7 @@ ssize_t Socket::sendData(const std::vector<uint8_t>& data) const {
     if (!isValid()) {
         return -1;
     }
-    ssize_t send_bytes = ::send(m_socket_fd, data.data(), data.size(), 0); 
+    ssize_t send_bytes = ::send(m_socket_fd, reinterpret_cast<const char*>(data.data()), data.size(), 0); 
     return send_bytes; 
 }
 
@@ -162,7 +179,7 @@ ssize_t Socket::receiveData(std::vector<uint8_t>& buffer, size_t max_bytes) cons
         return -1;
     }
     buffer.resize(max_bytes);
-    ssize_t read_bytes = ::recv(m_socket_fd, buffer.data(), max_bytes, 0);
+    ssize_t read_bytes = ::recv(m_socket_fd, reinterpret_cast<char*>(buffer.data()), max_bytes, 0);
 
     if (read_bytes > 0) {
         buffer.resize(read_bytes);
@@ -173,12 +190,12 @@ ssize_t Socket::receiveData(std::vector<uint8_t>& buffer, size_t max_bytes) cons
 }
 // Getters
 
-int Socket::getFd() const {
+socket_t Socket::getFd() const {
     return m_socket_fd;
 }
 
 bool Socket::isValid() const {
-    return m_socket_fd != -1;
+    return m_socket_fd != INVALID_SOCKET;
 }
 
 std::string Socket::getIp() const {

@@ -58,6 +58,9 @@ add_executable(inferno_server
     server/resources/styles.qrc
 )
 target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
+if(WIN32)
+    target_link_libraries(inferno_server PRIVATE ws2_32)
+endif()
 
 # ==========================================
 # 4. Client Agent Executable 
@@ -79,6 +82,10 @@ if(APPLE)
     target_link_libraries(inferno_client PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
 endif()
 
+if(WIN32)
+    target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32)
+endif()
+
 # ==========================================
 # 5. TDD Infrastructure
 # ==========================================
@@ -92,6 +99,7 @@ add_executable(inferno_tests
     tests/keylogger_test.cpp
     tests/database_test.cpp
     tests/analysis_test.cpp
+    tests/process_profiler_test.cpp
     server/src/network/server.cpp
     server/src/database/Inferno_Database.cpp
     server/src/services/Analysis.cpp
@@ -107,6 +115,10 @@ target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)
 
 if(APPLE)
     target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
+endif()
+
+if(WIN32)
+    target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32)
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)

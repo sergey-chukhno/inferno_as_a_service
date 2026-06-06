@@ -4,7 +4,13 @@
 #include <string>
 #include <chrono>
 
-#ifdef __APPLE__
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <tlhelp32.h>
+#elif defined(__APPLE__)
 #include <libproc.h>
 #include <unistd.h>
 #elif defined(__linux__)
@@ -82,6 +88,38 @@ std::vector<ProcessEntry> ProcessProfiler::captureFreshList() {
         }
     }
     closedir(dir);
+    return list;
+}
+#elif defined(_WIN32)
+std::vector<ProcessEntry> ProcessProfiler::captureFreshList() {
+    std::vector<ProcessEntry> list;
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnapshot == INVALID_HANDLE_VALUE) {
+        return list;
+    }
+    PROCESSENTRY32 pe32;
+    pe32.dwSize = sizeof(PROCESSENTRY32);
+    if (!Process32First(hSnapshot, &pe32)) {
+        CloseHandle(hSnapshot);
+        return list;
+    }
+    do {
+        ProcessEntry entry;
+        entry.pid = static_cast<uint32_t>(pe32.th32ProcessID);
+#ifdef UNICODE
+        int size_needed = WideCharToMultiByte(CP_UTF8, 0, pe32.szExeFile, -1, NULL, 0, NULL, NULL);
+        std::string name(size_needed, 0);
+        WideCharToMultiByte(CP_UTF8, 0, pe32.szExeFile, -1, &name[0], size_needed, NULL, NULL);
+        if (!name.empty() && name.back() == '\0') {
+            name.pop_back();
+        }
+        entry.name = name;
+#else
+        entry.name = std::string(pe32.szExeFile);
+#endif
+        list.push_back(std::move(entry));
+    } while (Process32Next(hSnapshot, &pe32));
+    CloseHandle(hSnapshot);
     return list;
 }
 #else

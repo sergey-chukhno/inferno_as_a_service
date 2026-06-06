@@ -2,7 +2,14 @@
 #include <iostream>
 #include <algorithm> // To use std::remove_if
 #include <iomanip>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#else
 #include <arpa/inet.h>
+#endif
 #include "../../common/include/Packet.hpp"
 
 namespace inferno {

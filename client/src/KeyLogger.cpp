@@ -107,9 +107,7 @@ void KeyLogger::start() {
 #ifdef INFERNO_TESTING
     std::cerr << "[KeyLogger] INFERNO_TESTING is active. Bypassing tap creation completely.\n";
     m_running = true;
-    return;
-#endif
-
+#else
     CGEventMask eventMask = CGEventMaskBit(kCGEventKeyDown);
     
     // Note: kCGHIDEventTap requires root or Accessibility permissions.
@@ -169,6 +167,7 @@ void KeyLogger::start() {
 
     // Ensure the runloop is entered and actively running before start() returns
     runloop_future.wait();
+#endif
 }
 
 void KeyLogger::stop() {
@@ -275,9 +274,7 @@ void KeyLogger::start() {
 #ifdef INFERNO_TESTING
     std::cerr << "[KeyLogger] INFERNO_TESTING is active. Bypassing Windows hook creation.\n";
     m_running = true;
-    return;
-#endif
-
+#else
     s_instance = this;
     m_running = true;
 
@@ -304,6 +301,7 @@ void KeyLogger::start() {
     });
 
     hook_future.wait();
+#endif
 }
 
 void KeyLogger::stop() {

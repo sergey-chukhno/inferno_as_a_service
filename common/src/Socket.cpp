@@ -85,8 +85,10 @@ bool Socket::bindNode(const std::string& ip, uint16_t port) {
     if (m_socket_fd == INVALID_SOCKET) {
         return false;
     }
+#ifndef _WIN32
     int opt = 1; 
     ::setsockopt(m_socket_fd, SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char*>(&opt), sizeof(opt));
+#endif
     
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;

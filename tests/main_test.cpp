@@ -44,8 +44,31 @@ extern void test_analysis_chronological_keylogs();
 extern void test_process_profiler_snapshot();
 
 #include <QCoreApplication>
+#include <iostream>
+
+void qtMessageOutput(QtMsgType type, const QMessageLogContext &, const QString &msg) {
+    QByteArray localMsg = msg.toLocal8Bit();
+    switch (type) {
+    case QtDebugMsg:
+        std::cerr << localMsg.constData() << std::endl;
+        break;
+    case QtInfoMsg:
+        std::cerr << "[INFO] " << localMsg.constData() << std::endl;
+        break;
+    case QtWarningMsg:
+        std::cerr << "[WARNING] " << localMsg.constData() << std::endl;
+        break;
+    case QtCriticalMsg:
+        std::cerr << "[CRITICAL] " << localMsg.constData() << std::endl;
+        break;
+    case QtFatalMsg:
+        std::cerr << "[FATAL] " << localMsg.constData() << std::endl;
+        abort();
+    }
+}
 
 int main(int argc, char* argv[]) {
+    qInstallMessageHandler(qtMessageOutput);
     // QSqlDatabase and other Qt components require a QCoreApplication instance
     QCoreApplication app(argc, argv);
 

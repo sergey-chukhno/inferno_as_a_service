@@ -1,4 +1,5 @@
 #include <iostream>
+#include "../common/include/CryptoContext.hpp"
 
 // External socket tests
 extern void test_socket_creation();
@@ -10,6 +11,7 @@ extern void test_server_start();
 extern void test_server_disconnect_agent();
 
 // External packet tests
+extern void test_packet_serialization();
 extern void test_packet_deserialization();
 extern void test_packet_endianness();
 extern void test_packet_size_limit();
@@ -77,6 +79,7 @@ int main(int argc, char* argv[]) {
     // QSqlDatabase and other Qt components require a QCoreApplication instance
     QCoreApplication app(argc, argv);
 
+    inferno::CryptoContext::instance().initDefault();
     std::cout << "\n=== Inferno TDD Suite ===" << std::endl;
     
     test_socket_creation();
@@ -84,6 +87,7 @@ int main(int argc, char* argv[]) {
     test_server_constructors();
     test_server_start();
     test_server_disconnect_agent();
+    test_packet_serialization();
     test_packet_deserialization();
     test_packet_endianness();
     test_packet_size_limit();

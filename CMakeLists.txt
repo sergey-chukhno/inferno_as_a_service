@@ -15,7 +15,12 @@ else()
 endif()
 
 # ==========================================
-# 2. Qt Dependencies (Circle 4)
+# 2. OpenSSL (Circle 8 — Transport Security)
+# ==========================================
+find_package(OpenSSL REQUIRED)
+
+# ==========================================
+# 3. Qt Dependencies (Circle 4)
 # ==========================================
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
@@ -29,8 +34,10 @@ find_package(Qt6 REQUIRED COMPONENTS Core Widgets Gui Sql)
 add_library(inferno_common STATIC
     common/src/Socket.cpp
     common/src/Packet.cpp
+    common/src/CryptoContext.cpp
 )
 target_include_directories(inferno_common PUBLIC common/include)
+target_link_libraries(inferno_common PUBLIC OpenSSL::Crypto)
 
 # ==========================================
 # 3. Server Executable

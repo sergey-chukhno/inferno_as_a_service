@@ -4,6 +4,7 @@
 #include "../include/network/server.hpp"
 #include "../include/ui/MainWindow.hpp"
 #include "../include/database/Inferno_Database.hpp"
+#include "../../common/include/CryptoContext.hpp"
 
 #include <QFile>
 #include <QTextStream>
@@ -39,6 +40,9 @@ void loadEnv(const QString& binaryPath) {
 int main(int argc, char** argv) {
     QApplication app(argc, argv);
     
+    // Initialize Transport Encryption (Circle 8 — Phase I)
+    inferno::CryptoContext::instance().initDefault();
+
     // Load Tactical Secrets (Circle 5) - Anchored to Binary Location
     loadEnv(QCoreApplication::applicationDirPath() + "/.env");
 

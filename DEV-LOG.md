@@ -263,6 +263,10 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 
 3. **OpenSSL EVP_EncryptUpdate with nullptr**: Passing `plaintext.data()` for an empty `std::vector` (which returns `nullptr`) to `EVP_EncryptUpdate` may not properly initialize the GCM internal state, even with length 0. Fixed by always passing a non-null pointer (the output buffer) for zero-length operations.
 
+4. **PONG handler draining keylogger buffer**: The PONG handler's fallback `m_keylogger.dump()` independently consumed the keylogger buffer every heartbeat, stealing data from the jitter thread and fragmenting keystrokes across 5-second windows. Fixed by removing the direct `dump()` call — PONG only sends data explicitly staged by the jitter thread.
+
+5. **Jitter thread overwriting pending buffer**: The server polls KEYLOG_DUMP every 1.5s, but PONG only delivers every 5s. Each jitter cycle was overwriting `m_keylog_pending_data`, so only the last fragment within a heartbeat window survived. Fixed by appending instead of replacing, with a 1MB cap.
+
 ### Security Architecture Decisions
 - **Static Key**: The compiled-in 256-bit key defeats passive DPI/in-line network forensics but not binary reverse engineering. DH key exchange (Phase I-bis) will upgrade to per-session ephemeral keys with perfect forward secrecy.
 - **Fallback to Cleartext**: If `CryptoContext::init()` is not called (development/debug builds), packets are sent/received in cleartext. This ensures the entire toolchain works without OpenSSL during early testing.

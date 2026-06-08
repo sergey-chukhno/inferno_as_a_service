@@ -178,4 +178,37 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Process Snapshot Minimization**: Retained stealth caching (30s) across all platforms to reduce CPU activity footprint.
 - **Memory Protection**: Secured UTF-16 to UTF-8 conversion buffer allocations from zero-length inputs, ensuring memory safety during process execution checks.
 
-*Status: 100% COMPLETE. Next: Circle 8 (Ruse et Tromperie) — Agent Evasion and Installation Discretion...*
+*Status: 100% COMPLETE.*
+
+---
+
+## 🕶️ Circle 8: Ruse et Tromperie — Phase 0: Linux Keylogger — [2026-06-08]
+
+**Objective**: Close the cross-platform gap left by Circle 7 by replacing the Linux keylogger stub with a full evdev-based backend, enabling keystroke capture on Linux desktops.
+
+### Technical Milestones
+- **evdev Device Discovery**: Implemented `findKeyboardDevice()` with a dual-strategy scanner:
+  - *Primary*: Walks `/dev/input/by-path/` matching `-kbd` / `-keyboard` symlinks (udev-managed naming).
+  - *Fallback*: Iterates `/dev/input/event*` using `ioctl(EVIOCGBIT)` to probe for `EV_KEY` capability and verify keyboard heuristics (ENTER + letter keys present).
+- **Event Loop**: Implemented `evdevLoop()` — a dedicated `std::thread` running `poll()` with a 100ms timeout on the keyboard device fd. Reads `struct input_event` and filters for `EV_KEY` press events (`value == 1`).
+- **US Layout Keycode Translation**: Built a comprehensive keycode-to-string mapper with modifier state tracking (shift, caps lock, ctrl, alt):
+  - Letters A–Z with uppercase via shift/caps XOR.
+  - Number row with shifted symbols (`!`, `@`, `#`, etc.).
+  - Punctuation, navigation (arrows, HOME, END, PAGEUP/DOWN), function keys F1–F12, keypad digits and operators.
+  - Special tags: `[ENTER]`, `[BACKSPACE]`, `[TAB]`, `[ESC]`, `[DEL]`, `[INSERT]`, `[MENU]`, `[PRTSC]`, `[PAUSE]`.
+  - Unknown keys fall back to `[KEY:code]` notation.
+- **Graceful Permission Handling**: On Linux desktop sessions, `systemd-logind` grants ACL access to `/dev/input/event*` automatically — no root required. Non-desktop environments (SSH, headless) fail with a logged warning and disable keylogger, identical to macOS Accessibility rejection behavior.
+- **Thread Safety**: The evdev thread checks `m_running` every 100ms via `poll()` timeout, enabling clean shutdown without a signaling pipe. The fd is closed only after the thread joins, preventing race conditions.
+- **No New Dependencies**: evdev uses only Linux kernel headers (`<linux/input.h>`, `<linux/input-event-codes.h>`) and POSIX APIs (`poll`, `ioctl`, `open`, `read`). CMakeLists.txt is unchanged.
+
+### Verification Milestone
+- **Full Build**: Project compiles warning-free on macOS (existing backends) with zero regression.
+- **TDD Success**: All **24 unit tests** pass. New Linux-specific test `test_keylogger_linux_backend_compiles` verifies the evdev backend links and runs correctly under `INFERNO_TESTING` mode.
+- **Tagged**: `v0.8.0-ruse`.
+
+### Architecture Decisions
+- **evdev over X11 XRecord**: evdev works on both X11 and Wayland, requires no additional libraries, and operates at the kernel level (lower detection profile). The tradeoff is that non-desktop environments without `systemd-logind` ACLs require root or `input` group membership.
+- **US Layout Hardcoded**: The initial implementation uses a fixed US keyboard layout. Layout-aware translation via `libxkbcommon` is deferred to a later iteration (planned for Phase III enhancements).
+- **WSL Limitations**: WSL2 does not pass through host keyboard devices to the VM. The device scanner returns empty gracefully (no crash). Windows keystroke capture should use the native Windows agent binary instead.
+
+*Status: 100% COMPLETE. Next: Circle 8 Phase I — Transport Security (AES-256-GCM, Jitter, PONG Piggybacking)...**

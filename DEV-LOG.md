@@ -252,8 +252,16 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 
 ### Verification Milestone
 - **Full Build**: Project compiles warning-free on macOS with OpenSSL 3.6 (also tested with OpenSSL 3.5).
-- **TDD Success**: All **25 unit tests** pass, including new GCM roundtrip test (`test_packet_serialization`).
+- **TDD Success**: All **26 unit tests** pass, including `test_empty_payload_encrypt_decrypt`.
 - **Tagged**: `v0.8.0-ruse`.
+
+### Debugging Note — Three Bugs Found & Fixed During Integration
+
+1. **Empty-payload GCM ambiguity**: `CryptoContext::decrypt()` returned an empty vector for both "decryption succeeded (plaintext is empty)" and "decryption failed (tag mismatch)". `Packet::deserialize()` treated any empty result as failure, rejecting valid packets like `SYS_REQ_INFO`, `PING`, and `KEYLOG_START` which have empty payloads. Fixed by changing `decrypt()` return type to `std::optional<std::vector<uint8_t>>`.
+
+2. **Wire vs decrypted payload size**: Both `Agent::handleListening()` and `Server::processPacketBuffer()` used `getPayload().size()` (decrypted size) to calculate how many bytes to remove from the receive buffer after deserialization. With encryption, the wire payload is larger (+28 bytes GCM overhead), so bytes were left in the buffer, corrupting subsequent reads. Fixed by adding `getWirePayloadSize()` to `Packet`, set during `deserialize()`.
+
+3. **OpenSSL EVP_EncryptUpdate with nullptr**: Passing `plaintext.data()` for an empty `std::vector` (which returns `nullptr`) to `EVP_EncryptUpdate` may not properly initialize the GCM internal state, even with length 0. Fixed by always passing a non-null pointer (the output buffer) for zero-length operations.
 
 ### Security Architecture Decisions
 - **Static Key**: The compiled-in 256-bit key defeats passive DPI/in-line network forensics but not binary reverse engineering. DH key exchange (Phase I-bis) will upgrade to per-session ephemeral keys with perfect forward secrecy.

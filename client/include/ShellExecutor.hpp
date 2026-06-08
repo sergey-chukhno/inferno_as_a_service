@@ -40,7 +40,6 @@ public:
 
     // Output chunk size: 4096 bytes (system page size).
     // Chosen to match libc/SSH/HTTPS buffer sizes for stealth traffic profiling.
-    // TODO(Circle 7): Add randomized inter-chunk jitter for timing fingerprint evasion.
     // TODO(Circle 8): Wrap output in AES-256-GCM for DPI content inspection resistance.
     static constexpr size_t CHUNK_SIZE = 4096;
 };

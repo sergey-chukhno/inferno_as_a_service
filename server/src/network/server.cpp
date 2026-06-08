@@ -206,8 +206,8 @@ void Server::processPacketBuffer(ClientContext& client) {
                                QString::fromStdString(sanitizeOutput(payload_str, 12, payload_str.size()-12)));
         }
 
-        // Remove processed bytes from the buffer
-        size_t packet_size = sizeof(PacketHeader) + payload.size();
+        // Remove processed bytes from the buffer (wire size, not decrypted size)
+        size_t packet_size = sizeof(PacketHeader) + packet_opt->getWirePayloadSize();
         client.buffer.erase(client.buffer.begin(), client.buffer.begin() + packet_size);
     }
 }

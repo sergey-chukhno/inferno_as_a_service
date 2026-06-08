@@ -127,7 +127,7 @@ void Agent::handleListening() {
         if (!packet_opt.has_value()) {
             break; // Incomplete packet — wait for more data
         }
-        const size_t packet_size = sizeof(PacketHeader) + packet_opt->getPayload().size();
+        const size_t packet_size = sizeof(PacketHeader) + packet_opt->getWirePayloadSize();
         handleDispatching(std::move(*packet_opt));
         // Slide: remove the consumed packet bytes from the front of the buffer
         m_receive_buffer.erase(m_receive_buffer.begin(),

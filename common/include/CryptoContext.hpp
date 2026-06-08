@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <vector>
 #include <string>
+#include <optional>
 
 namespace inferno {
 
@@ -20,7 +21,7 @@ public:
     bool isInitialized() const;
 
     std::vector<uint8_t> encrypt(const std::vector<uint8_t>& plaintext) const;
-    std::vector<uint8_t> decrypt(const std::vector<uint8_t>& ciphertext_with_iv_and_tag) const;
+    std::optional<std::vector<uint8_t>> decrypt(const std::vector<uint8_t>& ciphertext_with_iv_and_tag) const;
 
 private:
     CryptoContext() = default;

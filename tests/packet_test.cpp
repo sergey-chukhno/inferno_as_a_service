@@ -115,3 +115,21 @@ void test_fragmented_deserialization() {
 
     std::cout << "[PASS] test_fragmented_deserialization" << std::endl;
 }
+
+void test_empty_payload_encrypt_decrypt() {
+    CryptoContext::instance().initDefault();
+
+    Packet send(static_cast<uint16_t>(Opcode::SYS_REQ_INFO), "");
+    std::vector<uint8_t> wire = send.serialize();
+
+    fprintf(stderr, "[TEST] wire size=%zu\n", wire.size());
+
+    auto recv = Packet::deserialize(wire);
+    if (!recv.has_value()) {
+        fprintf(stderr, "[TEST] FAILED to deserialize\n");
+        assert(false && "Empty payload roundtrip failed");
+    }
+    assert(recv->getOpcode() == static_cast<uint16_t>(Opcode::SYS_REQ_INFO));
+    assert(recv->getPayload().empty());
+    std::cout << "[PASS] test_empty_payload_encrypt_decrypt\n";
+}

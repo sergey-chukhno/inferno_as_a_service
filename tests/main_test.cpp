@@ -23,6 +23,9 @@ extern void test_shell_executor_failure();
 extern void test_shell_executor_stderr_redirect();
 extern void test_shell_executor_chunk_size();
 
+// Empty payload crypto test
+extern void test_empty_payload_encrypt_decrypt();
+
 // External keylogger tests
 extern void test_keylogger_init_state();
 extern void test_keylogger_start_stop();
@@ -92,6 +95,7 @@ int main(int argc, char* argv[]) {
     test_packet_endianness();
     test_packet_size_limit();
     test_fragmented_deserialization();
+    test_empty_payload_encrypt_decrypt();
     test_shell_executor_echo();
     test_shell_executor_failure();
     test_shell_executor_stderr_redirect();

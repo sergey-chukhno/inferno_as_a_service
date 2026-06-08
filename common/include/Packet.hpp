@@ -27,8 +27,9 @@ public:
 private:
     PacketHeader m_header;
     std::vector<uint8_t> m_payload;
+    size_t m_wire_payload_size = 0;
 
-    Packet(const PacketHeader& header, std::vector<uint8_t> payload);
+    Packet(const PacketHeader& header, std::vector<uint8_t> payload, size_t wire_payload_size);
 
 public:
     Packet();
@@ -46,6 +47,7 @@ public:
 
     [[nodiscard]] uint16_t getOpcode() const;
     [[nodiscard]] const std::vector<uint8_t>& getPayload() const;
+    [[nodiscard]] size_t getWirePayloadSize() const;
 };
 
 } // namespace inferno

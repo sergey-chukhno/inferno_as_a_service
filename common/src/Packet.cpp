@@ -39,15 +39,14 @@ Packet::Packet(uint16_t opcode, const std::string& string_payload)
     m_header.payload_size  = 0;
 }
 
-Packet::Packet(const PacketHeader& header, std::vector<uint8_t> payload)
-    : m_header(header), m_payload(std::move(payload)) {}
+Packet::Packet(const PacketHeader& header, std::vector<uint8_t> payload, size_t wire_payload_size)
+    : m_header(header), m_payload(std::move(payload)), m_wire_payload_size(wire_payload_size) {}
 
 Packet::~Packet() = default;
 
 // ── Serialize ─────────────────────────────────────────────────
 
 std::vector<uint8_t> Packet::serialize() const {
-    // Encrypt payload (with IV + GCM tag overhead)
     const auto& ctx = CryptoContext::instance();
     static bool warned = false;
     std::vector<uint8_t> wire_payload;
@@ -111,23 +110,26 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data) 
         return std::nullopt;
     }
 
+    size_t wire_payload_size = header.payload_size;
+
     std::vector<uint8_t> wire_payload(
         raw_data.begin() + sizeof(PacketHeader),
-        raw_data.begin() + sizeof(PacketHeader) + header.payload_size);
+        raw_data.begin() + sizeof(PacketHeader) + wire_payload_size);
 
     // Decrypt
     const auto& ctx = CryptoContext::instance();
     std::vector<uint8_t> plaintext;
 
     if (ctx.isInitialized() && wire_payload.size() >= CryptoContext::OVERHEAD) {
-        plaintext = ctx.decrypt(wire_payload);
-        if (plaintext.empty()) {
+        auto decrypted = ctx.decrypt(wire_payload);
+        if (!decrypted.has_value()) {
             std::cerr << "[Packet] Decryption failed (tampered or wrong key).\n";
             return std::nullopt;
         }
+        plaintext = std::move(*decrypted);
     } else {
-        // Either not initialized, or payload is too small to be encrypted
-        // (e.g. loopback test without crypto). Treat as plaintext.
+        // Either not initialized, or payload is too small to be encrypted.
+        // Treat as plaintext.
         plaintext = std::move(wire_payload);
     }
 
@@ -135,7 +137,7 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data) 
         return std::nullopt;
     }
 
-    return Packet(header, std::move(plaintext));
+    return Packet(header, std::move(plaintext), wire_payload_size);
 }
 
 // ── Getters ───────────────────────────────────────────────────
@@ -146,6 +148,10 @@ uint16_t Packet::getOpcode() const {
 
 const std::vector<uint8_t>& Packet::getPayload() const {
     return m_payload;
+}
+
+size_t Packet::getWirePayloadSize() const {
+    return m_wire_payload_size;
 }
 
 } // namespace inferno

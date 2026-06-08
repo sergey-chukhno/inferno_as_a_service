@@ -233,7 +233,8 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 **1.2 Keylogger Jitter Thread**
 - Decoupled `KEYLOG_DUMP` handling from network transmission with a dedicated jitter thread.
 - When `KEYLOG_DUMP` arrives, the handler sets a flag and signals a condition variable.
-- The jitter thread wakes, sleeps a random 500–3000ms, reads the keylogger buffer, builds a `KEYLOG_DATA` packet, and sends it.
+- The jitter thread wakes, sleeps a random 500–3000ms, reads the keylogger buffer, and stores the data in a shared pending buffer.
+- The PONG handler (1.4) consumes the shared buffer on the next heartbeat cycle — no `KEYLOG_DATA` packets are sent directly.
 - Prevents timing correlation between operator button presses and network traffic bursts, without blocking the agent's main FSM loop.
 
 **1.3 Shell Output Inter-Chunk Jitter**
@@ -244,7 +245,8 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 
 **1.4 Server Heartbeat & PONG Piggybacking**
 - Added a 5-second PING heartbeat to the server's `select()` event loop, enabling detection of dead connections and providing a natural transmission carrier.
-- Agent piggybacks any available keylog data on PONG responses — keystroke data is embedded inside heartbeat response packets, eliminating `KEYLOG_DATA` as a separate packet category on the wire.
+- Agent piggybacks keylog data on PONG responses: prioritizes the shared buffer from the jitter thread (1.2), falls back to an immediate `m_keylogger.dump()` for any remaining keystrokes.
+- Keystroke data is embedded inside heartbeat response packets — no `KEYLOG_DATA` packet ever appears on the wire.
 - Server extracts piggybacked keylog data from PONG payloads and routes it through the existing `keylogReceived` signal path.
 - From a network forensics perspective, the agent only ever sends PONG responses and encrypted command results — no dedicated telemetry packet types visible in a packet capture.
 

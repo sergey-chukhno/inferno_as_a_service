@@ -90,7 +90,7 @@ void Agent::handleConnecting() {
         unsigned delay = m_reconnect_delay;
         // Apply ±30% jitter
         std::uniform_int_distribution<int> jitter_dist(
-            static_cast<int>(-delay * 0.3),
+            static_cast<int>(-static_cast<int>(delay * 0.3)),
             static_cast<int>(delay * 0.3));
         delay = static_cast<unsigned>(std::max(1, static_cast<int>(delay) + jitter_dist(rng)));
 

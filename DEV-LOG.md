@@ -211,4 +211,67 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **US Layout Hardcoded**: The initial implementation uses a fixed US keyboard layout. Layout-aware translation via `libxkbcommon` is deferred to a later iteration (planned for Phase III enhancements).
 - **WSL Limitations**: WSL2 does not pass through host keyboard devices to the VM. The device scanner returns empty gracefully (no crash). Windows keystroke capture should use the native Windows agent binary instead.
 
-*Status: 100% COMPLETE. Next: Circle 8 Phase I — Transport Security (AES-256-GCM, Jitter, PONG Piggybacking)...**
+*Status: 100% COMPLETE.*
+
+---
+
+## 🕶️ Circle 8: Ruse et Tromperie — Phase I: Transport Security & Traffic Stealth — [2026-06-08]
+
+**Objective**: Hide agent traffic from network inspection and timing analysis through payload encryption, transmission jitter, and heartbeat piggybacking.
+
+### Technical Milestones
+
+**1.1 AES-256-GCM Payload Encryption**
+- Replaced CRC32 checksum with AEAD (Authenticated Encryption with Associated Data) using AES-256-GCM via OpenSSL EVP.
+- New `CryptoContext` singleton managing a 256-bit AES key, 12-byte random IV per packet, and 16-byte GCM authentication tag.
+- Wire format: `[Header(10)] [IV(12)] [Ciphertext(N)] [Tag(16)]` — every payload is encrypted before leaving the agent and decrypted at the server.
+- Packet header shrunk from 14 to 10 bytes (removed `checksum` field — integrity now guaranteed by GCM).
+- Static compiled-in key via `initDefault()` — a placeholder for the DH key exchange planned in Phase I-bis.
+- Graceful fallback: if `CryptoContext` is not initialized, packets are sent in cleartext with a single warning.
+- CMake integration: `find_package(OpenSSL REQUIRED)`, linked to `inferno_common`, `inferno_server`, `inferno_client`, `inferno_tests`.
+
+**1.2 Keylogger Jitter Thread**
+- Decoupled `KEYLOG_DUMP` handling from network transmission with a dedicated jitter thread.
+- When `KEYLOG_DUMP` arrives, the handler sets a flag and signals a condition variable.
+- The jitter thread wakes, sleeps a random 500–3000ms, reads the keylogger buffer, and stores the data in a shared pending buffer.
+- The PONG handler (1.4) consumes the shared buffer on the next heartbeat cycle — no `KEYLOG_DATA` packets are sent directly.
+- Prevents timing correlation between operator button presses and network traffic bursts, without blocking the agent's main FSM loop.
+
+**1.3 Shell Output Inter-Chunk Jitter**
+- Added random 50–250ms delay between `CMD_RES` chunks during shell output streaming.
+- Uses `thread_local std::mt19937` seeded once per thread for cryptographically neutral randomness.
+- No jitter after the final chunk to avoid delaying command completion on the C2 dashboard.
+- 4096-byte chunk size + randomized inter-chunk delay makes shell output traffic statistically indistinguishable from HTTPS bulks.
+
+**1.4 Server Heartbeat & PONG Piggybacking**
+- Added a 5-second PING heartbeat to the server's `select()` event loop, enabling detection of dead connections and providing a natural transmission carrier.
+- Agent piggybacks keylog data on PONG responses exclusively from the shared buffer staged by the jitter thread (1.2) — no direct `m_keylogger.dump()` fallback, preventing buffer fragmentation across heartbeats.
+- Keystroke data is embedded inside heartbeat response packets — no `KEYLOG_DATA` packet ever appears on the wire.
+- Server extracts piggybacked keylog data from PONG payloads and routes it through the existing `keylogReceived` signal path.
+- From a network forensics perspective, the agent only ever sends PONG responses and encrypted command results — no dedicated telemetry packet types visible in a packet capture.
+
+### Verification Milestone
+
+- **Full Build**: Project compiles warning-free on macOS with OpenSSL 3.6 (also tested with OpenSSL 3.5).
+- **TDD Success**: All **26 unit tests** pass, including `test_empty_payload_encrypt_decrypt`.
+- **Tagged**: `v0.8.0-ruse`.
+
+### Debugging Note — Three Bugs Found & Fixed During Integration
+
+1. **Empty-payload GCM ambiguity**: `CryptoContext::decrypt()` returned an empty vector for both "decryption succeeded (plaintext is empty)" and "decryption failed (tag mismatch)". `Packet::deserialize()` treated any empty result as failure, rejecting valid packets like `SYS_REQ_INFO`, `PING`, and `KEYLOG_START` which have empty payloads. Fixed by changing `decrypt()` return type to `std::optional<std::vector<uint8_t>>`.
+
+2. **Wire vs decrypted payload size**: Both `Agent::handleListening()` and `Server::processPacketBuffer()` used `getPayload().size()` (decrypted size) to calculate how many bytes to remove from the receive buffer after deserialization. With encryption, the wire payload is larger (+28 bytes GCM overhead), so bytes were left in the buffer, corrupting subsequent reads. Fixed by adding `getWirePayloadSize()` to `Packet`, set during `deserialize()`.
+
+3. **OpenSSL EVP_EncryptUpdate with nullptr**: Passing `plaintext.data()` for an empty `std::vector` (which returns `nullptr`) to `EVP_EncryptUpdate` may not properly initialize the GCM internal state, even with length 0. Fixed by always passing a non-null pointer (the output buffer) for zero-length operations.
+
+4. **PONG handler draining keylogger buffer**: The PONG handler's fallback `m_keylogger.dump()` independently consumed the keylogger buffer every heartbeat, stealing data from the jitter thread and fragmenting keystrokes across 5-second windows. Fixed by removing the direct `dump()` call — PONG only sends data explicitly staged by the jitter thread.
+
+5. **Jitter thread overwriting pending buffer**: The server polls KEYLOG_DUMP every 1.5s, but PONG only delivers every 5s. Each jitter cycle was overwriting `m_keylog_pending_data`, so only the last fragment within a heartbeat window survived. Fixed by appending instead of replacing, with a 1MB cap.
+
+### Security Architecture Decisions
+
+- **Static Key**: The compiled-in 256-bit key defeats passive DPI/in-line network forensics but not binary reverse engineering. DH key exchange (Phase I-bis) will upgrade to per-session ephemeral keys with perfect forward secrecy.
+- **Fallback to Cleartext (development builds)**: If `CryptoContext::init()` is never called, packets are sent/received in cleartext. This allows local testing and debugging without initialising the crypto layer, but **production builds always require OpenSSL** and will emit a warning on first unencrypted send.
+- **Combined Jitter**: Keylog jitter (500–3000ms) + shell jitter (50–250ms) + PONG heartbeat carrier (5s) create a multi-layered traffic obfuscation that defeats both timing-correlation and packet-category analysis.
+
+*Status: 100% COMPLETE. Next: Circle 8 Phase II — Agent Evasion & Discretion (Console Hiding, Wrapper, Installation, Auto-Start)...*

@@ -6,6 +6,7 @@
 #include <QVector>
 #include <vector>
 #include <cstdint>
+#include <ctime>
 
 namespace inferno {
 
@@ -55,6 +56,7 @@ private:
     std::vector<ClientContext> m_clients;       
     uint16_t                   m_port;
     bool                       m_running;
+    time_t                     m_last_heartbeat;
 
     static std::string buildCmdExecPacket(const std::string& command);
     static std::string sanitizeOutput(const std::string& s, size_t offset, size_t len);

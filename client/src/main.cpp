@@ -1,4 +1,5 @@
 #include "../include/Agent.hpp"
+#include "../../common/include/CryptoContext.hpp"
 #include <iostream>
 
 int main(int argc, char* argv[]) {
@@ -21,6 +22,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    inferno::CryptoContext::instance().initDefault();
     std::cout << "[Inferno Agent] Initializing Deployment to " << ip << ":" << port << "...\n";
     
     inferno::Agent agent(ip, port);

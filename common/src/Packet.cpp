@@ -49,13 +49,23 @@ Packet::~Packet() = default;
 std::vector<uint8_t> Packet::serialize() const {
     const auto& ctx = CryptoContext::instance();
     static bool warned = false;
-    std::vector<uint8_t> wire_payload;
 
+    // Build opcode AAD (2 bytes, network order) — authenticates the command
+    // type so an attacker cannot tamper with it in transit. payload_size is
+    // excluded from AAD because it's not known until after encryption.
+    const uint8_t aad[2] = {
+        static_cast<uint8_t>((m_header.opcode >> 8) & 0xFF),
+        static_cast<uint8_t>(m_header.opcode & 0xFF)
+    };
+    std::vector<uint8_t> aad_vec(aad, aad + sizeof(aad));
+
+    // Encrypt payload with opcode as AAD
+    std::vector<uint8_t> wire_payload;
     if (ctx.isInitialized()) {
-        wire_payload = ctx.encrypt(m_payload);
+        wire_payload = ctx.encrypt(m_payload, aad_vec);
         if (wire_payload.empty()) {
             std::cerr << "[Packet] Encryption failed.\n";
-            wire_payload = m_payload; // fallback: send plaintext
+            wire_payload = m_payload;
         }
     } else {
         if (!warned) {
@@ -70,15 +80,14 @@ std::vector<uint8_t> Packet::serialize() const {
         return {};
     }
 
-    std::vector<uint8_t> buffer;
-    buffer.reserve(sizeof(PacketHeader) + wire_payload.size());
-
     PacketHeader net_header;
     net_header.magic         = htonl(m_header.magic);
     net_header.opcode        = htons(m_header.opcode);
     net_header.payload_size  = htonl(static_cast<uint32_t>(wire_payload.size()));
 
     const uint8_t* hdr = reinterpret_cast<const uint8_t*>(&net_header);
+    std::vector<uint8_t> buffer;
+    buffer.reserve(sizeof(PacketHeader) + wire_payload.size());
     buffer.insert(buffer.end(), hdr, hdr + sizeof(PacketHeader));
     buffer.insert(buffer.end(), wire_payload.begin(), wire_payload.end());
     return buffer;
@@ -121,7 +130,13 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data) 
     std::vector<uint8_t> plaintext;
 
     if (ctx.isInitialized() && wire_payload.size() >= CryptoContext::OVERHEAD) {
-        auto decrypted = ctx.decrypt(wire_payload);
+        // AAD: the opcode bytes (same as during serialize)
+        const uint8_t aad[2] = {
+            static_cast<uint8_t>((header.opcode >> 8) & 0xFF),
+            static_cast<uint8_t>(header.opcode & 0xFF)
+        };
+        std::vector<uint8_t> aad_vec(aad, aad + 2);
+        auto decrypted = ctx.decrypt(wire_payload, aad_vec);
         if (!decrypted.has_value()) {
             std::cerr << "[Packet] Decryption failed (tampered or wrong key).\n";
             return std::nullopt;

@@ -39,7 +39,8 @@ bool CryptoContext::isInitialized() const {
     return m_initialized;
 }
 
-std::vector<uint8_t> CryptoContext::encrypt(const std::vector<uint8_t>& plaintext) const {
+std::vector<uint8_t> CryptoContext::encrypt(const std::vector<uint8_t>& plaintext,
+                                           const std::vector<uint8_t>& aad) const {
     if (!m_initialized) {
         std::cerr << "[CryptoContext] encrypt: context not initialized.\n";
         return {};
@@ -77,6 +78,16 @@ std::vector<uint8_t> CryptoContext::encrypt(const std::vector<uint8_t>& plaintex
     if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, m_key, out.data()) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         return {};
+    }
+
+    // Process AAD (authenticated but not encrypted)
+    if (!aad.empty()) {
+        int aad_len = 0;
+        if (EVP_EncryptUpdate(ctx, nullptr, &aad_len,
+                              aad.data(), static_cast<int>(aad.size())) != 1) {
+            EVP_CIPHER_CTX_free(ctx);
+            return {};
+        }
     }
 
     // Encrypt plaintext
@@ -117,7 +128,8 @@ std::vector<uint8_t> CryptoContext::encrypt(const std::vector<uint8_t>& plaintex
 }
 
 std::optional<std::vector<uint8_t>> CryptoContext::decrypt(
-    const std::vector<uint8_t>& ciphertext_with_iv_and_tag) const {
+    const std::vector<uint8_t>& ciphertext_with_iv_and_tag,
+    const std::vector<uint8_t>& aad) const {
 
     if (!m_initialized) {
         std::cerr << "[CryptoContext] decrypt: context not initialized.\n";
@@ -155,6 +167,16 @@ std::optional<std::vector<uint8_t>> CryptoContext::decrypt(
     if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, m_key, iv) != 1) {
         EVP_CIPHER_CTX_free(ctx);
         return std::nullopt;
+    }
+
+    // Process AAD (authenticated but not encrypted)
+    if (!aad.empty()) {
+        int aad_len = 0;
+        if (EVP_DecryptUpdate(ctx, nullptr, &aad_len,
+                              aad.data(), static_cast<int>(aad.size())) != 1) {
+            EVP_CIPHER_CTX_free(ctx);
+            return std::nullopt;
+        }
     }
 
     const uint8_t* ct = ciphertext_with_iv_and_tag.data() + IV_SIZE;

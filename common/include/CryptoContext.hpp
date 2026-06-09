@@ -20,8 +20,10 @@ public:
     void initDefault();
     bool isInitialized() const;
 
-    std::vector<uint8_t> encrypt(const std::vector<uint8_t>& plaintext) const;
-    std::optional<std::vector<uint8_t>> decrypt(const std::vector<uint8_t>& ciphertext_with_iv_and_tag) const;
+    std::vector<uint8_t> encrypt(const std::vector<uint8_t>& plaintext,
+                                 const std::vector<uint8_t>& aad = {}) const;
+    std::optional<std::vector<uint8_t>> decrypt(const std::vector<uint8_t>& ciphertext_with_iv_and_tag,
+                                                 const std::vector<uint8_t>& aad = {}) const;
 
 private:
     CryptoContext() = default;

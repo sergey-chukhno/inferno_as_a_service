@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <ctime>
 #include <fstream>
+#include <cmath>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -27,10 +28,10 @@
 
 namespace inferno {
 
-Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(8080), m_state(AgentState::INIT), m_running(false) {}
+Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(8080), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::Agent(const std::string& server_ip, uint16_t server_port)
-    : m_server_ip(server_ip), m_server_port(server_port), m_state(AgentState::INIT), m_running(false) {}
+    : m_server_ip(server_ip), m_server_port(server_port), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::~Agent() {
     stop();
@@ -78,10 +79,23 @@ void Agent::handleConnecting() {
     std::cout << "[Agent] Attempting to connect to " << m_server_ip << ":" << m_server_port << "..." << std::endl;
     if (m_socket.connectTo(m_server_ip, m_server_port)) {
         std::cout << "[Agent] Connection established." << std::endl;
+        m_reconnect_delay = MIN_BACKOFF;
         m_state = AgentState::CONNECTED;
     } else {
-        std::cerr << "[Agent] Connection failed. Retrying in 5 seconds..." << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(5));
+        // Exponential backoff with jitter
+        thread_local std::mt19937 rng(std::random_device{}());
+        unsigned delay = m_reconnect_delay;
+        // Apply ±30% jitter
+        std::uniform_int_distribution<int> jitter_dist(
+            static_cast<int>(-delay * 0.3),
+            static_cast<int>(delay * 0.3));
+        delay = static_cast<unsigned>(std::max(1, static_cast<int>(delay) + jitter_dist(rng)));
+
+        std::cerr << "[Agent] Connection failed. Retrying in " << delay << " seconds..." << std::endl;
+        std::this_thread::sleep_for(std::chrono::seconds(delay));
+
+        // Double backoff for next attempt, cap at MAX_BACKOFF
+        m_reconnect_delay = std::min(m_reconnect_delay * 2, MAX_BACKOFF);
     }
 }
 

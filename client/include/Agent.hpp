@@ -79,6 +79,11 @@ private:
     // Shared buffer: jitter thread stores here, PONG handler picks up
     std::string              m_keylog_pending_data;
     std::mutex               m_keylog_pending_mutex;
+
+    // Reconnect backoff (Phase 2.2)
+    static constexpr unsigned MIN_BACKOFF  = 1;     // seconds
+    static constexpr unsigned MAX_BACKOFF  = 300;   // 5 minutes
+    unsigned                 m_reconnect_delay;
 };
 
 } // namespace inferno

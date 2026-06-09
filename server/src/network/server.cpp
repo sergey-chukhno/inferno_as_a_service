@@ -16,7 +16,7 @@ namespace inferno {
 
 
 Server::Server(uint16_t port, QObject* parent) 
-    : QObject(parent), m_port(port), m_running(false), m_last_heartbeat(0) {}
+    : QObject(parent), m_port(port), m_running(false), m_last_heartbeat(std::time(nullptr)) {}
 
 Server::~Server() {
     stop();

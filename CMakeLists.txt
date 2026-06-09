@@ -96,6 +96,7 @@ endif()
 
 if(WIN32)
     target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32)
+    set_target_properties(inferno_client PROPERTIES WIN32_EXECUTABLE TRUE)
 endif()
 
 # ==========================================

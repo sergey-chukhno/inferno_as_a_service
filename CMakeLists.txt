@@ -96,7 +96,9 @@ endif()
 
 if(WIN32)
     target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32)
-    set_target_properties(inferno_client PROPERTIES WIN32_EXECUTABLE TRUE)
+    # Note: WIN32_EXECUTABLE is intentionally NOT set — the agent uses
+    # FreeConsole() at runtime to hide the console window, keeping
+    # standard main() as the entry point for cross-platform compatibility.
 endif()
 
 # ==========================================

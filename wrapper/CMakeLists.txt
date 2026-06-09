@@ -27,6 +27,5 @@ add_executable(inferno_wrapper
 target_include_directories(inferno_wrapper PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
 
 if(WIN32)
-    set_target_properties(inferno_wrapper PROPERTIES WIN32_EXECUTABLE TRUE)
     target_link_libraries(inferno_wrapper PRIVATE shell32)
 endif()

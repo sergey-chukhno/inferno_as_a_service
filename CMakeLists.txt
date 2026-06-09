@@ -135,3 +135,8 @@ if(WIN32)
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)
+
+# ==========================================
+# 6. Agent Wrapper / Dropper (Phase 2.3)
+# ==========================================
+add_subdirectory(wrapper)

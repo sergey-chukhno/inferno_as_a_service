@@ -245,12 +245,13 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 
 **1.4 Server Heartbeat & PONG Piggybacking**
 - Added a 5-second PING heartbeat to the server's `select()` event loop, enabling detection of dead connections and providing a natural transmission carrier.
-- Agent piggybacks keylog data on PONG responses: prioritizes the shared buffer from the jitter thread (1.2), falls back to an immediate `m_keylogger.dump()` for any remaining keystrokes.
+- Agent piggybacks keylog data on PONG responses exclusively from the shared buffer staged by the jitter thread (1.2) — no direct `m_keylogger.dump()` fallback, preventing buffer fragmentation across heartbeats.
 - Keystroke data is embedded inside heartbeat response packets — no `KEYLOG_DATA` packet ever appears on the wire.
 - Server extracts piggybacked keylog data from PONG payloads and routes it through the existing `keylogReceived` signal path.
 - From a network forensics perspective, the agent only ever sends PONG responses and encrypted command results — no dedicated telemetry packet types visible in a packet capture.
 
 ### Verification Milestone
+
 - **Full Build**: Project compiles warning-free on macOS with OpenSSL 3.6 (also tested with OpenSSL 3.5).
 - **TDD Success**: All **26 unit tests** pass, including `test_empty_payload_encrypt_decrypt`.
 - **Tagged**: `v0.8.0-ruse`.
@@ -268,8 +269,9 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 5. **Jitter thread overwriting pending buffer**: The server polls KEYLOG_DUMP every 1.5s, but PONG only delivers every 5s. Each jitter cycle was overwriting `m_keylog_pending_data`, so only the last fragment within a heartbeat window survived. Fixed by appending instead of replacing, with a 1MB cap.
 
 ### Security Architecture Decisions
+
 - **Static Key**: The compiled-in 256-bit key defeats passive DPI/in-line network forensics but not binary reverse engineering. DH key exchange (Phase I-bis) will upgrade to per-session ephemeral keys with perfect forward secrecy.
-- **Fallback to Cleartext**: If `CryptoContext::init()` is not called (development/debug builds), packets are sent/received in cleartext. This ensures the entire toolchain works without OpenSSL during early testing.
+- **Fallback to Cleartext (development builds)**: If `CryptoContext::init()` is never called, packets are sent/received in cleartext. This allows local testing and debugging without initialising the crypto layer, but **production builds always require OpenSSL** and will emit a warning on first unencrypted send.
 - **Combined Jitter**: Keylog jitter (500–3000ms) + shell jitter (50–250ms) + PONG heartbeat carrier (5s) create a multi-layered traffic obfuscation that defeats both timing-correlation and packet-category analysis.
 
 *Status: 100% COMPLETE. Next: Circle 8 Phase II — Agent Evasion & Discretion (Console Hiding, Wrapper, Installation, Auto-Start)...*

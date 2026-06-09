@@ -38,6 +38,9 @@ public:
     void run();
     void stop();
 
+    // Persistence (Phase 2.5)
+    static void installPersistence(const std::string& binary_path);
+
 private:
     // FSM Handlers
     void handleInit();

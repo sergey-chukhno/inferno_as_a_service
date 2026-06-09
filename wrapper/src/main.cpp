@@ -104,6 +104,10 @@ bool createDirectoryForFile(const std::string& path) {
 }
 
 bool extractAgent(const std::string& target) {
+    if (inferno::wrapper::AGENT_BINARY_SIZE == 0) {
+        std::fprintf(stderr, "[Wrapper] Agent binary not embedded.\n");
+        return false;
+    }
     FILE* f = ::fopen(target.c_str(), "wb");
     if (!f) return false;
 

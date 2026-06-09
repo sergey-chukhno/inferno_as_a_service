@@ -285,7 +285,7 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 ### Technical Milestones
 
 **2.1 Hide Console Window**
-- **Windows**: `FreeConsole()` on startup to detach from parent console. `WIN32_EXECUTABLE` CMake property links with `/SUBSYSTEM:WINDOWS` to suppress console window creation entirely.
+- **Windows**: `FreeConsole()` on startup to detach from parent console. The standard `main()` entry point is preserved for cross-platform compatibility — console hiding is done at runtime, not at link time.
 - **macOS/Linux**: Double-fork daemonization (`fork` → `setsid` → `fork`) with stdin/stdout/stderr redirected to `/dev/null`. Guarded by `INFERNO_TESTING` so debug builds keep the console visible.
 
 **2.2 Exponential Reconnect Backoff**
@@ -309,11 +309,13 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Linux**: Autostart `.desktop` file at `~/.config/autostart/inferno-agent.desktop`.
 
 ### Verification Milestone
+
 - **Full Build**: All targets (`inferno_client`, `inferno_wrapper`) compile warning-free on macOS.
 - **TDD Success**: All **26 unit tests** pass.
 - **End-to-End**: Wrapper extracts agent to hidden path, agent spawns, connects to server, and appears in GUI with correct system info.
 
 ### Architecture Decisions
+
 - **Wrapper embeds the full binary** rather than downloading from a remote URL — eliminates network signature during installation. The tradeoff is a larger wrapper binary (~330KB).
 - **Persistence is best-effort**: If `launchctl bootstrap` fails (e.g., macOS sandboxing), the plist still exists in `LaunchAgents/` and will be loaded on the next user login automatically.
 - **Backoff jitter uses thread_local RNG** — no locking overhead and the agent is single-threaded for all FSM operations.

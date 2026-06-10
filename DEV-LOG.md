@@ -320,4 +320,49 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **Persistence is best-effort**: If `launchctl bootstrap` fails (e.g., macOS sandboxing), the plist still exists in `LaunchAgents/` and will be loaded on the next user login automatically.
 - **Backoff jitter uses thread_local RNG** — no locking overhead and the agent is single-threaded for all FSM operations.
 
-*Status: 100% COMPLETE. Next: Circle 9 — Trahison (Propagation) or Phase III (Advanced Keylogger Stealth)...*
+*Status: 100% COMPLETE.*
+
+---
+
+## 🕶️ Circle 8: Ruse et Tromperie — Phase II-bis: Persistence & Wrapper Hardening — [2026-06-10]
+
+**Objective**: Resolve production bugs in macOS launchd persistence and Windows wrapper directory creation identified during cross-platform testing.
+
+### Technical Milestones
+
+**macOS — LaunchAgent Fixes**
+- **Skip daemonization when launched by launchd**: Added `getppid() == 1` check in `daemonize()` — launchd already backgrounds the process and needs to track its PID for `KeepAlive` crash-restart to work.
+- **Plist permissions**: Set `umask(022)` before writing the plist file — launchd rejects world-writable plists with EIO.
+- **Server args in plist**: Plist `ProgramArguments` now includes server IP and port, so launchd re-launches the agent with correct connection parameters.
+- **Unique plist label**: Changed from `com.apple.softwareupdate.helper` to `com.inferno.agent` — avoids collision with Apple's own softwareupdate plist.
+- **`KeepAlive true`**: Agent auto-restarts on crash without user intervention.
+- **Removed `launchctl bootstrap` call**: macOS automatically scans `~/Library/LaunchAgents/` at login and loads all plists. No explicit load command needed — the plist activates on next login silently.
+
+**Windows — Wrapper Directory Creation Fix**
+- **Error checking**: `CreateDirectoryA` return values are now validated via `GetLastError()`. `ERROR_ALREADY_EXISTS` is tolerated; all other failures abort with `false`.
+- **Fallback path**: If the primary `%APPDATA%\Microsoft\Crypto\RSA\S-1-5-21-\...` directory cannot be created (blocked by Defender, Controlled Folder Access, or permissions), the wrapper falls back to `%TEMP%\<8-hex-chars>\` and updates the path so extraction and execution use the working location.
+- **MSVC build fix**: Guarded `::getppid()` with `#ifndef _WIN32` — the POSIX function is not available on MSVC.
+
+### Roadmap Restructure
+- Replaced the architecture-first roadmap (`ROADMAP_FORWARD.md`) with an **evasion-first priority ordering**.
+- Security concerns (wrapper hardening, obfuscation, injection) now take precedence over performance and code aesthetics.
+- Circle 9 (Trahison / Propagation) integrated as Phase 2 (basic SSH/SMB/dropper) and Phase 7 (evasive WMI/DCOM lateral movement post-injection).
+- Old architectural phases (AI analysis, Kafka/ClickHouse decoupling, DI framework) pushed to lowest priority (Phase 10).
+
+### Bug Fixes Log
+
+| # | Symptom | Root Cause | Fix |
+|---|---|---|---|
+| 1 | macOS: agent daemonizes on launchd start, launchd loses PID tracking | `daemonize()` ran unconditionally | Skip daemonization when `getppid() == 1` |
+| 2 | macOS: launchd rejects plist with EIO | World-writable plist file permissions | `umask(022)` before `fopen` |
+| 3 | macOS: launchd launches agent without server args | Plist `ProgramArguments` had only the binary path | Added IP and port as additional array items |
+| 4 | macOS: plist label conflicts with Apple's softwareupdate | Generic label `com.apple.softwareupdate.helper` | Renamed to `com.inferno.agent` |
+| 5 | Windows: Crypto\RSA directory not created | `CreateDirectoryA` return values ignored; path blocked by Defender | Added `GetLastError()` checking + `%TEMP%` fallback |
+| 6 | Windows: MSVC build error `C2039: 'getppid' is not a member of global namespace` | `getppid()` is POSIX-only | Guarded with `#ifndef _WIN32` |
+
+### Verification Milestone
+- **Full Build**: All targets compile warning-free on macOS (Apple Clang) and Windows (MSVC via GitHub Actions).
+- **TDD Success**: All **26 unit tests** pass across all platforms.
+- **End-to-End**: macOS launchd persistence verified working across reboot — agent auto-starts, connects with correct IP/port, and reconnects on crash via `KeepAlive`.
+
+*Next: Circle 9 — Trahison (Propagation) and/or Phase III (Embedding Obfuscation)...*

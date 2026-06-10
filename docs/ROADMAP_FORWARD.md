@@ -1,175 +1,200 @@
-# Inferno SaaS — Long-Term Enterprise Evolution Roadmap
+# Inferno — Evasion-First Development Roadmap
 
-This document outlines the architectural and capability enhancements to transition Inferno from a functional proof-of-concept C2 framework into a high-performance, resilient, and AI-enhanced enterprise-scale system. These objectives are scheduled to commence immediately following the completion of the 9 base circles.
-
----
-
-## Phase I: Forensic Extraction & Deduplication Hardening
-
-### 1. Robust Keystroke Reconstruction
-
-*   **Arrow & Mouse Tracking**: Expand the client's keystroke event logging to capture cursor movements (`[LEFT]`, `[RIGHT]`, `[UP]`, `[DOWN]`) and text-selection modifications, allowing the server to reconstruct cursor-jumps and text replacements rather than assuming simple linear deletions.
-*   **Boundary Split Detection**: Implement a double-buffer overlap scan at the boundaries of the sliding window to ensure patterns (e.g. credit card sequences) cut in half across sliding windows are reconstructed and analyzed correctly.
-
-### 2. Context-Aware Deduplication & Merging
-
-*   **Session-Bounded Substrings**: Limit substring deduplication rules to active credential login flows.
-*   **Context Collision Resolution**: Prevent merging of identical substrings captured from different services/applications by matching the active process context (e.g. Chrome vs. Slack) before performing database merges.
+**Priority**: Security & evasion over architectural purity. Every phase below is ordered by operational impact — the ability to persist, execute, and propagate without detection comes before performance, scale, or code aesthetics.
 
 ---
 
-## Phase II: High-Performance Decoupled Architecture
+## Phase 0: Immediate Wins — Wrapper Hardening (NOW)
 
-```mermaid
-graph TD
-    A[Agents] -->|TLS Sockets| B[Edge Reverse-Proxies]
-    B -->|Muxed Traffic| C[C2 Ingress Server]
-    C -->|Telemetry Lines| D[Message Broker Kafka]
-    D -->|Distributed Stream| E[YARA/Regex Forensics Workers]
-    E -->|Structured findings| F[(PostgreSQL Metadata Cluster)]
-    E -->|Audit Logs| G[(ClickHouse Time-Series DB)]
+*Target: wrapper/src/main.cpp, client/src/Agent.cpp*
+
+| Item | Platform | Change |
+|---|---|---|
+| **Path swap** | Windows | Replace `%APPDATA%\Microsoft\Crypto\RSA\S-1-5-21-\svchost.exe` with `%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe` — blends into real Edge directory, avoids signatured malware path |
+| **Quarantine removal** | macOS | Call `xattr -dr com.apple.quarantine` on extracted agent before `execv` — prevents Gatekeeper prompt for the child binary |
+| **Execution jitter** | Both | Add random 5–15s `sleep` between `extractAgent` and `runAgent` — breaks write-then-execute heuristics in Windows Defender / macOS Gatekeeper |
+| **Error visibility** | Both | Log `GetLastError()` / `strerror(errno)` on directory/file creation failures — debug why a path was rejected |
+
+---
+
+## Phase 1: Client Evasion & Discretion (Circle 8 — Current)
+
+*Target: client/src/main.cpp, client/src/Agent.cpp — Mostly complete*
+
+- [✓] LaunchAgent persistence with correct permissions (umask 022, non-world-writable plist)
+- [✓] Skip daemonization when launched by launchd (parent PID == 1)
+- [✓] Pass server IP/port to persistence so launchd re-launches with correct args
+- [✓] Unique plist label (`com.inferno.agent`) to avoid collision
+- [✓] `KeepAlive` true — auto-restart on crash
+
+---
+
+## Phase 2: Basic Propagation (Circle 9)
+
+*Target: New propagation module, wrapper as dropper*
+
+### 2A — Dropper / Social Engineering
+- Embed agent binary inside the wrapper (already done via `agent_binary.h`)
+- Wrapper extracts to hidden path and executes
+- Wrapper can open a decoy document (PDF/image) to mask activity
+- **Wrapper self-deletes** after successful extraction + execution
+
+### 2B — Lateral Movement (SSH/SMB)
+- ARP scan + port scan on target subnet
+- Brute-force SSH (hardcoded creds) and SMB (dummy passwords)
+- On success: upload agent replica, execute remotely via `ssh`/`smbexec`
+- **Safety constraint**: Only target isolated subnet / Docker network
+
+### 2C — Integration with Evasion
+- Propagation must use the same obfuscated/injected agent from Phase 3–4
+- Lateral movement payloads must not trigger network Defender alerts
+- Use living-off-the-land binaries (LOLBins) for `scp`/`wmic` instead of custom upload
+
+---
+
+## Phase 3: Embedding Obfuscation (Wrapper Upgrade)
+
+*Target: wrapper/CMakeLists.txt, wrapper/bin2header.py, wrapper/src/main.cpp*
+
+| Item | Detail |
+|---|---|
+| **Encrypt agent binary at build time** | XOR or RC4 the binary in `bin2header.py` before embedding into `agent_binary.h` |
+| **Decrypt stub in wrapper** | Small, handwritten C stub that decrypts at runtime — avoids static signature of known agent bytes |
+| **Custom packer** | Replace UPX (signatured) with a custom section-loader that compresses/obfuscates the wrapper PE/Mach-O |
+| **String obfuscation** | XOR-encode all strings in the wrapper (paths, IPs, API names) — prevents YARA string matching |
+
+**Dependency**: Must be done *before* Phase 4 so the injected agent bytes are not recognized.
+
+---
+
+## Phase 4: Process Injection (Replaces Standalone Agent)
+
+*Target: New injector module, client becomes injectable payload*
+
+### 4A — macOS: Dylib Injection
+- Inject into TCC-approved apps (Discord, Zoom, Slack) that already have Accessibility + Files & Folders permission
+- Agent runs as a dylib inside the trusted host — inherits its TCC trust
+- No more "Desktop access" or "Accessibility" permission prompts
+
+### 4B — Windows: DLL Injection / Reflective Loading
+- Inject into `explorer.exe`, `svchost.exe`, or a signed browser
+- Reflective DLL loader — agent never touches disk
+- Bypasses Defender behavioral monitoring of new processes
+
+### 4C — Self-Delete
+- Extracted agent binary calls `remove()` or `DeleteFile()` after successful injection
+- Only the in-memory/in-process agent remains
+
+**Dependency**: Requires Phase 3 obfuscation (injected bytes must not be signatured).
+
+---
+
+## Phase 5: Transport & Protocol Evasion
+
+*Target: Socket layer, protocol serialization*
+
+| Priority | Item | Detail |
+|---|---|---|
+| 1 | **Malleable C2 framing** | Dynamic header masks, byte-order randomization, padding schemes — no static magic bytes for NDR/EDR to signature |
+| 2 | **Covert transports** | HTTP/2 beaconing (POST requests), WebSocket tunnel, DNS tunneling fallback — bypass firewall port blocks |
+| 3 | **mTLS 1.3** | Mutual TLS with X25519 + pinned certificates — prevents traffic inspection and replay |
+| 4 | **AEAD encryption** | ChaCha20-Poly1305 per-packet with random IV — tamper-proof protocol |
+
+**Rationale**: Before injection (Phase 4), the agent is a standalone binary and its network chatter is the primary detection vector. After injection, it's hidden inside a trusted process, but its *outbound traffic* must still blend in.
+
+---
+
+## Phase 6: In-Memory Execution & Syscall Evasion
+
+*Target: Client execution engine*
+
+| Item | Detail |
+|---|---|
+| **Direct/indirect syscalls** | Resolve syscall numbers from disk at runtime — bypass EDR userland hooks |
+| **BOF loader** | In-memory COFF/ELF linker — admin tasks execute inside agent without spawning processes |
+| **Polymorphic sleep encryption** | Encrypt agent heap/stack/code with random key during sleep, decrypt on wake — bypass memory scanners |
+
+**Dependency**: Requires Phase 4 injection (in-process agent) to make syscall evasion effective.
+
+---
+
+## Phase 7: Evasive Propagation v2
+
+*Target: Propagation module, injector*
+
+| Item | Detail |
+|---|---|
+| **Propagate through injected processes** | Lateral movement originates from Discord/chrome.exe — network activity looks like the trusted app |
+| **WMI/WMIC remote execution** | Replace SSH/SMB with WMI — native Windows admin, blends into legitimate IT activity |
+| **DCOM lateral movement** | Use `MMC20.Application` or `ShellWindows` COM objects for fileless remote execution |
+| **Scheduled task persistence** | Replace Registry Run key with `schtasks` — harder to audit, runs as SYSTEM |
+| **PsExec-style with signed binary** | Use Microsoft-signed `PsExec.exe` or equivalent — Defender trusts Microsoft-signed children |
+
+**Dependency**: Requires Phase 4 injection + Phase 5 transport evasion.
+
+---
+
+## Phase 8: Authentication & Persistence Hardening
+
+*Target: Client registration, server handshake*
+
+| Item | Detail |
+|---|---|
+| **Cryptographic handshake** | Ed25519 keypair per agent, server challenge-response — prevents spoofing |
+| **TPM/Secure Enclave** | Store private key in hardware — can't be extracted even if binary is reversed |
+| **WMI event subscription** | Replace Registry Run with `__EventFilter` + `CommandLineEventConsumer` — no file-based persistence |
+| **COM hijack** | Register CLSID under `HKCU\Software\Classes\CLSID` — runs when Windows Explorer or other app loads the COM object |
+
+---
+
+## Phase 9: Teamserver & Multi-Operator
+
+*Target: Server, GUI*
+
+| Item | Detail |
+|---|---|
+| **gRPC/WebSocket gateway** | Decouple GUI from server process — remote operation |
+| **RBAC** | Observer / Operator / Admin roles |
+| **Audit log** | Cryptographically signed operator action log |
+
+---
+
+## Phase 10: AI & Architecture (Lowest Priority)
+
+*Target: Server analysis pipeline, codebase structure*
+
+| Item | Detail |
+|---|---|
+| **Kafka/ClickHouse decoupling** | Message broker + time-series DB for telemetry pipeline |
+| **YARA dynamic rules** | Replace hardcoded regex with runtime-loaded YARA signatures |
+| **Local LLM extraction** | Quantized NLP model for semantic keylog analysis |
+| **DI framework** | Dependency injection for testability |
+| **Behavioral anomaly profiling** | ML-based baseline detection |
+
+---
+
+## Dependency Graph
+
+```
+Phase 0 (Wrapper hardening) → Phase 1 (Client evasion)
+     ↓
+Phase 2 (Basic propagation)
+     ↓
+Phase 3 (Obfuscation) ──────────→ Phase 5 (Transport evasion)
+     ↓
+Phase 4 (Injection) ───────────→ Phase 6 (In-memory execution)
+     │                                │
+     │                                │
+     ├──────── Phase 7 ←──────────────┘
+     │           (Evasive propagation)
+     │                ↑
+     └──────── Phase 5 (Transport evasion required)
+     ↓
+Phase 8 (Auth & persistence)
+     ↓
+Phase 9 (Teamserver)
+     ↓
+Phase 10 (AI & architecture)
 ```
 
-### 1. Ingress & Message Broker Decoupling
-
-*   **Kafka/RabbitMQ Ingestion**: Decouple connection management from analysis by having the C2 server immediately publish raw incoming telemetry streams to an Apache Kafka or RabbitMQ broker.
-*   **Worker Pool Isolation**: Spin up dedicated analysis worker microservices that subscribe to the broker and perform regex/extraction CPU loops asynchronously, removing CPU-intensive operations entirely from the core network server.
-
-### 2. Compiled Signature Matching (YARA Rules)
-
-*   **Dynamic Rule Engine**: Replace static C++ regex patterns with compiled **YARA rules**. This enables operators to dynamically load and deploy signature rules for identifying credit cards, cryptographic keys, or proprietary data on the fly without recompiling the server.
-
-### 3. ClickHouse / Elasticsearch Time-Series Storage
-*   Migrate audit logging and raw telemetry storage away from PostgreSQL to ClickHouse or Elasticsearch to support sub-second querying across millions of historical log rows. PostgreSQL will remain strictly reserved for metadata, system configuration, and finalized intelligence findings.
-
----
-
-## Phase III: Cognitive AI Telemetry Analysis
-
-### 1. Local Quantized NLP Extraction
-
-*   Integrate a lightweight, local, quantized LLM (e.g. local LLaMA or BERT model running on CPU/GPU) to analyze the semantic intent of keylogs and telemetries. This bypasses static regex limits, catching credentials regardless of formatting or typing obfuscation.
-
-### 2. Behavioral Anomaly Profiling
-
-*   Construct machine-learning anomaly detection profiles on agent machines to establish baseline behavior (operating hours, standard process trees, expected commands). Any deviation (such as attempts to download compilers, configure remote ports, or execute privilege escalation scripts) immediately elevates the agent’s warning index on the operator GUI.
-
----
-
-## Phase IV: Strict Interface Segregation & Dependency Inversion
-
-### 1. Dependency Injection Framework
-
-*   Refactor the codebase to strictly adhere to the Dependency Inversion Principle (DIP). Inject abstract interfaces (`IServer`, `IDatabase`, `IExtractor`) into the GUI components and service singletons.
-
-### 2. Isolated Mocking & Testing
-
-*   Replace standard database and socket integrations in tests with mocks, allowing full logic verification without needing a real PostgreSQL engine or network sockets.
-
----
-
-## Phase V: Encrypted Transport & Covert Ingress (Circle 1 Overhaul)
-
-### 1. Transport Encryption via mTLS 1.3
-
-*   **The Problem**: Raw TCP traffic is trivial to inspect, dissect, and block. Intrusive Network Security Monitoring (NSM) sensors will immediately flag unencrypted C2 binary payloads.
-*   **The Architecture**: Implement **Mutual TLS (mTLS 1.3)** utilizing strong elliptic curves (e.g. `X25519`) and pinned client/server certificates. 
-*   **Implementation Strategy**: Integrate a secure TLS library (like `mbedtls` or `OpenSSL`) directly inside the `Socket` implementation. The server rejects any handshake lacking a cryptographically valid client certificate, preventing active probing or C2 scanning by defensive teams.
-
-### 2. Pluggable Covert Transports
-
-*   **The Problem**: Raw TCP connections to arbitrary ports (e.g., `4242`) are blocked by standard corporate firewalls.
-*   **The Architecture**: Encapsulate the socket stream into covert ingress paths.
-*   **Implementation Strategy**: Add transport adapters to compile-time options:
-    *   **HTTP/2 / HTTPS Beaconing**: Implant sends periodic POST requests mimicking normal JSON/API traffic.
-    *   **WebSocket Tunneling**: Establishes a persistent, bidirectional WebSocket connection disguised as normal web-socket updates (e.g., chat, stock tick feeds).
-    *   **DNS Tunneling (Fallback)**: Encodes commands inside DNS subdomains (e.g. `[encoded_payload].domain.com`) to query a controlled name server, bypassing strict air-gapped network restrictions.
-
-### 3. Epoll & Kqueue Asynchronous Socket Engine
-
-*   **The Problem**: Standard `select()` scales quadratically $O(N^2)$ due to array scans and is limited to 1024 concurrent descriptors by `FD_SETSIZE`.
-*   **The Architecture**: Re-engineer the networking core using native operating system event multiplexers: `epoll` for Linux and `kqueue` for macOS/BSD.
-*   **Implementation Strategy**: Implement an event-driven networking reactor (e.g., utilizing `boost::asio` or native wrappers) capable of managing over 10,000 active agent beacons asynchronously on a single CPU core.
-
----
-
-## Phase VI: Cryptographic AEAD Protocol & Signature Evasion (Circle 2 Overhaul)
-
-### 1. Authenticated Payload Encryption (AEAD)
-
-*   **The Problem**: Our current serialization is in cleartext, permitting middlebox rewriting, interception, and replay attacks.
-*   **The Architecture**: Secure each serialized packet using Authenticated Encryption with Associated Data (AEAD).
-*   **Implementation Strategy**: Adopt **AES-256-GCM** or **ChaCha20-Poly1305**. Packet headers will contain a random initialization vector (IV) and a message authentication tag (MAC) generated per-packet. The server verifies payload integrity before passing it to the deserializer, rendering tampering or spoofing mathematically impossible.
-
-### 2. Standardized Binary Serialization
-
-*   **The Problem**: Hand-rolled binary parsers are prone to pointer manipulation bugs and buffer overflows when deserializing untrusted, malformed network packets.
-*   **The Architecture**: Use a memory-safe, fuzzed binary serialization standard.
-*   **Implementation Strategy**: Replace standard byte casting with **Google Protocol Buffers (Protobuf)** or **MessagePack**. These libraries enforce strict bounds checking, versioning compatibility, and memory safety during parsing.
-
-### 3. Malleable C2 Protocol Engine
-
-*   **The Problem**: Static bytes (like opcodes and magic headers) create unique structural patterns easily cataloged by EDR/NDR signature engines.
-*   **The Architecture**: Implement a dynamic framing engine that hides structural patterns.
-*   **Implementation Strategy**: Allow the operator to define header masks, byte order randomization, and padding schemes dynamically at boot time. The server and agent adjust serialization dynamically to mimic innocuous third-party payloads (e.g. looking like standard base64 XML, JSON, or PNG image chunks).
-
----
-
-## Phase VII: System Call Hook Evasion & In-Memory Execution (Circle 3 Overhaul)
-
-### 1. User-Mode Hook Evasion (Direct & Indirect Syscalls)
-
-*   **The Problem**: Endpoint Detection and Response (EDR) agents inject DLLs/libraries into running processes to hook standard system APIs (like `VirtualAlloc` or `NtCreateThread`).
-*   **The Architecture**: Execute core actions through direct or indirect syscalls, bypassing hooked DLLs.
-*   **Implementation Strategy**: Resolve system call numbers dynamically at runtime from disk files, and execute assembly instructions directly or jump to clean syscall instructions inside EDR-registered binaries, masking the origin of the execution call stack.
-
-### 2. Beacon Object Files (BOFs) for In-Memory Execution
-
-*   **The Problem**: Spawning shells (`popen`/`fork`) is immediately flagged by process monitors.
-*   **The Architecture**: Execute all administrative tasks natively inside the agent's memory space.
-*   **Implementation Strategy**: Design an internal COFF/ELF loader within the agent. Operators can compile tasks as static object files (BOFs) in C/C++ and stream them over the network. The agent links them dynamically in memory, executes them in-process, retrieves their output, and deletes them, leaving zero disk footprint and spawning no new processes.
-
-### 3. Polymorphic Memory Encryption (Sleep/Wake Cycles)
-
-*   **The Problem**: Memory scanners (such as YARA or Moneta) look for suspicious unencrypted strings (e.g., C2 URLs, system commands) inside process heaps and stacks.
-*   **The Architecture**: Keep memory encrypted while the agent is sleeping.
-*   **Implementation Strategy**: Implement a polymorphic loop where the agent encrypts its own heap, stacks, and executable code segments using a random key prior to entering its sleeping state. Upon waking up via an asynchronous timer, it decrypts itself, performs operational loops, and re-encrypts.
-
----
-
-## Phase VIII: Remote Collaborative Teamserver (Circle 4 Overhaul)
-
-### 1. Decoupled Teamserver Architecture
-
-*   **The Problem**: The GUI dashboard is currently coupled to the local server process, prohibiting remote usage and multi-operator operations.
-*   **The Architecture**: Decouple the GUI from the backend network server.
-*   **Implementation Strategy**: Expose a secure **gRPC and WebSocket gateway** on the C2 Server (turning it into a "Teamserver"). The Qt operator GUI client connects remotely to the Teamserver over TLS, allowing operators to work from different locations.
-
-### 2. Multi-Operator Orchestration & RBAC
-
-*   **The Problem**: Multiple operators executing commands simultaneously can overwrite or conflict with each other's configurations.
-*   **The Architecture**: Implement synchronization state and access control.
-*   **Implementation Strategy**: Connect multiple clients to the same teamserver state. Enforce Role-Based Access Control (RBAC) defining permissions (e.g. "Observer" for read-only tracking, "Operator" for executing scripts, and "Administrator" for configuring sockets).
-
-### 3. Operator Audit Logs
-
-*   **The Problem**: Compliance and post-operation reviews require tracking exactly who ran what command on which victim.
-*   **The Architecture**: Cryptographically signed audit trail database.
-*   **Implementation Strategy**: Log every API command, shell execution, and file extraction with the operator's public key signature and timestamp into an immutable, append-only database table.
-
----
-
-## Phase IX: Cryptographic Agent Authentication & Vault Configs (Circle 5 Overhaul)
-
-### 1. Cryptographic Handshake Challenge
-
-*   **The Problem**: Hardware UUID fingerprinting is static. If an analyst reverse-engineers the client binary, they can extract the UUID calculation algorithm and flood the server database with fake agent registrations.
-*   **The Architecture**: Enforce cryptographic handshakes using asymmetric key pairs.
-*   **Implementation Strategy**: Upon first connection, the agent generates a unique elliptic-curve key pair (e.g. `Ed25519`), storing the private key securely in the target host's TPM (Trusted Platform Module) or macOS Secure Enclave. The server registers the public key. On subsequent connections, the server sends a random challenge that the agent must sign using its private key, preventing spoofing or replay registration attacks.
-
-### 2. Dynamic Secrets Vault Integration
-
-*   **The Problem**: Storing database passwords and TLS private keys in local `.env` files is a single point of failure if the server host gets compromised.
-*   **The Architecture**: Centrally managed secrets storage.
-*   **Implementation Strategy**: Integrate with an enterprise secrets manager (like HashiCorp Vault or AWS KMS). The C2 server retrieves database tokens, session encryption keys, and SSL certificates dynamically in memory on startup, eliminating plaintext secrets on disk.
-
+Phases 0–4 are **critical path** — without them the agent is trivially detected and removed. Phases 5+ build resilience on top of a hidden foundation.

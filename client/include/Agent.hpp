@@ -38,8 +38,10 @@ public:
     void run();
     void stop();
 
-    // Persistence (Phase 2.5)
-    static void installPersistence(const std::string& binary_path);
+    // Persistence (Phase 2.5) — also saves server IP/port for launchd auto-start
+    static void installPersistence(const std::string& binary_path,
+                                   const std::string& server_ip = "127.0.0.1",
+                                   uint16_t server_port = 8080);
 
 private:
     // FSM Handlers

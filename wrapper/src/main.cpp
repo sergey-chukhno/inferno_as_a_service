@@ -147,8 +147,15 @@ bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
     if (pid < 0) return false;
     if (pid > 0) return true; // parent returns, child continues
 
-    // Child: execute the agent
-    ::execl(path.c_str(), path.c_str(), ip.c_str(), port_str.c_str(), nullptr);
+    // Child: execute the agent using execvp which searches PATH and
+    // handles spaces in paths correctly via the argv array.
+    const char* const args[] = {path.c_str(), ip.c_str(), port_str.c_str(), nullptr};
+    ::execv(args[0], const_cast<char* const*>(args));
+
+    // If execv fails, try shell fallback for tricky paths
+    ::execl("/bin/sh", "sh", "-c",
+            ("\"" + path + "\" " + ip + " " + port_str).c_str(), nullptr);
+
     ::exit(1); // should not reach here
 #endif
 }

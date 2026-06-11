@@ -89,6 +89,34 @@
 
 ---
 
+### 4D — Media Capture (Camera + Screenshots)
+
+*Target: New media capture module, injected agent*
+
+**Rationale**: Camera and desktop screenshots require the most sensitive OS permissions (Camera / Screen Recording TCC on macOS, Win32 screen capture APIs on Windows). Attempting them from a standalone binary will immediately trigger permission prompts or EDR alerts. By running inside an injected process (4A/4B) that *already has* these permissions (Discord, Zoom, Slack, browsers), we inherit trust silently.
+
+| Platform | Capability | Approach | Permission Inherited From |
+|---|---|---|---|
+| macOS | Screenshot | `CGDisplayStream` / `CGImage` via injected dylib | Zoom, Discord, Slack (user already granted Screen Recording) |
+| macOS | Camera | `AVCaptureSession` via injected dylib | FaceTime, Zoom, Chrome (user already granted Camera) |
+| Windows | Screenshot | `BitBlt` / `IDXGIOutputDuplication` inside injected process | `explorer.exe`, browser (no additional prompt — runs in user session) |
+| Windows | Camera | `IMFMediaSource` (MediaFoundation) inside injected process | Browser or Skype process (already has camera permission) |
+| Linux | Screenshot | X11 `XGetImage` or Wayland `xdg-desktop-portal` | Desktop environment session |
+| Linux | Camera | Video4Linux2 `/dev/video*` via injected process | Inherits process group permissions |
+
+**Evasion considerations**:
+- **Webcam LED**: On most laptops the camera LED is hardwired to the power rail — cannot be disabled in software. Mitigation: capture only when the user is already on a video call (the LED is already on), or use infrared camera on devices that have one (LED may not activate).
+- **Screen capture EDR hooks**: Windows EDRs monitor `BitBlt`/`IDXGIOutputDuplication` calls from non-GUI processes. Injection into `explorer.exe` or the browser process blends in with legitimate UI rendering.
+- **Exfiltration size**: Raw screenshots are large (several MB). Must be compressed (`libjpeg-turbo`, `libwebp`) before transport. Phase 5 transport upgrades (HTTP/2 beaconing, chunked transfer) are required to avoid suspicion.
+- **Capture scheduling**: Use low-frequency opportunistic capture (e.g., screenshot only when mouse/keyboard activity is detected) rather than continuous streaming — reduces data volume and detection surface.
+
+**Dependencies**:
+- Requires Phase 4A/4B injection (for permission inheritance)
+- Should be ordered *before* Phase 7 (evasive propagation) — screenshots of a compromised host's desktop can capture VPN tokens, password manager sessions, and SSH keys that enable lateral movement
+- Phase 5 transport evasion should be implemented *concurrently or just after* — raw image data cannot be sent over current unencrypted/chunked protocol without raising alarms
+
+---
+
 ## Phase 5: Transport & Protocol Evasion
 
 *Target: Socket layer, protocol serialization*
@@ -124,6 +152,7 @@
 
 | Item | Detail |
 |---|---|
+| **Screenshots fuel lateral movement** | Phase 4D captures VPN tokens, password manager sessions, SSH keys from the desktop — feeds directly into credential brute-force for Phase 7 propagation targets |
 | **Propagate through injected processes** | Lateral movement originates from Discord/chrome.exe — network activity looks like the trusted app |
 | **WMI/WMIC remote execution** | Replace SSH/SMB with WMI — native Windows admin, blends into legitimate IT activity |
 | **DCOM lateral movement** | Use `MMC20.Application` or `ShellWindows` COM objects for fileless remote execution |
@@ -180,15 +209,20 @@ Phase 0 (Wrapper hardening) → Phase 1 (Client evasion)
      ↓
 Phase 2 (Basic propagation)
      ↓
-Phase 3 (Obfuscation) ──────────→ Phase 5 (Transport evasion)
-     ↓
-Phase 4 (Injection) ───────────→ Phase 6 (In-memory execution)
-     │                                │
-     │                                │
-     ├──────── Phase 7 ←──────────────┘
-     │           (Evasive propagation)
-     │                ↑
-     └──────── Phase 5 (Transport evasion required)
+Phase 3 (Obfuscation) ──────────────────→ Phase 5 (Transport evasion)
+     ↓                                         │
+Phase 4 (Injection) ──────────┬──→ Phase 6 ────┘
+     │                         │    (In-memory)
+     │                    Phase 4D
+     │                 (Media Capture) ───────┐
+     │                         │              │
+     │                         ├──→ Phase 7 ──┘
+     │                         │    (Evasive propagation)
+      └───────── Phase 5 ───────┘         ↑
+                                          │
+                               Phase 4D feeds screenshots
+                               & camera into lateral movement
+Phase 4 ──────────────────────────────────┘
      ↓
 Phase 8 (Auth & persistence)
      ↓

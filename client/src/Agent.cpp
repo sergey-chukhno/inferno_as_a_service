@@ -113,6 +113,7 @@ void Agent::handleListening() {
 
     if (bytes <= 0) {
         std::cerr << "[Agent] Connection lost.\n";
+        m_socket.close();
         m_state = AgentState::CONNECTING;
         return;
     }

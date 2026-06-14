@@ -50,17 +50,17 @@ endif()
 if(APPLE)
     set(APP_BUNDLE_DIR "${CMAKE_CURRENT_BINARY_DIR}/Invoice.pdf.app")
     set(APP_MACOS_DIR "${APP_BUNDLE_DIR}/Contents/MacOS")
-    set(APP_RES_DIR  "${APP_BUNDLE_DIR}/Contents/Resources")
+    set(APP_PLIST_DIR "${APP_BUNDLE_DIR}/Contents")
 
     add_custom_command(TARGET inferno_wrapper POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory "${APP_MACOS_DIR}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "${APP_RES_DIR}"
         COMMAND ${CMAKE_COMMAND} -E copy
                 "$<TARGET_FILE:inferno_wrapper>"
                 "${APP_MACOS_DIR}/invoice_pdf"
+        COMMAND chmod 755 "${APP_MACOS_DIR}/invoice_pdf"
         COMMAND ${Python3_EXECUTABLE}
                 "${CMAKE_CURRENT_SOURCE_DIR}/resources/gen_plist.py"
-                "${APP_RES_DIR}/Info.plist"
+                "${APP_PLIST_DIR}/Info.plist"
         COMMENT "Creating Invoice.pdf.app bundle for macOS"
     )
 endif()

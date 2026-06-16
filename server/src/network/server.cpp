@@ -209,7 +209,7 @@ void Server::processPacketBuffer(ClientContext& client) {
             if (payload.size() >= 3) {
                 bool success = payload[0] != 0;
                 uint16_t out_len = (static_cast<uint16_t>(payload[1]) << 8) | payload[2];
-                std::string output = (3 + out_len <= payload.size())
+                std::string output = (3 + static_cast<size_t>(out_len) <= payload.size())
                     ? sanitizeOutput(payload_str, 3, out_len)
                     : std::string();
                 QString result = QString("%1 | %2")

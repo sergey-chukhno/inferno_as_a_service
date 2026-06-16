@@ -119,7 +119,7 @@ jobs:
         arch: 'win64_msvc2019_64'
 
     - name: Configure CMake
-      run: cmake -B build -S .
+      run: cmake -B build -S . -T v142
 
     - name: Build Targets
       run: cmake --build build --target inferno_client inferno_tests --config Debug

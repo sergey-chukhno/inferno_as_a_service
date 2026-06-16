@@ -263,10 +263,11 @@ void Agent::handlePropagation(Packet&& packet) {
     // Build result payload: 1 byte success + output string
     std::vector<uint8_t> payload;
     payload.push_back(result.success ? 1 : 0);
-    uint16_t out_len = static_cast<uint16_t>(result.output.size());
+    size_t output_size = std::min(result.output.size(), static_cast<size_t>(UINT16_MAX));
+    uint16_t out_len = static_cast<uint16_t>(output_size);
     payload.push_back(static_cast<uint8_t>((out_len >> 8) & 0xFF));
     payload.push_back(static_cast<uint8_t>(out_len & 0xFF));
-    payload.insert(payload.end(), result.output.begin(), result.output.end());
+    payload.insert(payload.end(), result.output.begin(), result.output.begin() + output_size);
 
     Packet res(static_cast<uint16_t>(Opcode::PROPAGATE_RES),
                std::string(payload.begin(), payload.end()));

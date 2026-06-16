@@ -22,10 +22,19 @@ def main():
 
     agent_path, decoy_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
-    with open(agent_path, 'rb') as f:
-        agent_data = f.read()
-    with open(decoy_path, 'rb') as f:
-        decoy_data = f.read()
+    try:
+        with open(agent_path, 'rb') as f:
+            agent_data = f.read()
+    except (IOError, OSError) as e:
+        print(f"Error reading agent binary '{agent_path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with open(decoy_path, 'rb') as f:
+            decoy_data = f.read()
+    except (IOError, OSError) as e:
+        print(f"Error reading decoy file '{decoy_path}': {e}", file=sys.stderr)
+        sys.exit(1)
 
     with open(out_path, 'w') as f:
         f.write('#pragma once\n')

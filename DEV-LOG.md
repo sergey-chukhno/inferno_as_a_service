@@ -365,4 +365,63 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **TDD Success**: All **26 unit tests** pass across all platforms.
 - **End-to-End**: macOS launchd persistence verified working across reboot — agent auto-starts, connects with correct IP/port, and reconnects on crash via `KeepAlive`.
 
-*Next: Circle 9 — Trahison (Propagation) and/or Phase III (Embedding Obfuscation)...*
+---
+
+## 🦠 Circle 9: Trahison — Phase 2: Basic Propagation (Dropper + Lateral Movement) — [2026-06-14]
+
+**Objective**: Enable the agent to propagate to adjacent machines via SSH/SMB lateral movement, and deliver a social-engineering dropper disguised as a PDF invoice.
+
+### Technical Milestones
+
+**2A — Dropper / Social Engineering (wrapper)**
+- **Decoy PDF Extraction**: Embedded decoy PDF (`decoy.pdf`) is extracted to the user-visible `Downloads/` folder and opened via `xdg-open`/`open`, presenting a believable cover document.
+- **Windows Dropper**: PDF icon applied via `.rc` resource (`pdf.ico`); output binary named `invoice.pdf.exe` to appear as a harmless PDF.
+- **macOS Dropper**: `Invoice.pdf.app` bundle with `Info.plist` at `Contents/Info.plist`, bundle name set to `Invoice.pdf` so Finder displays it as a PDF file.
+- **Execution Flow**: Extract decoy → open → spawn agent → self-delete the dropper binary.
+
+**2B — Lateral Movement (SSH/SMB)**
+- **Propagator Module**: New `Propagator` class with three commands:
+  - `SCAN` — ARP scan on Docker subnet (`172.17.0.0/16`) via `arp-scan`/`nmap` + port scan for SSH (22) and SMB (445).
+  - `BRUTE` — Credential brute-force against discovered targets using SSH (`sshpass`) and SMB (`smbclient`) with common credential pairs.
+  - `DEPLOY` — On successful brute, uploads agent binary via SCP and executes it remotely via SSH with `nohup`.
+- **New Opcodes**: `PROPAGATE` (0x0106) and `PROPAGATE_RES` (0x0107).
+
+**2C — Server C2 Dashboard**
+- **PropagationPanel Widget**: New `PropagationPanel` with target IP/subnet input, three action buttons (SCAN/BRUTE/DEPLOY), and a scrollable log output with timestamped results.
+- **Server Propagation Handler**: `sendPropagationCommand()` serializes command byte + target into `PROPAGATE` packets; `PROPAGATE_RES` handler decodes success flag and output text.
+- **Network Propagation Tab**: Added as a new tab in the MainWindow dashboard, routed through agent-selection context.
+
+**2D — Debugging & Resilience**
+- **Agent Reconnect Fix**: `Agent::handleListening()` now closes the socket on connection loss before reconnecting, fixing a bug where a stale fd blocked `Socket::connectTo()`.
+- **Wrapper Hardening**:
+  - Windows install path moved to `%LOCALAPPDATA%\Microsoft\Edge\Application\<8-hex>\msedge.exe`.
+  - macOS: `com.apple.quarantine` extended attribute removed via `xattr -d` before `execv` to bypass Gatekeeper.
+  - Both: 5–15s random execution jitter between extract and spawn to evade behavioral detection.
+  - Both: `GetLastError()`/`strerror(errno)` logged on every failure path.
+  - macOS bundle: Info.plist placed at `Contents/Info.plist` (not `Contents/Resources/`), binary chmod'd `755`.
+
+### Verification Milestone
+- **Full Build**: All targets (`inferno_client`, `inferno_wrapper`, `inferno_server`) compile warning-free on macOS (Apple Clang).
+- **TDD Success**: All **26 unit tests** pass.
+- **End-to-End**: Propagation panel renders in C2 dashboard; SCAN/BRUTE/DEPLOY commands are serialized, sent, and results displayed.
+
+### Security Architecture Decisions
+- **Docker Subnet Default**: The scanner targets only `172.17.0.0/16` by default to avoid accidental lateral movement outside the lab environment. Production deployment should override with the target subnet.
+- **SSH/SMB Over netcat fallback**: The port scanner uses bash `/dev/tcp` which requires a shell with `noclobber` unset — no external dependencies beyond `sshpass` and `smbclient`.
+- **Dropper Self-Deletion**: The wrapper deletes itself after extraction, reducing forensic surface on the initial infection vector.
+- **OPSEC Jitter**: 5–15s random delay between extraction and agent launch defeats simple time-window correlation rules in EDR solutions.
+
+### Bug Fixes Log
+
+| # | Symptom | Root Cause | Fix |
+|---|---|---|---|
+| 1 | macOS: .app bundle not recognized by Finder | `Info.plist` at `Contents/Resources/` instead of `Contents/` | Moved to `Contents/Info.plist` |
+| 2 | macOS: binary inside .app has no execute permission | `cp` does not preserve permissions | Added `chmod 755` after copy |
+| 3 | Agent fails to reconnect after server restart | Stale socket fd blocks `Socket::connectTo()` | Close socket on connection loss in `handleListening()` |
+| 4 | Windows wrapper: MSVC build error | `getppid()` is POSIX-only | Guarded with `#ifndef _WIN32` |
+| 5 | Windows wrapper: directory creation silently fails | `CreateDirectoryA` return values not checked | Added `GetLastError()` validation + `%TEMP%` fallback |
+
+### Next Steps
+- **Phase 3**: Embedding Obfuscation — XOR/Base64 payload scrambling, AMSI/ETW patching (Windows), syscall injection, string obfuscation.
+- **Phase 4**: Media Capture — Camera snapshot + screenshot exfiltration.
+- **Phase 7**: Evasive WMI/DCOM lateral movement (post-injection).

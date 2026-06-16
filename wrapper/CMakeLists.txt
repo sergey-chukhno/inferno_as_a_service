@@ -29,8 +29,17 @@ set(WRAPPER_SOURCES
 )
 
 if(WIN32)
+    set(PDF_ICO "${CMAKE_CURRENT_SOURCE_DIR}/resources/pdf.ico")
+    add_custom_command(
+        OUTPUT  ${PDF_ICO}
+        COMMAND ${Python3_EXECUTABLE}
+                "${CMAKE_CURRENT_SOURCE_DIR}/resources/gen_ico.py"
+                "${PDF_ICO}"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/resources/gen_ico.py"
+        COMMENT "Generating pdf.ico for Windows resource"
+    )
     set(WRAPPER_RC "${CMAKE_CURRENT_SOURCE_DIR}/resources/resource.rc")
-    list(APPEND WRAPPER_SOURCES ${WRAPPER_RC})
+    list(APPEND WRAPPER_SOURCES ${WRAPPER_RC} ${PDF_ICO})
 endif()
 
 add_executable(inferno_wrapper ${WRAPPER_SOURCES})

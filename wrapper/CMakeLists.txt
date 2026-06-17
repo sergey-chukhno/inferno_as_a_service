@@ -45,9 +45,14 @@ if(WIN32)
     list(APPEND WRAPPER_SOURCES ${WRAPPER_RC} ${PDF_ICO})
 endif()
 
-add_executable(inferno_wrapper ${WRAPPER_SOURCES})
+add_executable(inferno_wrapper ${WRAPPER_SOURCES}
+    include/unlit.hpp
+)
 
-target_include_directories(inferno_wrapper PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(inferno_wrapper PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
 
 # Name the output so Windows shows "invoice.pdf.exe" (explorer hides .exe)
 set_target_properties(inferno_wrapper PROPERTIES

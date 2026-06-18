@@ -81,15 +81,18 @@ def main():
         f.write('\n')
         # Store the XOR key in the header alongside the ciphertext.
         # The wrapper reads it at compile time for decryption.
+        # Always emitted: XOR_KEY_LEN == 0 means decryption is a no-op.
+        f.write('const unsigned char XOR_KEY[] = {\n')
         if key:
-            f.write(f'const unsigned char XOR_KEY[] = {{\n')
             for i, b in enumerate(key):
-                f.write(f'0x{b:02x},')
+                f.write('0x{:02x},'.format(b))
                 if (i + 1) % 16 == 0:
                     f.write('\n')
-            f.write('\n};\n')
-            f.write(f'const size_t XOR_KEY_LEN = {len(key)};\n')
-            f.write('\n')
+        else:
+            f.write('0x00,')
+        f.write('\n};\n')
+        f.write('const size_t XOR_KEY_LEN = {};\n'.format(len(key)))
+        f.write('\n')
         _write_array(f, 'DECOY_DATA', decoy_data)
         f.write('} }\n')
 

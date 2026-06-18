@@ -26,6 +26,13 @@ extern void test_shell_executor_chunk_size();
 // Empty payload crypto test
 extern void test_empty_payload_encrypt_decrypt();
 
+// Phase 4A — macOS Dylib Injection Tests
+#ifdef __APPLE__
+extern void test_agent_dylib_loads();
+extern void test_agent_dylib_constructor();
+extern void test_shim_binary_exists();
+#endif
+
 // External keylogger tests
 extern void test_keylogger_init_state();
 extern void test_keylogger_start_stop();
@@ -126,6 +133,13 @@ int main(int argc, char* argv[]) {
 
 #ifdef __linux__
     test_keylogger_linux_backend_compiles();
+#endif
+
+    // Phase 4A — macOS Dylib Injection Tests
+#ifdef __APPLE__
+    test_agent_dylib_constructor();
+    test_agent_dylib_loads();
+    test_shim_binary_exists();
 #endif
     
     std::cout << "=========================\n" << std::endl;

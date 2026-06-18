@@ -479,10 +479,70 @@ analyzed but **deferred indefinitely** in favour of Phase 4 (Process Injection).
 wrapper binary itself becomes repeatedly signatured by on-access AV despite Items 1+4,
 the custom packer remains available as a targeted countermeasure.
 
+---
+
+## 🧬 Phase 4: Process Injection — MacOS Dylib Injection Strategy
+
+**Objective**: Eliminate the standalone `inferno_client` process. The agent runs as a
+Mach-O dylib injected into a host process — memory-only, no binary on disk after
+injection.
+
+### Two-Tier Strategy
+
+Modern macOS (10.14+) enforces **Hardened Runtime** on almost all third-party apps
+(Discord, Zoom, Slack, browsers). `DYLD_INSERT_LIBRARIES` is blocked unless the target
+has specific insecure entitlements. True process injection into a TCC-authorized app is
+target-specific and cannot be guaranteed on every machine.
+
+| Tier | Approach | TCC inheritance? | Guaranteed to work? |
+|---|---|---|---|
+| **Tier 1** (this phase) | Custom shim binary calls `dlopen()` on agent dylib | ❌ No | ✅ Yes — always works |
+| **Tier 2** (future) | Entitlement scanner + injection into a vulnerable target app | ✅ If found | ❌ Depends on installed apps |
+
+**Tier 1 achieves**: memory-only agent, no binary on disk, no `inferno_client` visible in
+`ps`, bypasses on-access filesystem AV. The agent runs in a custom `inferno_shim` process
+that we control.
+
+**Tier 2 adds**: inheritance of the target app's TCC permissions — enabling camera,
+microphone, screen recording, and filesystem access without prompting the user. This is a
+**force multiplier** when the right vulnerable app is present.
+
+### Tier 2 — Concrete Approach (Future Phase)
+
+A scanner module enumerates `/Applications` and checks each binary's code signing
+entitlements via `codesign -d --entitlements -` or direct Mach-O parsing. Targets are
+reported to the C2 dashboard — the operator chooses one. Injection vector depends on
+what the app allows:
+
+| App has... | Injection vector |
+|---|---|
+| `com.apple.security.cs.allow-dyld-environment-variables` + `disable-library-validation` | `DYLD_INSERT_LIBRARIES` |
+| `com.apple.security.cs.disable-library-validation` only | Mach `vm_allocate` + thread creation |
+| No Hardened Runtime at all | `DYLD_INSERT_LIBRARIES` |
+| Writable rpath directory | Dylib proxying / side-loading |
+
+If no injectable app is found, Tier 2 reports failure — the agent continues via Tier 1
+(shim) without crashing or blocking.
+
+### Impact on Phase 4D (Media Capture)
+
+| Feature | macOS (Tier 1 only) | macOS (Tier 2 succeeds) | Windows |
+|---|---|---|---|
+| Screenshot | ❌ Blocked by TCC | ✅ Via injected host | ✅ `BitBlt` |
+| Camera | ❌ Blocked by TCC | ✅ Via injected host | ⚠️ One-click prompt |
+| Keylogger | ✅ Already works | ✅ Same | ✅ Already works |
+
+Phase 4D is **Windows-first + macOS Tier-2-dependent**. If Tier 2 never succeeds on a
+given target, media capture on macOS is not possible without user prompting.
+
 ### Next Steps
-- **Phase 4**: Process Injection — macOS Dylib injection into TCC-approved apps,
-  Windows DLL injection / reflective loading, agent self-delete after injection.
-- **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration (post-injection).
+- **Phase 4A**: Tier 1 implementation — macOS Dylib injection via custom shim,
+  agent self-delete after injection, full test suite.
+- **Phase 4B**: Windows DLL injection — `CreateRemoteThread` + LoadLibrary,
+  reflective DLL loader.
+- **Phase 4C**: Windows + macOS self-delete after injection.
+- **Tier 2 Injector**: Entitlement scanner + Mach injection (macOS, future phase).
+- **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
+  (Windows-first, macOS Tier-2-dependent).
 - **Phase 5**: Transport & Protocol Evasion — Malleable C2 framing, covert transports,
   mTLS 1.3.
-- **Phase 7**: Evasive WMI/DCOM lateral movement (post-injection).

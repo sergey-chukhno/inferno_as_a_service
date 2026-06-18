@@ -54,6 +54,13 @@ target_include_directories(inferno_wrapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+# UNLIT() macro returns a const char* from a lambda — the compiler can't
+# see through it to verify the format string is a literal. The string IS
+# compile-time fixed, so the warning is a false positive.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(inferno_wrapper PRIVATE -Wno-format-security)
+endif()
+
 # Name the output so Windows shows "invoice.pdf.exe" (explorer hides .exe)
 set_target_properties(inferno_wrapper PROPERTIES
     OUTPUT_NAME "invoice.pdf"

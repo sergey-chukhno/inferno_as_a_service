@@ -44,15 +44,13 @@ struct Unlit {
 // Wraps a string literal: returns const char* with runtime deobfuscation.
 // The ciphertext is computed at compile time and stored in the binary's
 // data section. The first call XORs it back to plaintext in-place.
-// The format-security diagnostic is suppressed (GCC diagnostic pragma is
-// supported by both GCC and Clang) because the string IS compile-time
-// fixed — the warning is a false positive from the lambda wrapper.
+// Note: -Wformat-security is suppressed at the CMake target level for
+// this file because the string IS compile-time fixed — the warning is
+// a false positive from the lambda wrapper. _Pragma cannot be used
+// here because GCC does not allow it inside expression-expanding macros.
 #define UNLIT(str)                                                     \
-    _Pragma("GCC diagnostic push")                                     \
-    _Pragma("GCC diagnostic ignored \"-Wformat-security\"")            \
     ([]{                                                                \
         static auto _unlit_ =                                           \
             ::inferno::wrapper::Unlit<sizeof(str)>(str);               \
         return _unlit_.get();                                           \
-    }())                                                                \
-    _Pragma("GCC diagnostic pop")
+    }())

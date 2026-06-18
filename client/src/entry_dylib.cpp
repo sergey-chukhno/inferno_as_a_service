@@ -1,5 +1,6 @@
 #include "../include/Agent.hpp"
 #include "../include/entry_dylib.hpp"
+#include "../../common/include/CryptoContext.hpp"
 #include <cstdlib>
 #include <thread>
 
@@ -21,6 +22,8 @@ static void agent_entry() {
     inferno::agent::constructorRan() = true;
     return;
 #endif
+
+    inferno::CryptoContext::instance().initDefault();
 
     const char* env_ip = ::getenv("INFERNO_SERVER_IP");
     const char* env_port = ::getenv("INFERNO_SERVER_PORT");

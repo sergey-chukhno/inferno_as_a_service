@@ -64,6 +64,15 @@ target_include_directories(inferno_wrapper PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
+# Embed the full path to inferno_shim so the wrapper can find it
+# via execv() regardless of PATH (which may be corrupted by colons
+# in paths like C:C++ on macOS).
+if(APPLE)
+    target_compile_definitions(inferno_wrapper PRIVATE
+        INFERNO_SHIM_PATH="${CMAKE_BINARY_DIR}/inferno_shim${CMAKE_EXECUTABLE_SUFFIX}"
+    )
+endif()
+
 # UNLIT() macro returns a const char* from a lambda — the compiler can't
 # see through it to verify the format string is a literal. The string IS
 # compile-time fixed, so the warning is a false positive.

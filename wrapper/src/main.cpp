@@ -361,10 +361,12 @@ bool injectAgentViaDyld(const std::string& ip, uint16_t port) {
     }
 
     if (pid == 0) {
-        // Child: exec shim — searches PATH for inferno_shim
-        ::execlp(UNLIT("inferno_shim"), UNLIT("inferno_shim"), nullptr);
-        // If exec fails, try relative path fallback
-        ::execl(UNLIT("./inferno_shim"), UNLIT("inferno_shim"), nullptr);
+        // Use the full path embedded at compile time — avoids issues
+        // with colons in PATH entries on macOS.
+        const char* const shim_argv[] = {UNLIT("inferno_shim"), nullptr};
+        ::execv(INFERNO_SHIM_PATH, const_cast<char* const*>(shim_argv));
+        std::fprintf(stderr, UNLIT("[Wrapper] execv(%s) failed: %s\n"),
+                     INFERNO_SHIM_PATH, std::strerror(errno));
         ::_exit(1);
     }
 

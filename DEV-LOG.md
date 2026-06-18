@@ -458,4 +458,31 @@ This log tracks the ascension through the **9 Cercles de l'Enfer**, documenting 
 - **String obfuscation at compile time**: Ciphertext is computed by the `constexpr` constructor and stored in `.rdata`. The `decrypted` flag prevents double-deobfuscation. No runtime cost beyond the first-access XOR loop.
 - **Phase 3 is prerequisite for Phase 4**: Without obfuscation, the injected agent bytes in Phase 4 would be recognized by memory scanners. Phase 3 ensures the wrapper and its payload are opaque to static analysis.
 
-*Status: Items 1, 2, and 4 — 100% COMPLETE. Item 3 (Custom Packer) deferred.*
+*Status: Items 1, 2, and 4 — 100% COMPLETE.*
+
+### Deferred: Item 3 (Custom Packer)
+A custom section packer (compressing `.text`/`.rdata` of the wrapper binary) was
+analyzed but **deferred indefinitely** in favour of Phase 4 (Process Injection).
+
+**Rationale**:
+- Items 1 + 4 already defeat static AV/YARA/`strings` analysis of the wrapper — the
+  highest-value detection vectors for the initial infection vector.
+- The wrapper's lifespan is measured in seconds (extract → spawn → self-delete). It is
+  never a persistent resident.
+- Phase 4 eliminates the wrapper entirely from the operational footprint: the agent runs
+  in-process inside a trusted host binary. Any investment in packing is obsoleted by
+  Phase 4.
+- Custom packing introduces significant fragility (entry point manipulation, relocation
+  fixups, code signing invalidation across 3 platforms) for diminishing returns.
+
+**Revisit condition**: If Phase 4 injection is not feasible on a target, or if the
+wrapper binary itself becomes repeatedly signatured by on-access AV despite Items 1+4,
+the custom packer remains available as a targeted countermeasure.
+
+### Next Steps
+- **Phase 4**: Process Injection — macOS Dylib injection into TCC-approved apps,
+  Windows DLL injection / reflective loading, agent self-delete after injection.
+- **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration (post-injection).
+- **Phase 5**: Transport & Protocol Evasion — Malleable C2 framing, covert transports,
+  mTLS 1.3.
+- **Phase 7**: Evasive WMI/DCOM lateral movement (post-injection).

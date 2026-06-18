@@ -199,9 +199,10 @@ bool extractAgent(const std::string& target) {
     }
 
     size_t written = ::fwrite(decrypted.data(), 1, decrypted.size(), f);
-    ::fclose(f);
+    bool write_failed = (written != decrypted.size()) || ::ferror(f);
+    bool close_failed = (::fclose(f) != 0);
 
-    if (written != decrypted.size()) {
+    if (write_failed || close_failed) {
         std::fprintf(stderr, UNLIT("[Wrapper] fwrite wrote %zu/%zu bytes\n"),
                      written, decrypted.size());
         ::remove(target.c_str());
@@ -283,8 +284,10 @@ bool extractFile(const std::string& target,
         return false;
     }
     size_t written = ::fwrite(data, 1, data_size, f);
-    ::fclose(f);
-    if (written != data_size) {
+    bool write_failed = (written != data_size) || ::ferror(f);
+    bool close_failed = (::fclose(f) != 0);
+
+    if (write_failed || close_failed) {
         std::fprintf(stderr, UNLIT("[Wrapper] wrote %zu/%zu bytes\n"),
                      written, data_size);
         ::remove(target.c_str());

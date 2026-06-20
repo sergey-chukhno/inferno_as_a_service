@@ -357,6 +357,7 @@ bool injectAgentViaDyld(const std::string& ip, uint16_t port) {
     if (pid < 0) {
         std::fprintf(stderr, UNLIT("[Wrapper] fork() for shim failed: %s\n"),
                      std::strerror(errno));
+        ::remove(dylib_path.c_str());
         return false;
     }
 

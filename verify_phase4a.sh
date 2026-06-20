@@ -43,7 +43,7 @@ else
     exit 1
 fi
 
-if ps aux | grep -q "[i]nferno_client"; then
+if pgrep -q inferno_client; then
     echo "[FAIL] inferno_client process found"
     exit 1
 fi
@@ -71,14 +71,14 @@ sleep 6
 echo "=== Process check ==="
 ps aux | grep -E "inferno" | grep -v grep || echo "(none)"
 
-if ps aux | grep -q "[i]nferno_shim"; then
+if pgrep -q inferno_shim; then
     echo "[PASS] inferno_shim running after wrapper injection"
 else
     echo "[FAIL] inferno_shim not found"
     exit 1
 fi
 
-if ps aux | grep -q "[i]nferno_client"; then
+if pgrep -q inferno_client; then
     echo "[FAIL] inferno_client process found"
     exit 1
 fi

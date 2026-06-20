@@ -29,7 +29,6 @@ extern void test_empty_payload_encrypt_decrypt();
 // Phase 4A — macOS Dylib Injection Tests
 #ifdef __APPLE__
 extern void test_agent_dylib_loads();
-extern void test_agent_dylib_constructor();
 extern void test_shim_binary_exists();
 #endif
 
@@ -137,7 +136,6 @@ int main(int argc, char* argv[]) {
 
     // Phase 4A — macOS Dylib Injection Tests
 #ifdef __APPLE__
-    test_agent_dylib_constructor();
     test_agent_dylib_loads();
     test_shim_binary_exists();
 #endif

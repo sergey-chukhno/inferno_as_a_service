@@ -29,6 +29,8 @@ bool isDylibShuttingDown() {
 
 #if defined(INFERNO_DYLIB) || defined(INFERNO_TESTING)
 
+extern "C" int inferno_agent_entry_ran = 0;
+
 __attribute__((destructor))
 static void agent_exit() {
     inferno::agent::g_shutdown.store(true);
@@ -39,6 +41,7 @@ static void agent_exit() {
 
 __attribute__((constructor))
 static void agent_entry() {
+    inferno_agent_entry_ran = 1;
 #ifdef INFERNO_TESTING
     inferno::agent::constructorRan() = true;
     return;

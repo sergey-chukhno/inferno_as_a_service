@@ -20,19 +20,18 @@ void test_agent_dylib_loads() {
                      ::dlerror());
         std::exit(1);
     }
-    // Give the detached thread time to start (it will fail connection quickly)
-    ::usleep(200000);
-    ::dlclose(handle);
-    std::fprintf(stdout, "[PASS] test_agent_dylib_loads\n");
-}
 
-void test_agent_dylib_constructor() {
-    if (!inferno::agent::didAgentConstructorRun()) {
-        std::fprintf(stderr, "[FAIL] test_agent_dylib_constructor: "
-                             "constructor did not run under INFERNO_TESTING\n");
+    // Verify the production dylib's constructor actually ran
+    int* entry_ran = static_cast<int*>(::dlsym(handle, "inferno_agent_entry_ran"));
+    if (!entry_ran || *entry_ran != 1) {
+        std::fprintf(stderr, "[FAIL] test_agent_dylib_loads: "
+                             "constructor did not run (entry_ran=%p, val=%d)\n",
+                     (void*)entry_ran, entry_ran ? *entry_ran : -1);
         std::exit(1);
     }
-    std::fprintf(stdout, "[PASS] test_agent_dylib_constructor\n");
+
+    ::dlclose(handle);
+    std::fprintf(stdout, "[PASS] test_agent_dylib_loads\n");
 }
 
 void test_shim_binary_exists() {

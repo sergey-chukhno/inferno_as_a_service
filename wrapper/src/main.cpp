@@ -381,7 +381,7 @@ bool injectAgentViaDyld(const std::string& ip, uint16_t port) {
 
 int main(int argc, char* argv[]) {
     std::string ip = UNLIT("127.0.0.1");
-    uint16_t port = 8080;
+    uint16_t port = 4242;
 
     if (argc >= 3) {
         ip = argv[1];

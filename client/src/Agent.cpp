@@ -31,7 +31,7 @@
 
 namespace inferno {
 
-Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(8080), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}
+Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(4242), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::Agent(const std::string& server_ip, uint16_t server_port)
     : m_server_ip(server_ip), m_server_port(server_port), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}

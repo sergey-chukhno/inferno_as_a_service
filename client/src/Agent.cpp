@@ -1,4 +1,5 @@
 #include "../include/Agent.hpp"
+#include "../include/entry_dylib.hpp"
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
@@ -43,6 +44,10 @@ Agent::~Agent() {
 void Agent::run() {
     m_running = true;
     while (m_running) {
+        if (inferno::agent::isDylibShuttingDown()) {
+            m_running = false;
+            break;
+        }
         switch (m_state) {
             case AgentState::INIT:
                 handleInit();
@@ -95,7 +100,12 @@ void Agent::handleConnecting() {
         delay = static_cast<unsigned>(std::max(1, static_cast<int>(delay) + jitter_dist(rng)));
 
         std::cerr << "[Agent] Connection failed. Retrying in " << delay << " seconds..." << std::endl;
-        std::this_thread::sleep_for(std::chrono::seconds(delay));
+        for (unsigned i = 0; i < delay; ++i) {
+            if (!m_running || inferno::agent::isDylibShuttingDown()) {
+                return;
+            }
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+        }
 
         // Double backoff for next attempt, cap at MAX_BACKOFF
         m_reconnect_delay = std::min(m_reconnect_delay * 2, MAX_BACKOFF);

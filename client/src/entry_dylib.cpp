@@ -4,6 +4,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <thread>
+#include <atomic>
 
 namespace inferno { namespace agent {
 
@@ -15,7 +16,26 @@ static bool& constructorRan() {
 bool didAgentConstructorRun() { return constructorRan(); }
 #endif
 
+namespace {
+    std::thread g_agent_thread;
+    std::atomic<bool> g_shutdown{false};
+}
+
+bool isDylibShuttingDown() {
+    return g_shutdown.load();
+}
+
 }} // namespace inferno::agent
+
+#if defined(INFERNO_DYLIB) || defined(INFERNO_TESTING)
+
+__attribute__((destructor))
+static void agent_exit() {
+    inferno::agent::g_shutdown.store(true);
+    if (inferno::agent::g_agent_thread.joinable()) {
+        inferno::agent::g_agent_thread.join();
+    }
+}
 
 __attribute__((constructor))
 static void agent_entry() {
@@ -39,9 +59,10 @@ static void agent_entry() {
         }
     }
 
-    std::thread agent_thread([ip, port]() {
+    inferno::agent::g_agent_thread = std::thread([ip, port]() {
         inferno::Agent agent(ip, port);
         agent.run();
     });
-    agent_thread.detach();
 }
+
+#endif

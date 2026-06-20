@@ -71,7 +71,7 @@ int main(int argc, char* argv[]) {
     daemonize();
 
     std::string ip = "127.0.0.1";
-    uint16_t port = 8080;
+    uint16_t port = 4242;
 
     if (argc >= 3) {
         ip = argv[1];

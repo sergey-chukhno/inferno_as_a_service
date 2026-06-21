@@ -25,22 +25,29 @@ static bool launchWithDyldEnv(const TargetApp& target,
         ::setenv("INFERNO_SERVER_IP", server_ip.c_str(), 1);
         ::setenv("INFERNO_SERVER_PORT", std::to_string(server_port).c_str(), 1);
 
-        // Unset macOS sneakiness — don't inherit our own libs
         ::unsetenv("DYLD_FORCE_FLAT_NAMESPACE");
 
         const char* const argv[] = {target.executable_path.c_str(), nullptr};
         ::execv(target.executable_path.c_str(),
                 const_cast<char* const*>(argv));
 
-        // execv failed
+        // execv failed — the target's Mach-O may have redirected to a running instance
         std::fprintf(stderr, "[MachInjector] execv(%s) failed: %s\n",
                      target.executable_path.c_str(), std::strerror(errno));
         ::_exit(1);
     }
 
-    // Parent: wait briefly for the app to launch
+    // Parent: sleep briefly to let the child either exec or fail
+    ::usleep(100000);
     int status;
-    ::waitpid(pid, &status, WNOHANG);
+    pid_t result = ::waitpid(pid, &status, WNOHANG);
+    if (result == pid) {
+        // Child exited already — execv failed or app redirected to existing instance
+        std::fprintf(stderr, "[MachInjector] %s exited immediately — "
+                             "may be already running, skipping\n",
+                     target.executable_path.c_str());
+        return false;
+    }
     return true;
 }
 

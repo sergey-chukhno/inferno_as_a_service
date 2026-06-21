@@ -1,4 +1,5 @@
 #include "../../include/network/server.hpp"
+#include "../../common/include/Opcodes.hpp"
 #include <iostream>
 #include <algorithm> // To use std::remove_if
 #include <iomanip>
@@ -218,6 +219,10 @@ void Server::processPacketBuffer(ClientContext& client) {
                 emit propagationResultReceived(
                     QString::fromStdString(client.socket.getIp()), result);
             }
+        } else if (opcode == static_cast<uint16_t>(Opcode::SCAN_RESULT)) {
+            emit scanResultReceived(
+                QString::fromStdString(client.socket.getIp()),
+                QString::fromStdString(payload_str));
         }
 
         // Remove processed bytes from the buffer (wire size, not decrypted size)

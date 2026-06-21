@@ -32,6 +32,10 @@ extern void test_agent_dylib_loads();
 extern void test_shim_binary_exists();
 #endif
 
+// Tier 2 Scanner Tests
+extern void test_scanner_classification();
+extern void test_scanner_empty_report();
+
 // External keylogger tests
 extern void test_keylogger_init_state();
 extern void test_keylogger_start_stop();
@@ -139,6 +143,10 @@ int main(int argc, char* argv[]) {
     test_agent_dylib_loads();
     test_shim_binary_exists();
 #endif
+
+    // Tier 2 Scanner Tests
+    test_scanner_classification();
+    test_scanner_empty_report();
     
     std::cout << "=========================\n" << std::endl;
     return 0;

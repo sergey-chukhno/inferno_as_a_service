@@ -48,6 +48,7 @@ signals:
     void processListReceived(const QString& ip, const QString& output);
     void keylogReceived(const QString& ip, const QString& data);
     void propagationResultReceived(const QString& ip, const QString& result);
+    void scanResultReceived(const QString& ip, const QString& report);
     void statusMessage(const QString& message);
 
 private:

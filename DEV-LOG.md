@@ -557,6 +557,15 @@ given target, media capture on macOS is not possible without user prompting.
     extracts both to PID-specific temp paths.
   - Server-side crypto already initialized (`server/src/main.cpp:44`).
 
+### Bug Fixes — Persistence & GUI (Phase 4 Post-Commit)
+
+| # | Symptom | Root Cause | Fix |
+|---|---|---|---|
+| 1 | After reboot, DBeaver launches but agent isn't injected | macOS Resume restores DBeaver before LaunchAgents run, bypassing `DYLD_INSERT_LIBRARIES` | Disabled macOS Resume via `defaults write -g NSQuitAlwaysKeepsWindows -bool false` |
+| 2 | Plist `KeepAlive` ineffective with `open -a` | `open` exits immediately after launching the app, so launchd cannot track DBeaver's PID | Changed `ProgramArguments` from `/usr/bin/open -a DBeaver.app` to `/Applications/DBeaver.app/Contents/MacOS/dbeaver` directly |
+| 3 | Agent dies when DBeaver is closed | `KeepAlive = false` in plist | Set `KeepAlive = true` so launchd auto-restarts DBeaver (and the injected agent) |
+| 4 | White row-number column in Injection Targets / Intelligence Analysis tables on macOS | Qt's native Cocoa `QHeaderView` ignores `::section` background unless the base widget background is also set | Added `QHeaderView { background: #0c0c0c; }` to `INTEL_TABLE` stylesheet in `StyleSheets.hpp` |
+
 ### Next Steps
 - **Phase 4B**: Windows DLL injection — `CreateRemoteThread` + LoadLibrary,
   reflective DLL loader.

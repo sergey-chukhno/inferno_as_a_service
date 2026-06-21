@@ -5,11 +5,15 @@
 #include <cstring>
 #include <fstream>
 #include <sstream>
+#include <thread>
+#include <chrono>
 
 #ifdef __APPLE__
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <signal.h>
+#include <sys/wait.h>
 #endif
 
 namespace inferno { namespace tier2 {
@@ -28,17 +32,45 @@ static std::string joinPath(const std::string& dir, const std::string& file) {
 }
 
 static std::string readEntitlements(const std::string& exec_path) {
-    std::string cmd = std::string("/usr/bin/codesign -d --entitlements - ") +
-                      exec_path + " 2>/dev/null";
-    FILE* fp = ::popen(cmd.c_str(), "r");
-    if (!fp) return {};
+    int pipefd[2];
+    if (::pipe(pipefd) != 0) return {};
 
+    pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(pipefd[0]);
+        ::close(pipefd[1]);
+        return {};
+    }
+
+    if (pid == 0) {
+        // Child: exec codesign with 3-second timeout
+        ::close(pipefd[0]);
+        ::dup2(pipefd[1], STDOUT_FILENO);
+        ::dup2(pipefd[1], STDERR_FILENO);
+        ::close(pipefd[1]);
+
+        // Timeout: kill self after 3 seconds
+        ::alarm(3);
+
+        ::execl("/usr/bin/codesign", "codesign", "-d", "--entitlements", "-",
+                exec_path.c_str(), nullptr);
+        ::_exit(1);
+    }
+
+    // Parent: read from pipe
+    ::close(pipefd[1]);
     std::string result;
     char buf[4096];
-    while (::fgets(buf, sizeof(buf), fp)) {
+    ssize_t n;
+    while ((n = ::read(pipefd[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
         result += buf;
     }
-    ::pclose(fp);
+    ::close(pipefd[0]);
+
+    // Wait for child with WNOHANG to avoid blocking if alarm already killed it
+    int status;
+    ::waitpid(pid, &status, 0);
     return result;
 }
 

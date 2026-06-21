@@ -1,4 +1,5 @@
 #include "../../../include/ui/components/InjectionPanel.hpp"
+#include "../../../include/ui/StyleSheets.hpp"
 #include <QVBoxLayout>
 #include <QHeaderView>
 #include <QFileInfo>
@@ -27,6 +28,7 @@ InjectionPanel::InjectionPanel(QWidget* parent)
     m_table->horizontalHeader()->setStretchLastSection(true);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_table->setStyleSheet(ui::style::INTEL_TABLE);
     layout->addWidget(m_table);
 }
 

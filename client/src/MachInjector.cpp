@@ -2,19 +2,23 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+
+#ifdef __APPLE__
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#endif
 
 namespace inferno { namespace tier2 {
 
-#ifdef INFERNO_TESTING
+#if defined(INFERNO_TESTING)
 // In testing mode, skip actual fork/exec — just report success
 bool injectIntoTarget(const TargetApp&, const std::string&,
                        const std::string&, uint16_t) {
     return true;
 }
-#else
+
+#elif defined(__APPLE__)
 
 static bool launchWithDyldEnv(const TargetApp& target,
                                const std::string& dylib_path,
@@ -28,29 +32,24 @@ static bool launchWithDyldEnv(const TargetApp& target,
     }
 
     if (pid == 0) {
-        // Child: set env and exec the target app
         ::setenv("DYLD_INSERT_LIBRARIES", dylib_path.c_str(), 1);
         ::setenv("INFERNO_SERVER_IP", server_ip.c_str(), 1);
         ::setenv("INFERNO_SERVER_PORT", std::to_string(server_port).c_str(), 1);
-
         ::unsetenv("DYLD_FORCE_FLAT_NAMESPACE");
 
         const char* const argv[] = {target.executable_path.c_str(), nullptr};
         ::execv(target.executable_path.c_str(),
                 const_cast<char* const*>(argv));
 
-        // execv failed — the target's Mach-O may have redirected to a running instance
         std::fprintf(stderr, "[MachInjector] execv(%s) failed: %s\n",
                      target.executable_path.c_str(), std::strerror(errno));
         ::_exit(1);
     }
 
-    // Parent: sleep briefly to let the child either exec or fail
     ::usleep(100000);
     int status;
     pid_t result = ::waitpid(pid, &status, WNOHANG);
     if (result == pid) {
-        // Child exited already — execv failed or app redirected to existing instance
         std::fprintf(stderr, "[MachInjector] %s exited immediately — "
                              "may be already running, skipping\n",
                      target.executable_path.c_str());
@@ -79,6 +78,14 @@ bool injectIntoTarget(const TargetApp& target,
                          target.executable_path.c_str());
             return false;
     }
+}
+
+#else
+// Non-macOS, non-testing: injection not supported
+bool injectIntoTarget(const TargetApp&, const std::string&,
+                       const std::string&, uint16_t) {
+    std::fprintf(stderr, "[MachInjector] Injection is macOS-only\n");
+    return false;
 }
 #endif
 

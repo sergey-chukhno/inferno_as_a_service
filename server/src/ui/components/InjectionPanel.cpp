@@ -27,10 +27,12 @@ InjectionPanel::InjectionPanel(QWidget* parent)
         "Agent", "Target App", "Vector", "Status", "Action"
     });
     m_table->horizontalHeader()->setStretchLastSection(false);
-    m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
+    m_table->setColumnWidth(4, 110);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setStyleSheet(ui::style::INTEL_TABLE);
+    m_table->verticalHeader()->setDefaultSectionSize(42);
     layout->addWidget(m_table);
 }
 
@@ -39,13 +41,15 @@ void InjectionPanel::addActionButton(int row, const QString& ip, const QString& 
     btn->setEnabled(!isInjected);
 
     if (isInjected) {
+        btn->setFixedSize(95, 34);
         btn->setStyleSheet(
             "QPushButton { background: #333; color: #666; border: 1px solid #444; "
-            "padding: 4px 12px; font-size: 12px; border-radius: 3px; }");
+            "font-size: 13px; border-radius: 4px; }");
     } else {
+        btn->setFixedSize(95, 34);
         btn->setStyleSheet(
-            "QPushButton { background: #004d00; color: #00ff41; border: 1px solid #00ff41; "
-            "padding: 4px 12px; font-size: 12px; border-radius: 3px; font-weight: bold; }"
+            "QPushButton { background: #004d00; color: #00ff41; border: 2px solid #00ff41; "
+            "font-size: 13px; border-radius: 4px; font-weight: bold; }"
             "QPushButton:hover { background: #00ff41; color: #000; }");
     }
 

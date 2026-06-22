@@ -73,7 +73,7 @@ def main():
         try:
             with open(shim_path, 'rb') as f:
                 shim_data = f.read()
-        except (IOError, OSError) as e:
+        except OSError as e:
             print(f"Error reading shim binary '{shim_path}': {e}", file=sys.stderr)
             sys.exit(1)
 

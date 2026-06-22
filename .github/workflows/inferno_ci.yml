@@ -113,7 +113,7 @@ jobs:
       uses: jurplel/install-qt-action@b3ea5275e37b734d027040e2c7fe7a10ea2ef946 # v3.3.0
       with:
         aqtversion: '==3.1.*'
-        version: '6.6.0'
+        version: '6.7.3'
         host: 'windows'
         target: 'desktop'
         arch: 'win64_msvc2019_64'

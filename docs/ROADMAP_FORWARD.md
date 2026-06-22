@@ -19,13 +19,14 @@
 
 ## Phase 1: Client Evasion & Discretion (Circle 8 — Current)
 
-*Target: client/src/main.cpp, client/src/Agent.cpp — Mostly complete*
+*Target: client/src/main.cpp, client/src/Agent.cpp, client/src/ProcessProfiler.cpp — Mostly complete*
 
 - [✓] LaunchAgent persistence with correct permissions (umask 022, non-world-writable plist)
 - [✓] Skip daemonization when launched by launchd (parent PID == 1)
 - [✓] Pass server IP/port to persistence so launchd re-launches with correct args
 - [✓] Unique plist label (`com.inferno.agent`) to avoid collision
 - [✓] `KeepAlive` true — auto-restart on crash
+- [ ] **Hybrid process enumeration (macOS)** — `proc_name()` silently resolves ~75% of processes; for remaining PIDs that return "Access Denied", fall back to a single batched `ps -p PID1,PID2,... -o pid,comm` call to cover the last 25% without spawning N individual processes. *Deferred: Tier 2 injection into a TCC-authorized app with FDA/system-task-ports inheritance would make `proc_name()` alone resolve everything with zero added detection surface.*
 
 ---
 

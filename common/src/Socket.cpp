@@ -165,7 +165,12 @@ bool Socket::connectTo(const std::string& ip, uint16_t port) {
     }
     m_ip = ip;
     m_port = port;
-    return true; 
+
+    // Detect dead connections so the agent can reconnect
+    setReceiveTimeout(10);
+    setKeepAlive(30, 10);
+
+    return true;
 }
 
 std::optional<Socket> Socket::acceptNode() {
@@ -221,6 +226,48 @@ ssize_t Socket::receiveData(std::vector<uint8_t>& buffer, size_t max_bytes) cons
     return read_bytes;
 }
 // Getters
+
+bool Socket::setReceiveTimeout(unsigned seconds) {
+    if (m_socket_fd == INVALID_SOCKET) return false;
+#if defined(_WIN32)
+    DWORD tv = seconds * 1000;
+#else
+    struct timeval tv;
+    tv.tv_sec = static_cast<long>(seconds);
+    tv.tv_usec = 0;
+#endif
+    return ::setsockopt(m_socket_fd, SOL_SOCKET, SO_RCVTIMEO,
+                        reinterpret_cast<const char*>(&tv), sizeof(tv)) == 0;
+}
+
+bool Socket::setKeepAlive(unsigned idle_sec, unsigned interval_sec) {
+    if (m_socket_fd == INVALID_SOCKET) return false;
+    int opt = 1;
+    if (::setsockopt(m_socket_fd, SOL_SOCKET, SO_KEEPALIVE,
+                     reinterpret_cast<const char*>(&opt), sizeof(opt)) != 0) {
+        return false;
+    }
+#if defined(_WIN32)
+    (void)idle_sec;
+    (void)interval_sec;
+#endif
+#if defined(__APPLE__)
+    opt = static_cast<int>(idle_sec);
+    ::setsockopt(m_socket_fd, IPPROTO_TCP, TCP_KEEPALIVE,
+                 reinterpret_cast<const char*>(&opt), sizeof(opt));
+    opt = static_cast<int>(interval_sec);
+    ::setsockopt(m_socket_fd, IPPROTO_TCP, TCP_KEEPINTVL,
+                 reinterpret_cast<const char*>(&opt), sizeof(opt));
+#elif defined(__linux__)
+    opt = static_cast<int>(idle_sec);
+    ::setsockopt(m_socket_fd, SOL_TCP, TCP_KEEPIDLE,
+                 reinterpret_cast<const char*>(&opt), sizeof(opt));
+    opt = static_cast<int>(interval_sec);
+    ::setsockopt(m_socket_fd, SOL_TCP, TCP_KEEPINTVL,
+                 reinterpret_cast<const char*>(&opt), sizeof(opt));
+#endif
+    return true;
+}
 
 socket_t Socket::getFd() const {
     return m_socket_fd;

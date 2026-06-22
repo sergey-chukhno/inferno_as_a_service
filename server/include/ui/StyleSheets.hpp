@@ -32,6 +32,7 @@ const QString INTEL_TABLE =
     "QTableWidget { background: #000; border: 1px solid #1a1a1a; color: #00ff41; gridline-color: #111; font-size: 13px; }"
     "QTableWidget::item { padding: 8px; }"
     "QTableWidget::item:selected { background: #00ff41; color: #000; }"
+    "QHeaderView { background: #0c0c0c; }"
     "QHeaderView::section { background: #0c0c0c; color: #888; border: 1px solid #1a1a1a; padding: 6px; font-weight: bold; }"
     "QTableCornerButton::section { background: #0c0c0c; border: 1px solid #1a1a1a; }";
 

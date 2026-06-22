@@ -535,13 +535,41 @@ If no injectable app is found, Tier 2 reports failure — the agent continues vi
 Phase 4D is **Windows-first + macOS Tier-2-dependent**. If Tier 2 never succeeds on a
 given target, media capture on macOS is not possible without user prompting.
 
+### Completed
+- **Phase 4A** ✅ — Tier 1 implementation: macOS Dylib injection via custom shim
+  (`entry_dylib.cpp`, `shim.cpp`). Agent runs memory-only inside `inferno_shim`
+  process. Shim binary embedded in wrapper via XOR encryption, extracted at runtime.
+  PR feedback: port validation (strtol), thread lifecycle (destructor join),
+  dylib constructor verification via dlsym. **27 unit tests passing**.
+- **Tier 2 Injector** ✅ — macOS entitlement scanner + Mach injection:
+  - `EntitlementScanner` enumerates `/Applications`, parses code signing
+    entitlements via `codesign` (fork+pipe+alarm for safety), classifies targets
+    by injection vector (`DYLD_INSERT_LIBRARIES`, `MACH_VM_ALLOCATE`).
+  - `MachInjector` launches target app with `DYLD_INSERT_LIBRARIES` via
+    `fork`+`execv`, detecting immediate exits (already-running apps).
+  - New opcode `SCAN_RESULT (0x0109)` for agent-to-server scanner reporting.
+  - Injected agent calls scanner on `SYS_REQ_INFO`, sends report to server.
+  - `InjectionPanel` dashboard tab displays per-agent scan results (dark theme).
+  - Persistence: dylib copied to `~/.cache/com.apple.amp.itmstransporter.dylib`,
+    launchd plist at `~/Library/LaunchAgents/com.inferno.agent.plist` launches
+    target app executable directly with `DYLD_INSERT_LIBRARIES` on login.
+  - Shim embedding fixed: `bin2header.py` now embeds both agent + shim, wrapper
+    extracts both to PID-specific temp paths.
+  - Server-side crypto already initialized (`server/src/main.cpp:44`).
+
+### Bug Fixes — Persistence & GUI (Phase 4 Post-Commit)
+
+| # | Symptom | Root Cause | Fix |
+|---|---|---|---|
+| 1 | After reboot, DBeaver launches but agent isn't injected | macOS Resume restores DBeaver before LaunchAgents run, bypassing `DYLD_INSERT_LIBRARIES` | Disabled macOS Resume via `defaults write -g NSQuitAlwaysKeepsWindows -bool false` |
+| 2 | Plist `KeepAlive` ineffective with `open -a` | `open` exits immediately after launching the app, so launchd cannot track DBeaver's PID | Changed `ProgramArguments` from `/usr/bin/open -a DBeaver.app` to `/Applications/DBeaver.app/Contents/MacOS/dbeaver` directly |
+| 3 | Agent dies when DBeaver is closed | `KeepAlive = false` in plist | Set `KeepAlive = true` so launchd auto-restarts DBeaver (and the injected agent) |
+| 4 | White row-number column in Injection Targets / Intelligence Analysis tables on macOS | Qt's native Cocoa `QHeaderView` ignores `::section` background unless the base widget background is also set | Added `QHeaderView { background: #0c0c0c; }` to `INTEL_TABLE` stylesheet in `StyleSheets.hpp` |
+
 ### Next Steps
-- **Phase 4A**: Tier 1 implementation — macOS Dylib injection via custom shim,
-  agent self-delete after injection, full test suite.
 - **Phase 4B**: Windows DLL injection — `CreateRemoteThread` + LoadLibrary,
   reflective DLL loader.
 - **Phase 4C**: Windows + macOS self-delete after injection.
-- **Tier 2 Injector**: Entitlement scanner + Mach injection (macOS, future phase).
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).
 - **Phase 5**: Transport & Protocol Evasion — Malleable C2 framing, covert transports,

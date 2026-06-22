@@ -18,6 +18,7 @@ using ssize_t = SSIZE_T;
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <unistd.h>
 using socket_t = int;
 #define INVALID_SOCKET (-1)
@@ -64,6 +65,10 @@ public:
 
     // Closes the socket and marks it as invalid
     void close() noexcept;
+
+    // Timeouts & keepalive for dead-connection detection
+    bool setReceiveTimeout(unsigned seconds);
+    bool setKeepAlive(unsigned idle_sec, unsigned interval_sec);
 
     // Getters
     [[nodiscard]] socket_t    getFd()    const;

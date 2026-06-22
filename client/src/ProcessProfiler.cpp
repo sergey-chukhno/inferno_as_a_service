@@ -13,6 +13,8 @@
 #elif defined(__APPLE__)
 #include <libproc.h>
 #include <unistd.h>
+#include <cstdio>
+#include <memory>
 #elif defined(__linux__)
 #include <dirent.h>
 #include <fstream>

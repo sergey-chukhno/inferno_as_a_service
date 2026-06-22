@@ -32,41 +32,42 @@ InjectionPanel::InjectionPanel(QWidget* parent)
     layout->addWidget(m_table);
 }
 
-void InjectionPanel::ensureAgentRow(const QString& ip) {
-    for (int row = 0; row < m_table->rowCount(); ++row) {
+void InjectionPanel::onScanResult(const QString& ip, const QString& report) {
+    // Remove existing rows for this agent
+    for (int row = m_table->rowCount() - 1; row >= 0; --row) {
         if (m_table->item(row, 0)->text() == ip) {
-            return;
+            m_table->removeRow(row);
         }
     }
-    int row = m_table->rowCount();
-    m_table->insertRow(row);
-    m_table->setItem(row, 0, new QTableWidgetItem(ip));
-    m_table->setItem(row, 1, new QTableWidgetItem("-"));
-    m_table->setItem(row, 2, new QTableWidgetItem("-"));
-    m_table->setItem(row, 3, new QTableWidgetItem("-"));
-}
 
-void InjectionPanel::onScanResult(const QString& ip, const QString& report) {
-    ensureAgentRow(ip);
+    QStringList lines = report.split('\n', Qt::SkipEmptyParts);
+    if (lines.isEmpty() || (lines.size() == 1 && lines[0].startsWith("none"))) {
+        // No injectable apps
+        int row = m_table->rowCount();
+        m_table->insertRow(row);
+        m_table->setItem(row, 0, new QTableWidgetItem(ip));
+        m_table->setItem(row, 1, new QTableWidgetItem("(none)"));
+        m_table->setItem(row, 2, new QTableWidgetItem("-"));
+        m_table->setItem(row, 3, new QTableWidgetItem("No injectable apps"));
+        return;
+    }
 
-    for (int row = 0; row < m_table->rowCount(); ++row) {
-        if (m_table->item(row, 0)->text() == ip) {
-            QStringList parts = report.split('|');
-            if (parts.size() >= 4 && parts[0] != "none") {
-                QFileInfo fi(parts[0]);
-                QString appName = fi.baseName();
-                int cap = parts[2].toInt();
-                m_table->item(row, 1)->setText(appName);
-                m_table->item(row, 2)->setText(capabilityName(cap));
-                m_table->item(row, 3)->setText(
-                    parts[3] == "1" ? "✅ Injected" : "⚠️ Fallback Tier 1");
-            } else {
-                m_table->item(row, 1)->setText("(none)");
-                m_table->item(row, 2)->setText("-");
-                m_table->item(row, 3)->setText("No injectable apps");
-            }
-            break;
-        }
+    for (const QString& line : lines) {
+        QStringList parts = line.split('|');
+        if (parts.size() < 4) continue;
+
+        QFileInfo fi(parts[0]);
+        QString appName = fi.baseName();
+        int cap = parts[2].toInt();
+        bool isInjected = parts[3] == "1";
+
+        int row = m_table->rowCount();
+        m_table->insertRow(row);
+        m_table->setItem(row, 0, new QTableWidgetItem(ip));
+        m_table->setItem(row, 1, new QTableWidgetItem(appName));
+        m_table->setItem(row, 2, new QTableWidgetItem(capabilityName(cap)));
+        m_table->setItem(row, 3, new QTableWidgetItem(
+            isInjected ? "✅ Injected" : "Ready"));
     }
 }
 

@@ -16,7 +16,6 @@ public slots:
 
 private:
     QTableWidget* m_table;
-    void ensureAgentRow(const QString& ip);
 };
 
 } // namespace inferno

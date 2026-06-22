@@ -129,17 +129,16 @@ static void scanDirectory(const std::string& dir, std::vector<TargetApp>& result
         {
             std::ifstream plist(plist_path);
             if (plist) {
-                std::string line;
-                while (std::getline(plist, line)) {
-                    auto pos = line.find("CFBundleIdentifier");
-                    if (pos != std::string::npos) {
-                        auto start = line.find("<string>", pos);
-                        if (start != std::string::npos) {
-                            start += 8;
-                            auto end = line.find("</string>", start);
-                            if (end != std::string::npos) {
-                                bundle_id = line.substr(start, end - start);
-                            }
+                std::string content((std::istreambuf_iterator<char>(plist)),
+                                     std::istreambuf_iterator<char>());
+                auto key_pos = content.find("CFBundleIdentifier");
+                if (key_pos != std::string::npos) {
+                    auto start = content.find("<string>", key_pos);
+                    if (start != std::string::npos) {
+                        start += 8;
+                        auto end = content.find("</string>", start);
+                        if (end != std::string::npos) {
+                            bundle_id = content.substr(start, end - start);
                         }
                     }
                 }

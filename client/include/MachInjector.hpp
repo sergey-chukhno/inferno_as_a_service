@@ -1,7 +1,8 @@
 #pragma once
 
-#include "EntitlementScanner.hpp"
+#include <cstdint>
 #include <string>
+#include "EntitlementScanner.hpp"
 
 namespace inferno { namespace tier2 {
 

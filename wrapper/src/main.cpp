@@ -402,9 +402,9 @@ bool launchShim(const std::string& shim_path,
         ::_exit(1);
     }
 
-    ::usleep(500000);
+    ::usleep(1000000);
     ::remove(dylib_path.c_str());
-    ::sleep(1);
+    ::sleep(2);
     ::remove(shim_path.c_str());
     return true;
 }

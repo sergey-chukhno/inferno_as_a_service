@@ -26,6 +26,8 @@ namespace inferno {
 
         SCAN_RESULT = 0x0109, // Agent -> Server: Tier 2 scanner findings
 
+        INJECT = 0x010A,      // Server -> Agent: inject dylib into target app
+        INJECT_RES = 0x010B,  // Agent -> Server: injection result
 };
 
 } // namespace inferno

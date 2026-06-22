@@ -8,6 +8,14 @@
 
 namespace inferno { namespace tier2 {
 
+#ifdef INFERNO_TESTING
+// In testing mode, skip actual fork/exec — just report success
+bool injectIntoTarget(const TargetApp&, const std::string&,
+                       const std::string&, uint16_t) {
+    return true;
+}
+#else
+
 static bool launchWithDyldEnv(const TargetApp& target,
                                const std::string& dylib_path,
                                const std::string& server_ip,
@@ -72,5 +80,6 @@ bool injectIntoTarget(const TargetApp& target,
             return false;
     }
 }
+#endif
 
 }} // namespace inferno::tier2

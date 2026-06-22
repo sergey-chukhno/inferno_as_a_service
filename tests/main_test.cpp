@@ -26,6 +26,13 @@ extern void test_shell_executor_chunk_size();
 // Empty payload crypto test
 extern void test_empty_payload_encrypt_decrypt();
 
+// Injection opcode unit tests
+extern void test_inject_packet_roundtrip();
+extern void test_inject_res_packet_roundtrip();
+
+// Injection E2E test
+extern void test_inject_e2e();
+
 // Phase 4A — macOS Dylib Injection Tests
 #ifdef __APPLE__
 extern void test_agent_dylib_loads();
@@ -147,6 +154,13 @@ int main(int argc, char* argv[]) {
     // Tier 2 Scanner Tests
     test_scanner_classification();
     test_scanner_empty_report();
+
+    // Injection opcode round-trip tests
+    test_inject_packet_roundtrip();
+    test_inject_res_packet_roundtrip();
+
+    // Injection E2E round-trip test (no actual fork, uses INFERNO_TESTING stub)
+    test_inject_e2e();
     
     std::cout << "=========================\n" << std::endl;
     return 0;

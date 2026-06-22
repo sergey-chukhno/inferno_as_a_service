@@ -103,6 +103,7 @@ if(APPLE)
 endif()
 
 if(WIN32)
+    target_compile_definitions(inferno_client PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32)
     # Note: WIN32_EXECUTABLE is intentionally NOT set — the agent uses
     # FreeConsole() at runtime to hide the console window, keeping
@@ -182,6 +183,7 @@ if(APPLE)
 endif()
 
 if(WIN32)
+    target_compile_definitions(inferno_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32)
 endif()
 

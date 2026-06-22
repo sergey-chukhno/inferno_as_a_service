@@ -68,7 +68,7 @@ static std::string readEntitlements(const std::string& exec_path) {
     }
     ::close(pipefd[0]);
 
-    // Wait for child with WNOHANG to avoid blocking if alarm already killed it
+    // Reap the child — already exited (alarm killed it or it finished)
     int status;
     ::waitpid(pid, &status, 0);
     return result;

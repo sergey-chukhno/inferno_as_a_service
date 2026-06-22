@@ -96,9 +96,9 @@ fi
 echo "[PASS] Dylib deleted from disk"
 
 # Log which mode was used
-if grep -q "Tier 2 succeeded" /tmp/wrp.log 2>/dev/null; then
+if grep -q "Tier 2: attempting injection" /tmp/wrp.log 2>/dev/null; then
     echo "[INFO] Wrapper used Tier 2 (injected into target app)"
-elif grep -q "Falling back" /tmp/wrp.log 2>/dev/null; then
+elif grep -q "Launching Tier 1 (shim)" /tmp/wrp.log 2>/dev/null; then
     echo "[INFO] Wrapper fell back to Tier 1 (shim injection)"
 fi
 

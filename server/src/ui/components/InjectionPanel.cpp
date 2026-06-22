@@ -1,9 +1,9 @@
 #include "../../../include/ui/components/InjectionPanel.hpp"
 #include "../../../include/ui/StyleSheets.hpp"
 #include <QVBoxLayout>
-#include <QHBoxLayout>
 #include <QHeaderView>
 #include <QFileInfo>
+#include <QPushButton>
 
 namespace inferno {
 
@@ -22,55 +22,41 @@ InjectionPanel::InjectionPanel(QWidget* parent)
 {
     auto* layout = new QVBoxLayout(this);
 
-    m_table = new QTableWidget(0, 4, this);
+    m_table = new QTableWidget(0, 5, this);
     m_table->setHorizontalHeaderLabels({
-        "Agent", "Target App", "Vector", "Status"
+        "Agent", "Target App", "Vector", "Status", "Action"
     });
-    m_table->horizontalHeader()->setStretchLastSection(true);
+    m_table->horizontalHeader()->setStretchLastSection(false);
+    m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setStyleSheet(ui::style::INTEL_TABLE);
     layout->addWidget(m_table);
-
-    // Inject button row
-    auto* btnLayout = new QHBoxLayout();
-    btnLayout->addStretch();
-    m_injectBtn = new QPushButton("Inject");
-    m_injectBtn->setEnabled(false);
-    m_injectBtn->setToolTip("Select a Ready target and click to inject the agent");
-    btnLayout->addWidget(m_injectBtn);
-    layout->addLayout(btnLayout);
-
-    // Enable/disable button based on selection
-    connect(m_table, &QTableWidget::itemSelectionChanged, this, &InjectionPanel::updateInjectButtonState);
-
-    // Emit injectRequested on button click
-    connect(m_injectBtn, &QPushButton::clicked, this, [this]() {
-        int row = m_table->currentRow();
-        if (row < 0) return;
-        QString ip = m_table->item(row, 0)->text();
-        // Reconstruct full path from the stored display data — we only have baseName
-        // Store the full path as item data in column 1
-        QString fullPath = m_table->item(row, 1)->data(Qt::UserRole).toString();
-        if (!fullPath.isEmpty()) {
-            emit injectRequested(ip, fullPath);
-        }
-    });
 }
 
-void InjectionPanel::updateInjectButtonState() {
-    int row = m_table->currentRow();
-    if (row < 0) {
-        m_injectBtn->setEnabled(false);
-        return;
+void InjectionPanel::addActionButton(int row, const QString& ip, const QString& fullPath, bool isInjected) {
+    auto* btn = new QPushButton(isInjected ? "Injected" : "Inject");
+    btn->setEnabled(!isInjected);
+
+    if (isInjected) {
+        btn->setStyleSheet(
+            "QPushButton { background: #333; color: #666; border: 1px solid #444; "
+            "padding: 4px 12px; font-size: 12px; border-radius: 3px; }");
+    } else {
+        btn->setStyleSheet(
+            "QPushButton { background: #004d00; color: #00ff41; border: 1px solid #00ff41; "
+            "padding: 4px 12px; font-size: 12px; border-radius: 3px; font-weight: bold; }"
+            "QPushButton:hover { background: #00ff41; color: #000; }");
     }
-    QTableWidgetItem* statusItem = m_table->item(row, 3);
-    bool isReady = statusItem && statusItem->text() == "Ready";
-    m_injectBtn->setEnabled(isReady);
+
+    connect(btn, &QPushButton::clicked, this, [this, ip, fullPath]() {
+        emit injectRequested(ip, fullPath);
+    });
+
+    m_table->setCellWidget(row, 4, btn);
 }
 
 void InjectionPanel::onScanResult(const QString& ip, const QString& report) {
-    // Remove existing rows for this agent
     for (int row = m_table->rowCount() - 1; row >= 0; --row) {
         if (m_table->item(row, 0)->text() == ip) {
             m_table->removeRow(row);
@@ -85,7 +71,6 @@ void InjectionPanel::onScanResult(const QString& ip, const QString& report) {
         m_table->setItem(row, 1, new QTableWidgetItem("(none)"));
         m_table->setItem(row, 2, new QTableWidgetItem("-"));
         m_table->setItem(row, 3, new QTableWidgetItem("No injectable apps"));
-        updateInjectButtonState();
         return;
     }
 
@@ -110,21 +95,23 @@ void InjectionPanel::onScanResult(const QString& ip, const QString& report) {
         m_table->setItem(row, 2, new QTableWidgetItem(capabilityName(cap)));
         m_table->setItem(row, 3, new QTableWidgetItem(
             isInjected ? "✅ Injected" : "Ready"));
+
+        addActionButton(row, ip, fullPath, isInjected);
     }
-    updateInjectButtonState();
 }
 
 void InjectionPanel::onInjectResult(const QString& ip, bool success, const QString& targetPath) {
-    // Find the row for this agent+target and update its status
     for (int row = 0; row < m_table->rowCount(); ++row) {
         QString rowIp = m_table->item(row, 0)->text();
         QString rowPath = m_table->item(row, 1)->data(Qt::UserRole).toString();
         if (rowIp == ip && rowPath == targetPath) {
             m_table->item(row, 3)->setText(success ? "✅ Injected" : "❌ Failed");
+            // Replace action button with disabled one
+            m_table->removeCellWidget(row, 4);
+            addActionButton(row, ip, targetPath, true);
             break;
         }
     }
-    updateInjectButtonState();
 }
 
 } // namespace inferno

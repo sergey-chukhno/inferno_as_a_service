@@ -3,7 +3,6 @@
 #include <QWidget>
 #include <QTableWidget>
 #include <QString>
-#include <QPushButton>
 
 namespace inferno {
 
@@ -20,10 +19,9 @@ signals:
     void injectRequested(const QString& ip, const QString& targetPath);
 
 private:
-    void updateInjectButtonState();
+    void addActionButton(int row, const QString& ip, const QString& fullPath, bool isInjected);
 
     QTableWidget* m_table;
-    QPushButton*  m_injectBtn;
 };
 
 } // namespace inferno

@@ -247,6 +247,10 @@ bool Socket::setKeepAlive(unsigned idle_sec, unsigned interval_sec) {
                      reinterpret_cast<const char*>(&opt), sizeof(opt)) != 0) {
         return false;
     }
+#if defined(_WIN32)
+    (void)idle_sec;
+    (void)interval_sec;
+#endif
 #if defined(__APPLE__)
     opt = static_cast<int>(idle_sec);
     ::setsockopt(m_socket_fd, IPPROTO_TCP, TCP_KEEPALIVE,

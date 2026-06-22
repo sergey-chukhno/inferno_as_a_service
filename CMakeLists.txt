@@ -163,6 +163,7 @@ add_executable(inferno_tests
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
     client/src/MachInjector.cpp
+    client/src/EntitlementScanner.cpp
     tests/inject_e2e_test.cpp
 )
 target_include_directories(inferno_tests PRIVATE client/include)
@@ -173,9 +174,7 @@ if(APPLE)
     target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
     target_sources(inferno_tests PRIVATE
         tests/injector_test.cpp
-	tests/scanner_test.cpp
         client/src/entry_dylib.cpp
-        client/src/EntitlementScanner.cpp
     )
     target_compile_definitions(inferno_tests PRIVATE
         TEST_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"

@@ -1,9 +1,9 @@
 #include <cstdio>
 #include <cstdlib>
 
-#ifdef __APPLE__
-
 #include "EntitlementScanner.hpp"
+
+#ifdef __APPLE__
 
 void test_scanner_classification() {
     auto targets = inferno::tier2::scanApplications();

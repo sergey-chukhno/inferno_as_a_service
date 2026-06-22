@@ -117,6 +117,7 @@ jobs:
         host: 'windows'
         target: 'desktop'
         arch: 'win64_msvc2019_64'
+        modules: 'qtbase'
 
     - name: Configure CMake
       run: cmake -B build -S . -T v142

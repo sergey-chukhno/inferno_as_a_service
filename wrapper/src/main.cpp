@@ -187,7 +187,7 @@ bool createDirectoryForFile(std::string& path) {
 
 bool extractAgent(const std::string& target) {
     if (inferno::wrapper::AGENT_BINARY_SIZE == 0) {
-        std::fprintf(stderr, UNLIT("[Wrapper] Agent binary not embedded.\n"));
+        std::fprintf(stderr, "%s", UNLIT("[Wrapper] Agent binary not embedded.\n"));
         return false;
     }
 
@@ -349,7 +349,7 @@ void selfDelete(const std::string& path) {
 #if defined(__APPLE__) && !defined(INFERNO_TESTING)
 bool extractShim(const std::string& target) {
     if (inferno::wrapper::SHIM_BINARY_SIZE == 0) {
-        std::fprintf(stderr, UNLIT("[Wrapper] Shim binary not embedded.\n"));
+        std::fprintf(stderr, "%s", UNLIT("[Wrapper] Shim binary not embedded.\n"));
         return false;
     }
     std::vector<unsigned char> decrypted(

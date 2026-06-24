@@ -640,6 +640,14 @@ given target, media capture on macOS is not possible without user prompting.
   - No standalone `inferno_client` process (memory-only injection confirmed).
   - Dylib deleted from disk after loading.
 
+### Bug Fixes — Injection Targets Display (Phase 4A Post-Commit)
+
+| # | Symptom | Root Cause | Fix |
+|---|---|---|---|
+| 1 | DBeaver not listed in Injection Targets at all | `classifyEntitlements()` only treated empty output as "no restrictions". `codesign -d --entitlements -` on ad-hoc signed binaries prints `Executable=...` to stdout (non-empty, non-XML), so the function returned `NONE` and the target was skipped | Added `containsEntitlementXML()` — if the output lacks XML plist markers, treat as unrestricted (`DYLD_INSERT_LIBRARIES`) |
+| 2 | DBeaver listed as "Ready" instead of "✅ Injected" | Byte-exact `==` comparison between scanner's `DBeaver` (derived from `.app` dir name) and `_NSGetExecutablePath()`'s `dbeaver` (actual kernel case). APFS is case-insensitive but case-preserving | Canonicalize both paths via `realpath()` before comparing |
+| 3 | Windows CI fails on `realpath()` | `realpath` is POSIX-only, not available on MSVC | Guarded with `#ifdef __APPLE__` |
+
 ### Next Steps
 - **Phase 4B**: Windows DLL injection — `CreateRemoteThread` + LoadLibrary,
   reflective DLL loader.

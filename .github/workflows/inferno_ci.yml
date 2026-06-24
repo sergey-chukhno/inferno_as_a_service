@@ -122,7 +122,7 @@ jobs:
       run: cmake -B build -S . -T v142
 
     - name: Build Targets
-      run: cmake --build build --target inferno_client inferno_tests --config Debug
+      run: cmake --build build --target inferno_client inferno_tests inferno_loader --config Debug
 
     - name: Execute Native Assertions
       env:

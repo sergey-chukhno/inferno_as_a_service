@@ -74,8 +74,19 @@ static std::string readEntitlements(const std::string& exec_path) {
     return result;
 }
 
+static bool containsEntitlementXML(const std::string& s) {
+    // Real entitlements output is an XML plist — look for plist markers
+    return s.find("<?xml") != std::string::npos ||
+           s.find("<plist") != std::string::npos ||
+           s.find("<key>") != std::string::npos ||
+           s.find("<string>") != std::string::npos;
+}
+
 static InjectionCapability classifyEntitlements(const std::string& entitlements) {
-    if (entitlements.empty()) {
+    if (entitlements.empty() || !containsEntitlementXML(entitlements)) {
+        // Empty output or non-XML output (e.g. "Executable=..." for
+        // ad-hoc signed binaries) means no restricted entitlements —
+        // DYLD_INSERT_LIBRARIES is allowed.
         return InjectionCapability::DYLD_INSERT_LIBRARIES;
     }
     bool has_dyld_env = entitlements.find(

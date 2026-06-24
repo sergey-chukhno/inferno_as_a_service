@@ -45,8 +45,7 @@ static void agent_entry() {
 #ifdef INFERNO_TESTING
     inferno::agent::constructorRan() = true;
     return;
-#endif
-
+#else
     inferno::CryptoContext::instance().initDefault();
 
     const char* env_ip = ::getenv("INFERNO_SERVER_IP");
@@ -66,6 +65,7 @@ static void agent_entry() {
         inferno::Agent agent(ip, port);
         agent.run();
     });
+#endif
 }
 
 #endif

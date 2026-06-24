@@ -214,9 +214,13 @@ endif()
 
 if(WIN32)
     target_compile_definitions(inferno_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
+    target_compile_definitions(inferno_tests PRIVATE
+        TEST_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    )
     target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32)
     target_sources(inferno_tests PRIVATE
         client/src/entry_dll.cpp
+        tests/windows_dll_test.cpp
     )
 endif()
 

@@ -39,6 +39,13 @@ extern void test_agent_dylib_loads();
 extern void test_shim_binary_exists();
 #endif
 
+// Phase 4B — Windows DLL Injection Tests
+#ifdef _WIN32
+extern void test_agent_dll_loads();
+extern void test_loader_binary_exists();
+extern void test_windows_injector_stub();
+#endif
+
 // Tier 2 Scanner Tests
 extern void test_scanner_classification();
 extern void test_scanner_empty_report();
@@ -149,6 +156,13 @@ int main(int argc, char* argv[]) {
 #ifdef __APPLE__
     test_agent_dylib_loads();
     test_shim_binary_exists();
+#endif
+
+    // Phase 4B — Windows DLL Injection Tests
+#ifdef _WIN32
+    test_agent_dll_loads();
+    test_loader_binary_exists();
+    test_windows_injector_stub();
 #endif
 
     // Tier 2 Scanner Tests

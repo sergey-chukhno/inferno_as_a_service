@@ -36,7 +36,13 @@ bool isDylibShuttingDown() {
 
 #if defined(INFERNO_DLL) || defined(INFERNO_TESTING)
 
-extern "C" int inferno_agent_entry_ran = 0;
+#ifdef _WIN32
+#define EXPORT_SYMBOL __declspec(dllexport)
+#else
+#define EXPORT_SYMBOL
+#endif
+
+EXPORT_SYMBOL extern "C" int inferno_agent_entry_ran = 0;
 
 static void agentThreadFunc() {
     inferno_agent_entry_ran = 1;

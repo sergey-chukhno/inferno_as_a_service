@@ -156,6 +156,8 @@ if(WIN32)
     set_target_properties(inferno_agent_dll PROPERTIES
         OUTPUT_NAME "inferno_agent"
     )
+
+    add_executable(inferno_loader client/src/windows_loader.cpp)
 endif()
 
 # ==========================================

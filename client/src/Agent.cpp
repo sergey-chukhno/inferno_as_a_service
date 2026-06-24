@@ -192,29 +192,32 @@ void Agent::handleDispatching(Packet&& packet) {
             auto targets = inferno::tier2::scanApplications();
             if (!targets.empty()) {
                 // Determine current host process to mark which target is already injected
-                std::string host_path;
-#ifdef __APPLE__
-                uint32_t bufsize = 0;
-                _NSGetExecutablePath(nullptr, &bufsize);
-                std::vector<char> exec_buf(bufsize);
-                if (_NSGetExecutablePath(exec_buf.data(), &bufsize) == 0) {
-                    host_path = std::string(exec_buf.data());
-                }
-#endif
                 std::vector<std::string> records;
-                // Canonicalize host_path to resolve case differences on APFS
                 std::string host_canon;
-                if (!host_path.empty()) {
-                    char* resolved = ::realpath(host_path.c_str(), nullptr);
-                    if (resolved) {
-                        host_canon = resolved;
-                        ::free(resolved);
-                    } else {
-                        host_canon = host_path;
+#ifdef __APPLE__
+                {
+                    uint32_t bufsize = 0;
+                    _NSGetExecutablePath(nullptr, &bufsize);
+                    std::vector<char> exec_buf(bufsize);
+                    std::string host_path;
+                    if (_NSGetExecutablePath(exec_buf.data(), &bufsize) == 0) {
+                        host_path = std::string(exec_buf.data());
+                    }
+                    // Canonicalize host_path to resolve case differences on APFS
+                    if (!host_path.empty()) {
+                        char* resolved = ::realpath(host_path.c_str(), nullptr);
+                        if (resolved) {
+                            host_canon = resolved;
+                            ::free(resolved);
+                        } else {
+                            host_canon = host_path;
+                        }
                     }
                 }
+#endif
                 for (const auto& t : targets) {
                     bool is_host = false;
+#ifdef __APPLE__
                     if (!host_canon.empty()) {
                         char* resolved = ::realpath(t.executable_path.c_str(), nullptr);
                         if (resolved) {
@@ -222,6 +225,7 @@ void Agent::handleDispatching(Packet&& packet) {
                             ::free(resolved);
                         }
                     }
+#endif
                     records.push_back(t.path + "|" + t.bundle_id + "|"
                                     + std::to_string(static_cast<int>(t.capability)) + "|"
                                     + (is_host ? "1" : "0"));

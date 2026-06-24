@@ -664,15 +664,30 @@ given target, media capture on macOS is not possible without user prompting.
 - **`test_loader_binary_exists`** — verify `inferno_loader.exe` exists in the build directory.
 - **`test_windows_injector_stub`** — verify the `INFERNO_TESTING` injector stub returns true.
 
-#### Reflective DLL Loader
-Deferred to a later phase. The current `CreateRemoteThread(LoadLibraryA)` is functional but has a high EDR detection surface:
-- `OpenProcess` + `VirtualAllocEx` + `WriteProcessMemory` + `CreateRemoteThread(LoadLibraryA)` is the single most signatured Windows injection pattern.
-- The DLL must exist on disk (on-access AV scans, forensic artifact).
-- The DLL appears in the target's PEB module list (visible to EDR snapshots).
+#### Detection Surface Analysis
+The current `CreateRemoteThread(LoadLibraryA)` has a high EDR detection surface mapped to 5 vectors:
 
-Mitigation considered but deferred: `NtCreateThreadEx` + `LdrLoadDll` (native API) to bypass userland hooks.
+| # | Vector | Severity | Status |
+|---|--------|----------|--------|
+| 1 | `CreateRemoteThread` + `LoadLibraryA` — 4-call sequence signature | High | ❌ Not mitigated |
+| 2 | `OpenProcess(PROCESS_ALL_ACCESS)` | High | ✅ Already using minimal specific masks |
+| 3 | DLL file on disk — AV scan + forensic artifact | High | ❌ Not mitigated |
+| 4 | DLL in PEB module list — visible to `EnumProcessModules` | Medium | ❌ Not mitigated |
+| 5 | `WaitForSingleObject` + `VirtualFreeEx` cleanup pattern | Low | ❌ Not mitigated (low priority) |
+
+#### Planned Evasion Hardening (4B.5)
+
+Added to `ROADMAP_FORWARD.md` as a new sub-phase:
+
+| Priority | Technique | Vector Mitigated | Effort |
+|----------|-----------|-----------------|--------|
+| 1 | Native API injection (`NtOpenProcess` / `NtCreateThreadEx`) | #1 (bypasses userland hooks on kernel32) | ~1 day |
+| 2 | Execution-only injection (pointer-based LoadLibrary via ntdll string) | #1 + #5 (eliminates `VirtualAllocEx`/`WriteProcessMemory` from call chain) | ~1 day |
+| 3 | Reflective DLL loader (manual PE mapper) | #3 + #4 (no file on disk, no PEB entry) | ~3-4 days |
+| 4 | API call stack spoofing (Moonwalk++ / Draugr) | #1 (defeats call-stack inspection) | Deferred |
 
 ### Next Steps
+- **Phase 4B.5**: Windows injection evasion hardening (native API, execution-only, reflective loader).
 - **Phase 4C**: Windows + macOS self-delete after injection.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).

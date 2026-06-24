@@ -92,10 +92,37 @@
 - Agent runs as a dylib inside the trusted host — inherits its TCC trust
 - No more "Desktop access" or "Accessibility" permission prompts
 
-### 4B — Windows: DLL Injection / Reflective Loading
-- Inject into `explorer.exe`, `svchost.exe`, or a signed browser
-- Reflective DLL loader — agent never touches disk
-- Bypasses Defender behavioral monitoring of new processes
+### 4B — Windows: DLL Injection (Basic)
+
+**Status**: Completed — `CreateRemoteThread` + `LoadLibraryA` injection via `WindowsInjector.cpp`.
+
+- [✓] Basic injector: `OpenProcess` → `VirtualAllocEx` → `WriteProcessMemory` → `CreateRemoteThread(LoadLibraryA)` → `WaitForSingleObject` → cleanup
+- [✓] Minimal access masks (not `PROCESS_ALL_ACCESS`)
+- [✓] Standalone loader (`windows_loader.cpp`) + agent DLL (`entry_dll.cpp`)
+- [✓] Build targets + Windows CI tests
+
+**Known detection surface** (to be resolved in 4B.5):
+
+| Vector | Severity | Root Cause |
+|--------|----------|-----------|
+| `CreateRemoteThread` + `LoadLibraryA` pattern | High | Most signatured Windows injection pattern — EDRs correlate the 4-call sequence |
+| DLL file on disk | High | AV on-access scan + forensic artifact |
+| DLL visible in PEB module list | Medium | `LoadLibrary` adds entry visible to `CreateToolhelp32Snapshot` / `EnumProcessModules` |
+| Win32 API hooks | Medium | `OpenProcess`, `VirtualAllocEx`, `CreateRemoteThread` are all hooked by EDRs in userland |
+| `WaitForSingleObject` + `VirtualFreeEx` cleanup | Low | Secondary pattern, low detection value in isolation |
+
+### 4B.5 — Windows Injection Evasion Hardening
+
+*Target: client/src/WindowsInjector.cpp, client/src/ReflectiveLoader.cpp*
+
+| Priority | Technique | Evasion Gained | Effort |
+|----------|-----------|---------------|--------|
+| 1 | **Native API injection** — replace `OpenProcess`/`CreateRemoteThread` with `NtOpenProcess`/`NtCreateThreadEx` resolved at runtime | Bypass kernel32.dll userland EDR hooks | ~1 day |
+| 2 | **Execution-only injection** — find an existing string (e.g. `"0"` in `ntdll.dll`) in the target's memory, name the DLL `0.dll`, and call `CreateRemoteThread(LoadLibraryA, &string)` | Eliminate `VirtualAllocEx` + `WriteProcessMemory` from the call chain | ~1 day |
+| 3 | **API call stack spoofing** — spoof return addresses on the call stack so EDRs see `BaseThreadInitThunk` instead of our shellcode | Defeat call-stack inspection (Moonwalk++ / Draugr technique) | Deferred (very high complexity) |
+| 4 | **Reflective DLL loader** — manual PE mapper that loads the DLL entirely from memory without `LoadLibrary`, never touches disk | Eliminates file artifact + PEB module list entry | ~3-4 days |
+
+**Dependency**: Reflective loader (#4) requires the DLL bytes to be XOR-encrypted inside the injector at build time (Phase 3 obfuscation already provides this).
 
 ### 4C — Self-Delete
 - Extracted agent binary calls `remove()` or `DeleteFile()` after successful injection

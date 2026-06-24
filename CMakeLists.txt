@@ -156,12 +156,14 @@ if(WIN32)
     )
     target_include_directories(inferno_agent_dll PRIVATE client/include)
     target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)
+    target_compile_definitions(inferno_agent_dll PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32)
     set_target_properties(inferno_agent_dll PROPERTIES
         OUTPUT_NAME "inferno_agent"
     )
 
     add_executable(inferno_loader client/src/windows_loader.cpp)
+    target_compile_definitions(inferno_loader PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()
 
 # ==========================================

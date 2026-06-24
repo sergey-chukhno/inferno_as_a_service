@@ -17,9 +17,9 @@ void test_agent_dll_loads() {
 
     std::string dll_path = std::string(TEST_BINARY_DIR) + "/inferno_agent.dll";
 
-    // Set env so the real DLL constructor fails connection fast
-    ::SetEnvironmentVariableA("INFERNO_SERVER_IP", "0.0.0.0");
-    ::SetEnvironmentVariableA("INFERNO_SERVER_PORT", "1");
+    // Use _putenv_s (not SetEnvironmentVariableA) so getenv() in the DLL sees them
+    ::_putenv_s("INFERNO_SERVER_IP", "0.0.0.0");
+    ::_putenv_s("INFERNO_SERVER_PORT", "1");
 
     HMODULE handle = ::LoadLibraryA(dll_path.c_str());
     if (!handle) {
@@ -29,6 +29,9 @@ void test_agent_dll_loads() {
                      err, dll_path.c_str());
         return;
     }
+
+    // Give the spawned thread time to set inferno_agent_entry_ran
+    ::Sleep(200);
 
     int* entry_ran = reinterpret_cast<int*>(
         ::GetProcAddress(handle, "inferno_agent_entry_ran"));

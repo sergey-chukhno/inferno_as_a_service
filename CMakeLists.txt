@@ -222,6 +222,7 @@ if(WIN32)
         client/src/entry_dll.cpp
         tests/windows_dll_test.cpp
     )
+    add_dependencies(inferno_tests inferno_agent_dll)
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)

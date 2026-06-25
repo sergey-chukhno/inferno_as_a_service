@@ -664,15 +664,37 @@ given target, media capture on macOS is not possible without user prompting.
 - **`test_loader_binary_exists`** — verify `inferno_loader.exe` exists in the build directory.
 - **`test_windows_injector_stub`** — verify the `INFERNO_TESTING` injector stub returns true.
 
-#### Reflective DLL Loader
-Deferred to a later phase. The current `CreateRemoteThread(LoadLibraryA)` is functional but has a high EDR detection surface:
-- `OpenProcess` + `VirtualAllocEx` + `WriteProcessMemory` + `CreateRemoteThread(LoadLibraryA)` is the single most signatured Windows injection pattern.
-- The DLL must exist on disk (on-access AV scans, forensic artifact).
-- The DLL appears in the target's PEB module list (visible to EDR snapshots).
+#### Detection Surface Analysis
+The current `CreateRemoteThread(LoadLibraryA)` has a high EDR detection surface mapped to 5 vectors:
 
-Mitigation considered but deferred: `NtCreateThreadEx` + `LdrLoadDll` (native API) to bypass userland hooks.
+| # | Vector | Severity | Status |
+|---|--------|----------|--------|
+| 1 | `CreateRemoteThread` + `LoadLibraryA` — 4-call sequence signature | High | ❌ Not mitigated |
+| 2 | `OpenProcess(PROCESS_ALL_ACCESS)` | High | ✅ Already using minimal specific masks |
+| 3 | DLL file on disk — AV scan + forensic artifact | High | ❌ Not mitigated |
+| 4 | DLL in PEB module list — visible to `EnumProcessModules` | Medium | ❌ Not mitigated |
+| 5 | `WaitForSingleObject` + `VirtualFreeEx` cleanup pattern | Low | ❌ Not mitigated (low priority) |
+
+#### Planned Evasion Hardening (4B.5)
+
+Added to `ROADMAP_FORWARD.md` as a new sub-phase with three workstreams:
+
+**4B.5-A — Native API Injection**: Replace Win32 APIs with NT API equivalents from `ntdll.dll` resolved at runtime. Bypasses EDR userland hooks on `kernel32.dll`.
+
+**4B.5-B — Windows Process Scanner**: Analogous to macOS `EntitlementScanner.cpp`. Enumerates running processes via `CreateToolhelp32Snapshot`, scores them for injection suitability, and reports via the existing `SCAN_RESULT` opcode. Achieves parity with the macOS scanner.
+
+**4B.5-C — Advanced Evasion Techniques**:
+
+| Priority | Technique | Vector Mitigated | Effort |
+|----------|-----------|-----------------|--------|
+| 1 | Native API injection (#A) | #1 (bypasses userland hooks) | ~1 day |
+| 2 | Windows process scanner (#B) | N/A — feature parity with macOS | ~1 day |
+| 3 | Execution-only injection | #1 + #5 (eliminates `VirtualAllocEx`/`WriteProcessMemory`) | ~1 day |
+| 4 | Reflective DLL loader | #3 + #4 (no file on disk, no PEB entry) | ~3-4 days |
+| 5 | API call stack spoofing | #1 (defeats call-stack inspection) | Deferred |
 
 ### Next Steps
+- **Phase 4B.5**: Windows injection evasion hardening (NT API, process scanner, execution-only, reflective loader).
 - **Phase 4C**: Windows + macOS self-delete after injection.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).

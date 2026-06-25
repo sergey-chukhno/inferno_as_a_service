@@ -113,16 +113,72 @@
 
 ### 4B.5 — Windows Injection Evasion Hardening
 
-*Target: client/src/WindowsInjector.cpp, client/src/ReflectiveLoader.cpp*
+*Target: client/src/WindowsInjector.cpp, client/src/WindowsScanner.cpp, client/src/NtApi.cpp, client/src/ReflectiveLoader.cpp*
+
+**Overview**: Three workstreams — (A) NT API bypass, (B) Windows process scanner, (C) advanced evasion techniques.
+
+---
+
+#### 4B.5-A — Native API Injection
+
+Replace all Win32 injection APIs (`OpenProcess`, `VirtualAllocEx`, `WriteProcessMemory`, `CreateRemoteThread`) with their NT API equivalents resolved dynamically from `ntdll.dll`. This bypasses EDR userland hooks on `kernel32.dll`.
+
+**New files**: `client/include/NtApi.hpp`, `client/src/NtApi.cpp`
+**Modified files**: `client/src/WindowsInjector.cpp`
+
+| Win32 API | NT API Replacement | Purpose |
+|-----------|-------------------|---------|
+| `OpenProcess` | `NtOpenProcess` | Open target process handle |
+| `VirtualAllocEx` | `NtAllocateVirtualMemory` | Allocate memory in target |
+| `WriteProcessMemory` | `NtWriteVirtualMemory` | Write DLL path to target |
+| `CreateRemoteThread` | `NtCreateThreadEx` | Create remote thread in target |
+| `CloseHandle` | `NtClose` | Close handles |
+| `VirtualFreeEx` | `NtFreeVirtualMemory` | Free allocated memory |
+
+All functions resolved from `ntdll.dll` at runtime via `GetProcAddress`. No static import of these NT functions — reduces import table footprint.
+
+---
+
+#### 4B.5-B — Windows Process Scanner
+
+Analogous to macOS `EntitlementScanner.cpp`. Enumerates running processes and reports injectable targets to the server via the existing `SCAN_RESULT` opcode.
+
+**New files**: `client/src/WindowsScanner.cpp`, `client/include/WindowsScanner.hpp`
+
+**Scan logic**:
+- Enumerate running processes via `CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS)`
+- For each process, capture: PID, executable name, full path (via `QueryFullProcessImageNameA`)
+- Filter out:
+  - The agent's own process (already injected)
+  - System processes (integrity level < high)
+  - Processes with different architecture (x86 injector → x86 target only)
+  - Critical Windows processes (CSRSS.exe, services.exe, etc.)
+- Score remaining processes:
+  - `explorer.exe`, browsers, document editors → high value
+  - Utility processes → medium value
+  - `svchost.exe` → low (special handling needed for integrity level)
+- Package results in the existing `SCAN_RESULT` wire format: `path|pid|score|is_host`
+- Trigger on `SYS_REQ_INFO` (same as macOS scanner, already handled in `Agent::handleDispatching`)
+
+**GUI impact**: None — the server's `InjectionPanel` already parses `SCAN_RESULT` and populates the table. The scanner just needs to emit the same format.
+
+**Effort**: ~1 day
+
+---
+
+#### 4B.5-C — Advanced Evasion
 
 | Priority | Technique | Evasion Gained | Effort |
 |----------|-----------|---------------|--------|
-| 1 | **Native API injection** — replace `OpenProcess`/`CreateRemoteThread` with `NtOpenProcess`/`NtCreateThreadEx` resolved at runtime | Bypass kernel32.dll userland EDR hooks | ~1 day |
-| 2 | **Execution-only injection** — find an existing string (e.g. `"0"` in `ntdll.dll`) in the target's memory, name the DLL `0.dll`, and call `CreateRemoteThread(LoadLibraryA, &string)` | Eliminate `VirtualAllocEx` + `WriteProcessMemory` from the call chain | ~1 day |
-| 3 | **API call stack spoofing** — spoof return addresses on the call stack so EDRs see `BaseThreadInitThunk` instead of our shellcode | Defeat call-stack inspection (Moonwalk++ / Draugr technique) | Deferred (very high complexity) |
+| 1 | **Native API injection** (#A above) | Bypass kernel32.dll userland EDR hooks | ~1 day |
+| 2 | **Windows process scanner** (#B above) | Discover targets automatically (parity with macOS) | ~1 day |
+| 3 | **Execution-only injection** — find an existing string (e.g. `"0"` in `ntdll.dll`) in the target's memory, name the DLL `0.dll`, and call `CreateRemoteThread(LoadLibraryA, &string)` | Eliminate `VirtualAllocEx` + `WriteProcessMemory` from the call chain | ~1 day |
 | 4 | **Reflective DLL loader** — manual PE mapper that loads the DLL entirely from memory without `LoadLibrary`, never touches disk | Eliminates file artifact + PEB module list entry | ~3-4 days |
+| 5 | **API call stack spoofing** — spoof return addresses so EDRs see `BaseThreadInitThunk` instead of our shellcode | Defeat call-stack inspection (Moonwalk++ / Draugr) | Deferred (very high complexity) |
 
-**Dependency**: Reflective loader (#4) requires the DLL bytes to be XOR-encrypted inside the injector at build time (Phase 3 obfuscation already provides this).
+**Dependencies**:
+- Reflective loader (#4) requires the DLL bytes to be XOR-encrypted inside the injector at build time (Phase 3 obfuscation already provides this).
+- Windows scanner (#2) requires `Psapi.lib` or direct `QueryFullProcessImageNameA` from `kernel32`.
 
 ### 4C — Self-Delete
 - Extracted agent binary calls `remove()` or `DeleteFile()` after successful injection

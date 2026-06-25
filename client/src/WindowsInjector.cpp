@@ -49,6 +49,11 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
                                    uint16_t server_port) {
     (void)server_ip; (void)server_port; // env vars inherited by child process
     auto& nt = inferno::nt::NtApi::resolve();
+    if (!nt.isResolved()) {
+        std::fprintf(stderr, "[WindowsInjector] NT API resolution failed — "
+                             "falling back to disabled\n");
+        return false;
+    }
 
     // 1. Open target process via NtOpenProcess
     HANDLE hProcess = nullptr;

@@ -85,6 +85,12 @@ struct NtApi {
     pNtClose NtClose;
     pNtFreeVirtualMemory NtFreeVirtualMemory;
 
+    bool isResolved() const noexcept {
+        return NtOpenProcess && NtAllocateVirtualMemory &&
+               NtWriteVirtualMemory && NtCreateThreadEx &&
+               NtClose && NtFreeVirtualMemory;
+    }
+
     static NtApi& resolve();
 };
 

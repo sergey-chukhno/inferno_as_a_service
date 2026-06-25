@@ -150,7 +150,7 @@ Analogous to macOS `EntitlementScanner.cpp`. Enumerates running processes and re
 - For each process, capture: PID, executable name, full path (via `QueryFullProcessImageNameA`)
 - Filter out:
   - The agent's own process (already injected)
-  - System processes (integrity level < high)
+  - Critical/system processes (explicit name / owner / session denylist, not integrity level — medium integrity includes our targets)
   - Processes with different architecture (x86 injector → x86 target only)
   - Critical Windows processes (CSRSS.exe, services.exe, etc.)
 - Score remaining processes:

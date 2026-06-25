@@ -102,7 +102,8 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
     if (!NT_SUCCESS(status)) {
         std::fprintf(stderr, "[WindowsInjector] NtWriteVirtualMemory failed: 0x%08lx\n",
                      status);
-        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &path_size, MEM_RELEASE);
+        SIZE_T zero = 0;
+        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
         nt.NtClose(hProcess);
         return false;
     }
@@ -120,7 +121,8 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
     if (!NT_SUCCESS(status)) {
         std::fprintf(stderr, "[WindowsInjector] NtCreateThreadEx failed: 0x%08lx\n",
                      status);
-        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &path_size, MEM_RELEASE);
+        SIZE_T zero = 0;
+        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
         nt.NtClose(hProcess);
         return false;
     }
@@ -128,9 +130,10 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
     // 6. Wait for thread completion
     ::WaitForSingleObject(hThread, 5000);
 
-    // 7. Cleanup via NT APIs
+    // 7. Cleanup via NT APIs (MEM_RELEASE requires RegionSize = 0)
+    SIZE_T free_size = 0;
     nt.NtClose(hThread);
-    nt.NtFreeVirtualMemory(hProcess, &remote_mem, &path_size, MEM_RELEASE);
+    nt.NtFreeVirtualMemory(hProcess, &remote_mem, &free_size, MEM_RELEASE);
     nt.NtClose(hProcess);
 
     std::fprintf(stdout, "[WindowsInjector] Injected into PID %lu via NtCreateThreadEx\n", pid);

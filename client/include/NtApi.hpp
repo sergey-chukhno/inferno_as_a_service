@@ -33,13 +33,13 @@ typedef struct _MY_OBJECT_ATTRIBUTES {
 // ─────────────────────────────────────────────────────────────────
 
 // ── NT API function pointer types ──────────────────────────────
-typedef NTSTATUS (NTAPI* pNtOpenProcess)(
+typedef LONG (NTAPI* pNtOpenProcess)(
     PHANDLE ProcessHandle,
     ACCESS_MASK DesiredAccess,
     PMY_OBJECT_ATTRIBUTES ObjectAttributes,
     PMY_CLIENT_ID ClientId);
 
-typedef NTSTATUS (NTAPI* pNtAllocateVirtualMemory)(
+typedef LONG (NTAPI* pNtAllocateVirtualMemory)(
     HANDLE ProcessHandle,
     PVOID* BaseAddress,
     ULONG_PTR ZeroBits,
@@ -47,14 +47,14 @@ typedef NTSTATUS (NTAPI* pNtAllocateVirtualMemory)(
     ULONG AllocationType,
     ULONG Protect);
 
-typedef NTSTATUS (NTAPI* pNtWriteVirtualMemory)(
+typedef LONG (NTAPI* pNtWriteVirtualMemory)(
     HANDLE ProcessHandle,
     PVOID BaseAddress,
     PVOID Buffer,
     SIZE_T BufferSize,
     PSIZE_T NumberOfBytesWritten);
 
-typedef NTSTATUS (NTAPI* pNtCreateThreadEx)(
+typedef LONG (NTAPI* pNtCreateThreadEx)(
     PHANDLE ThreadHandle,
     ACCESS_MASK DesiredAccess,
     PVOID ObjectAttributes,
@@ -67,10 +67,10 @@ typedef NTSTATUS (NTAPI* pNtCreateThreadEx)(
     SIZE_T MaximumStackSize,
     PVOID AttributeList);
 
-typedef NTSTATUS (NTAPI* pNtClose)(
+typedef LONG (NTAPI* pNtClose)(
     HANDLE Handle);
 
-typedef NTSTATUS (NTAPI* pNtFreeVirtualMemory)(
+typedef LONG (NTAPI* pNtFreeVirtualMemory)(
     HANDLE ProcessHandle,
     PVOID* BaseAddress,
     PSIZE_T RegionSize,

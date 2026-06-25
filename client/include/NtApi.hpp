@@ -11,8 +11,13 @@
 namespace inferno { namespace nt {
 
 // ── NT API types (self-defined, avoid winternl.h incompatibility) ──
-#ifndef _NTDEF_
+#ifndef INFERNO_NTSTATUS_DEFINED
+#define INFERNO_NTSTATUS_DEFINED
 typedef LONG NTSTATUS;
+#endif
+
+#ifndef NT_SUCCESS
+#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
 #endif
 
 typedef struct _MY_CLIENT_ID {

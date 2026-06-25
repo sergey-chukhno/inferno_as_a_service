@@ -6,7 +6,7 @@ namespace inferno { namespace nt {
 NtApi& NtApi::resolve() {
     // C++17 guarantees thread-safe static local initialization
     static NtApi instance = [] {
-        NtApi api;
+        NtApi api{};
         const HMODULE ntdll = ::GetModuleHandleA("ntdll.dll");
         if (!ntdll) {
             std::fprintf(stderr, "[NtApi] GetModuleHandleA(ntdll.dll) failed\n");

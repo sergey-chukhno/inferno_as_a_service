@@ -1,5 +1,7 @@
 #include "../include/WindowsInjector.hpp"
+#ifdef _WIN32
 #include "../include/NtApi.hpp"
+#endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>

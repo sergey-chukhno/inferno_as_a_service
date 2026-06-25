@@ -52,10 +52,10 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
 
     // 1. Open target process via NtOpenProcess
     HANDLE hProcess = nullptr;
-    CLIENT_ID cid;
+    inferno::nt::MY_CLIENT_ID cid;
     cid.UniqueProcess = (HANDLE)(ULONG_PTR)pid;
     cid.UniqueThread  = nullptr;
-    OBJECT_ATTRIBUTES oa;
+    inferno::nt::MY_OBJECT_ATTRIBUTES oa;
     oa.Length                   = sizeof(oa);
     oa.RootDirectory            = nullptr;
     oa.ObjectName               = nullptr;

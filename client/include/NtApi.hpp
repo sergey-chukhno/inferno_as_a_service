@@ -7,16 +7,35 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
-#include <winternl.h>
 
 namespace inferno { namespace nt {
+
+// ── NT API types (self-defined, avoid winternl.h incompatibility) ──
+#ifndef _NTDEF_
+typedef LONG NTSTATUS;
+#endif
+
+typedef struct _MY_CLIENT_ID {
+    HANDLE UniqueProcess;
+    HANDLE UniqueThread;
+} MY_CLIENT_ID, *PMY_CLIENT_ID;
+
+typedef struct _MY_OBJECT_ATTRIBUTES {
+    ULONG Length;
+    HANDLE RootDirectory;
+    PVOID ObjectName;
+    ULONG Attributes;
+    PVOID SecurityDescriptor;
+    PVOID SecurityQualityOfService;
+} MY_OBJECT_ATTRIBUTES, *PMY_OBJECT_ATTRIBUTES;
+// ─────────────────────────────────────────────────────────────────
 
 // ── NT API function pointer types ──────────────────────────────
 typedef NTSTATUS (NTAPI* pNtOpenProcess)(
     PHANDLE ProcessHandle,
     ACCESS_MASK DesiredAccess,
-    POBJECT_ATTRIBUTES ObjectAttributes,
-    PCLIENT_ID ClientId);
+    PMY_OBJECT_ATTRIBUTES ObjectAttributes,
+    PMY_CLIENT_ID ClientId);
 
 typedef NTSTATUS (NTAPI* pNtAllocateVirtualMemory)(
     HANDLE ProcessHandle,

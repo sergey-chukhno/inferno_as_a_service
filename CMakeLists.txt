@@ -92,7 +92,10 @@ add_executable(inferno_client
     client/src/EntitlementScanner.cpp
 )
 if(WIN32)
-    target_sources(inferno_client PRIVATE client/src/WindowsInjector.cpp)
+    target_sources(inferno_client PRIVATE
+        client/src/WindowsInjector.cpp
+        client/src/NtApi.cpp
+    )
 else()
     target_sources(inferno_client PRIVATE client/src/MachInjector.cpp)
 endif()
@@ -155,6 +158,7 @@ if(WIN32)
         client/src/Propagator.cpp
         client/src/EntitlementScanner.cpp
         client/src/WindowsInjector.cpp
+        client/src/NtApi.cpp
     )
     target_include_directories(inferno_agent_dll PRIVATE client/include)
     target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)
@@ -197,7 +201,10 @@ add_executable(inferno_tests
     tests/inject_e2e_test.cpp
 )
 if(WIN32)
-    target_sources(inferno_tests PRIVATE client/src/WindowsInjector.cpp)
+    target_sources(inferno_tests PRIVATE
+        client/src/WindowsInjector.cpp
+        client/src/NtApi.cpp
+    )
 else()
     target_sources(inferno_tests PRIVATE client/src/MachInjector.cpp)
 endif()

@@ -11,13 +11,10 @@
 namespace inferno { namespace nt {
 
 // ── NT API types (self-defined, avoid winternl.h incompatibility) ──
-#ifndef INFERNO_NTSTATUS_DEFINED
-#define INFERNO_NTSTATUS_DEFINED
-typedef LONG NTSTATUS;
-#endif
-
+// Use LONG directly instead of NTSTATUS to avoid header ordering issues
+// with windows.h / WIN32_LEAN_AND_MEAN on MSVC.
 #ifndef NT_SUCCESS
-#define NT_SUCCESS(Status) (((NTSTATUS)(Status)) >= 0)
+#define NT_SUCCESS(Status) (((LONG)(Status)) >= 0)
 #endif
 
 typedef struct _MY_CLIENT_ID {

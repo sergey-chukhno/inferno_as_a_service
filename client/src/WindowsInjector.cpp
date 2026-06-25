@@ -127,10 +127,31 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
         return false;
     }
 
-    // 6. Wait for thread completion
-    ::WaitForSingleObject(hThread, 5000);
+    // 6. Wait for thread completion and check result
+    DWORD wait_result = ::WaitForSingleObject(hThread, 5000);
+    if (wait_result != WAIT_OBJECT_0) {
+        std::fprintf(stderr, "[WindowsInjector] remote thread wait failed/timed out: %lu\n",
+                     wait_result);
+        SIZE_T zero = 0;
+        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
+        nt.NtClose(hThread);
+        nt.NtClose(hProcess);
+        return false;
+    }
 
-    // 7. Cleanup via NT APIs (MEM_RELEASE requires RegionSize = 0)
+    // 7. Get exit code to verify LoadLibraryA success
+    DWORD exit_code = 0;
+    if (!::GetExitCodeThread(hThread, &exit_code) || exit_code == 0) {
+        std::fprintf(stderr, "[WindowsInjector] remote LoadLibraryA failed "
+                             "(exit code %lu)\n", exit_code);
+        SIZE_T zero = 0;
+        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
+        nt.NtClose(hThread);
+        nt.NtClose(hProcess);
+        return false;
+    }
+
+    // 8. Cleanup via NT APIs (MEM_RELEASE requires RegionSize = 0)
     SIZE_T free_size = 0;
     nt.NtClose(hThread);
     nt.NtFreeVirtualMemory(hProcess, &remote_mem, &free_size, MEM_RELEASE);

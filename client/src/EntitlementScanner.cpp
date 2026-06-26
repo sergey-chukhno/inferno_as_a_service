@@ -14,6 +14,12 @@
 #include <unistd.h>
 #include <signal.h>
 #include <sys/wait.h>
+#elif defined(_WIN32)
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <tlhelp32.h>
 #endif
 
 namespace inferno { namespace tier2 {
@@ -177,9 +183,6 @@ std::vector<TargetApp> scanApplications() {
 }
 
 #elif defined(_WIN32)
-
-#include <windows.h>
-#include <tlhelp32.h>
 
 static bool isCriticalSystemProcess(const std::string& name_lower) {
     static const char* denylist[] = {

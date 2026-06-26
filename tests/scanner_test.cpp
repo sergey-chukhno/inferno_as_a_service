@@ -3,12 +3,11 @@
 
 #include "EntitlementScanner.hpp"
 
-#ifdef __APPLE__
+#if defined(__APPLE__) || defined(_WIN32)
 
 void test_scanner_classification() {
     auto targets = inferno::tier2::scanApplications();
 
-    // Scanner should not crash and should return a list (may be empty on CI without /Applications)
     std::fprintf(stdout, "[PASS] test_scanner_classification: %zu apps scanned\n",
                  targets.size());
 
@@ -52,7 +51,7 @@ void test_scanner_classification() {
     auto targets = inferno::tier2::scanApplications();
     if (!targets.empty()) {
         std::fprintf(stderr, "[FAIL] test_scanner_classification: "
-                             "expected empty on non-macOS\n");
+                             "expected empty on unsupported platform\n");
         std::exit(1);
     }
     std::fprintf(stdout, "[PASS] test_scanner_classification\n");

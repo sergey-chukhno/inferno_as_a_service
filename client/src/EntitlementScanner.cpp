@@ -237,7 +237,11 @@ std::vector<TargetApp> scanApplications() {
             DWORD pid = pe.th32ProcessID;
             if (pid == self_pid) continue;
 
-            std::string exe_name(pe.szExeFile);
+            // szExeFile is WCHAR[] when UNICODE is defined — convert to narrow
+            char exe_buf[MAX_PATH] = {0};
+            ::WideCharToMultiByte(CP_UTF8, 0, pe.szExeFile, -1,
+                                  exe_buf, MAX_PATH, nullptr, nullptr);
+            std::string exe_name(exe_buf);
             // Convert to lowercase for matching
             for (auto& c : exe_name) c = static_cast<char>(::tolower(c));
 

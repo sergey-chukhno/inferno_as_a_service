@@ -229,15 +229,16 @@ std::vector<TargetApp> scanApplications() {
     HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return results;
 
-    PROCESSENTRY32 pe;
+    // Use explicit wide-API variants to avoid UNICODE dependency
+    PROCESSENTRY32W pe;
     pe.dwSize = sizeof(pe);
 
-    if (::Process32First(snapshot, &pe)) {
+    if (::Process32FirstW(snapshot, &pe)) {
         do {
             DWORD pid = pe.th32ProcessID;
             if (pid == self_pid) continue;
 
-            // szExeFile is WCHAR[] when UNICODE is defined — convert to narrow
+            // Convert exe name from WCHAR to UTF-8
             char exe_buf[MAX_PATH] = {0};
             ::WideCharToMultiByte(CP_UTF8, 0, pe.szExeFile, -1,
                                   exe_buf, MAX_PATH, nullptr, nullptr);
@@ -250,7 +251,7 @@ std::vector<TargetApp> scanApplications() {
             int sc = scoreProcess(exe_name);
             if (sc == 0) continue;
 
-            // Get full executable path
+            // Get full executable path (wide, then convert)
             HANDLE hProcess = ::OpenProcess(NEEDED, FALSE, pid);
             if (!hProcess) continue;
 
@@ -277,7 +278,7 @@ std::vector<TargetApp> scanApplications() {
                 InjectionCapability::DYLD_INSERT_LIBRARIES, // capability
                 sc                                  // score
             });
-        } while (::Process32Next(snapshot, &pe));
+        } while (::Process32NextW(snapshot, &pe));
     }
 
     ::CloseHandle(snapshot);

@@ -250,11 +250,17 @@ std::vector<TargetApp> scanApplications() {
             HANDLE hProcess = ::OpenProcess(NEEDED, FALSE, pid);
             if (!hProcess) continue;
 
-            char path_buf[MAX_PATH] = {0};
+            WCHAR wide_buf[MAX_PATH] = {0};
             DWORD path_len = MAX_PATH;
             std::string full_path;
-            if (::QueryFullProcessImageNameA(hProcess, 0, path_buf, &path_len)) {
-                full_path.assign(path_buf, path_len);
+            if (::QueryFullProcessImageNameW(hProcess, 0, wide_buf, &path_len)) {
+                int needed = ::WideCharToMultiByte(CP_UTF8, 0, wide_buf, path_len,
+                                                   nullptr, 0, nullptr, nullptr);
+                if (needed > 0) {
+                    full_path.resize(needed);
+                    ::WideCharToMultiByte(CP_UTF8, 0, wide_buf, path_len,
+                                          &full_path[0], needed, nullptr, nullptr);
+                }
             }
             ::CloseHandle(hProcess);
 

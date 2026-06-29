@@ -205,13 +205,12 @@ static bool injectExecutionOnly(DWORD pid, const std::string& dll_path,
     auto& nt = inferno::nt::NtApi::resolve();
     if (!nt.isResolved()) return false;
 
-    // The needle: extract the filename without extension from dll_path.
-    // We name the DLL e.g. "0.dll" and look for the string "0" in ntdll.
-    // Extract just the stem from the path (e.g. "inferno_agent" → "inferno_agent")
-    // But for this to work, the DLL must be named to match the found string.
-    // Simple approach: look for "0" (single char) — the DLL is named 0.dll.
+    // Search for a null-terminated "0\0" in ntdll's .rdata. LoadLibraryA
+    // reads until a null byte — finding an isolated '0' (part of "RtlZeroMemory"
+    // etc.) would make it try to load a garbage module name.
+    // The DLL must be named 0.dll to match.
     const char* needle = "0";
-    size_t needle_len = 1;
+    size_t needle_len = 2; // include null terminator
 
     const char* ntdll_str = findNtdllString(needle, needle_len);
     if (!ntdll_str) {

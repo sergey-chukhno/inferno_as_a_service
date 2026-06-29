@@ -68,10 +68,10 @@ void test_loader_binary_exists() {
 }
 
 void test_find_ntdll_string() {
-    const char* found = inferno::tier2::findNtdllString("0", 1);
+    const char* found = inferno::tier2::findNtdllString("0", 2);
     if (!found) {
         std::fprintf(stderr, "[FAIL] test_find_ntdll_string: "
-                             "\"0\" not found in ntdll.dll .rdata\n");
+                             "null-terminated \"0\" not found in ntdll.dll .rdata\n");
         std::exit(1);
     }
     std::fprintf(stdout, "[PASS] test_find_ntdll_string: found at %p\n",

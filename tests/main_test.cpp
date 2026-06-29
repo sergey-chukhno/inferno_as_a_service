@@ -43,6 +43,9 @@ extern void test_shim_binary_exists();
 #ifdef _WIN32
 extern void test_agent_dll_loads();
 extern void test_loader_binary_exists();
+extern void test_find_ntdll_string();
+extern void test_find_ntdll_string_not_found();
+extern void test_find_ntdll_string_longer();
 extern void test_windows_injector_stub();
 #endif
 
@@ -162,6 +165,9 @@ int main(int argc, char* argv[]) {
 #ifdef _WIN32
     test_agent_dll_loads();
     test_loader_binary_exists();
+    test_find_ntdll_string();
+    test_find_ntdll_string_not_found();
+    test_find_ntdll_string_longer();
     test_windows_injector_stub();
 #endif
 

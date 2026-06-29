@@ -675,26 +675,50 @@ The current `CreateRemoteThread(LoadLibraryA)` has a high EDR detection surface 
 | 4 | DLL in PEB module list — visible to `EnumProcessModules` | Medium | ❌ Not mitigated |
 | 5 | `WaitForSingleObject` + `VirtualFreeEx` cleanup pattern | Low | ❌ Not mitigated (low priority) |
 
-#### Planned Evasion Hardening (4B.5)
+#### Completed Evasion Hardening (4B.5)
 
-Added to `ROADMAP_FORWARD.md` as a new sub-phase with three workstreams:
+All three workstreams implemented across two PRs:
 
-**4B.5-A — Native API Injection**: Replace Win32 APIs with NT API equivalents from `ntdll.dll` resolved at runtime. Bypasses EDR userland hooks on `kernel32.dll`.
+**4B.5-A — Native API Injection** (`feat/injection/phase4b5-ntapi`):
+- New `NtApi.hpp` / `NtApi.cpp`: NT API function pointer types + thread-safe runtime resolver via C++17 static lambda initializer
+- All 6 Win32 injection APIs replaced with NT equivalents: `OpenProcess` → `NtOpenProcess`, `VirtualAllocEx` → `NtAllocateVirtualMemory`, `WriteProcessMemory` → `NtWriteVirtualMemory`, `CreateRemoteThread` → `NtCreateThreadEx`, `CloseHandle` → `NtClose`, `VirtualFreeEx` → `NtFreeVirtualMemory`
+- Self-defined `MY_CLIENT_ID` / `MY_OBJECT_ATTRIBUTES` types to avoid `winternl.h` MSVC incompatibility
+- `isResolved()` guard before dereferencing function pointers
+- Self-defined `NT_SUCCESS` macro (no `ntstatus.h` dependency)
+- Added `NtApi.cpp` to all Windows targets
 
-**4B.5-B — Windows Process Scanner**: Analogous to macOS `EntitlementScanner.cpp`. Enumerates running processes via `CreateToolhelp32Snapshot`, scores them for injection suitability, and reports via the existing `SCAN_RESULT` opcode. Achieves parity with the macOS scanner.
+**4B.5-B — Windows Process Scanner** (`feat/injection/phase4b5-ntapi`):
+- Added `#elif defined(_WIN32)` branch to `EntitlementScanner.cpp`
+- Enumerates processes via `CreateToolhelp32Snapshot` (`Process32FirstW`/`Process32NextW` for UNICODE safety)
+- Filters: self PID, critical system process denylist (`csrss.exe`, `smss.exe`, `services.exe`, `lsass.exe`, `svchost.exe`, etc.), unknown executables
+- Scoring: browsers/Office/Discord/Zoom/editors = 100, terminals/dev tools = 50
+- Output format: `full_path|PID|1|is_host` — compatible with existing server `InjectionPanel`
+- Updated `test_scanner_classification` to expect results on Windows
 
-**4B.5-C — Advanced Evasion Techniques**:
+**4B.5-C — Execution-Only Injection** (`feat/injection/phase4b5-execution-only`):
+- `findNtdllString()` — PE parser that scans `ntdll.dll`'s `.rdata` section for a needle string
+- `injectExecutionOnly()` — uses the found ntdll string address as `LoadLibraryA` argument with `NtCreateThreadEx` only; no `VirtualAllocEx`/`WriteProcessMemory`
+- `ReadProcessMemory` sanity check confirms the string exists at the same address in the target (ntdll is a known DLL with shared ASLR base across processes)
+- Fallback: if execution-only fails (string not found, verification mismatch), silently falls back to standard NT API injection
+- `injectIntoTarget()` tries execution-only first, then falls back
+- 3 Windows unit tests: found, not-found, multi-char variants
 
-| Priority | Technique | Vector Mitigated | Effort |
-|----------|-----------|-----------------|--------|
-| 1 | Native API injection (#A) | #1 (bypasses userland hooks) | ~1 day |
-| 2 | Windows process scanner (#B) | N/A — feature parity with macOS | ~1 day |
-| 3 | Execution-only injection | #1 + #5 (eliminates `VirtualAllocEx`/`WriteProcessMemory`) | ~1 day |
-| 4 | Reflective DLL loader | #3 + #4 (no file on disk, no PEB entry) | ~3-4 days |
-| 5 | API call stack spoofing | #1 (defeats call-stack inspection) | Deferred |
+**Pending (future)**:
+- Reflective DLL loader (#4) — manual PE mapper, eliminates DLL-on-disk + PEB module list entry
+- API call stack spoofing (#5) — Moonwalk++ / Draugr technique, deferred
+
+### Detection Surface Update
+
+| # | Vector | Severity | Status |
+|---|--------|----------|--------|
+| 1 | `CreateRemoteThread` + `LoadLibraryA` — 4-call sequence signature | High | ✅ Partially mitigated — `NtCreateThreadEx` bypasses `kernel32` hooks; execution-only path eliminates `VirtualAllocEx`/`WriteProcessMemory` |
+| 2 | `OpenProcess(PROCESS_ALL_ACCESS)` | High | ✅ Already using minimal specific masks |
+| 3 | DLL file on disk — AV scan + forensic artifact | High | ❌ Not mitigated (requires reflective loader) |
+| 4 | DLL in PEB module list — visible to `EnumProcessModules` | Medium | ❌ Not mitigated (requires reflective loader) |
+| 5 | `WaitForSingleObject` + `VirtualFreeEx` cleanup pattern | Low | ✅ Eliminated in execution-only path (no cleanup needed) |
 
 ### Next Steps
-- **Phase 4B.5**: Windows injection evasion hardening (NT API, process scanner, execution-only, reflective loader).
+- **Phase 4B.5 (continued)**: Reflective DLL loader, API call stack spoofing (deferred).
 - **Phase 4C**: Windows + macOS self-delete after injection.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).

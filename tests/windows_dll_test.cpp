@@ -67,6 +67,42 @@ void test_loader_binary_exists() {
     std::fprintf(stdout, "[PASS] test_loader_binary_exists\n");
 }
 
+void test_find_ntdll_string() {
+    const char* found = inferno::tier2::findNtdllString("0", 2);
+    if (!found) {
+        std::fprintf(stderr, "[FAIL] test_find_ntdll_string: "
+                             "null-terminated \"0\" not found in ntdll.dll .rdata\n");
+        std::exit(1);
+    }
+    std::fprintf(stdout, "[PASS] test_find_ntdll_string: found at %p\n",
+                 (void*)found);
+}
+
+void test_find_ntdll_string_not_found() {
+    // A needle that should never exist in ntdll's .rdata
+    const char* found = inferno::tier2::findNtdllString(
+        "ZZZZ_NEVER_IN_NTDLL_12345", 25);
+    if (found != nullptr) {
+        std::fprintf(stderr, "[FAIL] test_find_ntdll_string_not_found: "
+                             "unexpectedly found at %p\n", (void*)found);
+        std::exit(1);
+    }
+    std::fprintf(stdout, "[PASS] test_find_ntdll_string_not_found: "
+                         "correctly returned nullptr\n");
+}
+
+void test_find_ntdll_string_longer() {
+    // A multi-character string expected in ntdll (e.g. "Rtl" or "Zw")
+    const char* found = inferno::tier2::findNtdllString("Rtl", 3);
+    if (!found) {
+        std::fprintf(stderr, "[FAIL] test_find_ntdll_string_longer: "
+                             "\"Rtl\" not found in ntdll.dll .rdata\n");
+        std::exit(1);
+    }
+    std::fprintf(stdout, "[PASS] test_find_ntdll_string_longer: "
+                         "found at %p\n", (void*)found);
+}
+
 void test_windows_injector_stub() {
     inferno::tier2::TargetApp target;
     target.path = "C:\\test.exe";

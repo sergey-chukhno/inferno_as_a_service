@@ -201,7 +201,7 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
 static bool injectExecutionOnly(DWORD pid, const std::string& dll_path,
                                  const std::string& server_ip,
                                  uint16_t server_port) {
-    (void)server_ip; (void)server_port;
+    (void)dll_path; (void)server_ip; (void)server_port;
     auto& nt = inferno::nt::NtApi::resolve();
     if (!nt.isResolved()) return false;
 

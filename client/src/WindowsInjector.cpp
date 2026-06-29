@@ -161,6 +161,154 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
     return true;
 }
 
+// ── Execution-only injection ────────────────────────────────────
+// Find a known string inside ntdll.dll's read-only data section.
+// The address is the same in every process (ntdll is a known DLL,
+// ASLR base is shared across all processes on the same boot).
+// Naming our DLL to match this string lets us call
+// CreateRemoteThread(LoadLibraryA, &ntdll_string) without needing
+// VirtualAllocEx or WriteProcessMemory.
+
+static const char* findNtdllString(const char* needle, size_t needle_len) {
+    HMODULE ntdll = ::GetModuleHandleA("ntdll.dll");
+    if (!ntdll) return nullptr;
+
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(ntdll);
+
+    // DOS header → NT headers
+    const IMAGE_DOS_HEADER* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
+
+    const IMAGE_NT_HEADERS* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+        base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
+
+    // Walk sections to find .rdata
+    const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        const char* sec_name = reinterpret_cast<const char*>(sections[i].Name);
+        if (::_stricmp(sec_name, ".rdata") != 0) continue;
+
+        // Scan the section for the needle
+        const uint8_t* sec_start = base + sections[i].VirtualAddress;
+        SIZE_T sec_size = sections[i].SizeOfRawData;
+        for (SIZE_T off = 0; off + needle_len <= sec_size; ++off) {
+            if (std::memcmp(sec_start + off, needle, needle_len) == 0) {
+                return reinterpret_cast<const char*>(sec_start + off);
+            }
+        }
+        break; // scanned .rdata, found or not
+    }
+    return nullptr;
+}
+
+// Execution-only injection: uses an existing string inside ntdll.dll
+// as the LoadLibraryA argument — no VirtualAllocEx/WriteProcessMemory.
+static bool injectExecutionOnly(DWORD pid, const std::string& dll_path,
+                                 const std::string& server_ip,
+                                 uint16_t server_port) {
+    (void)server_ip; (void)server_port;
+    auto& nt = inferno::nt::NtApi::resolve();
+    if (!nt.isResolved()) return false;
+
+    // The needle: extract the filename without extension from dll_path.
+    // We name the DLL e.g. "0.dll" and look for the string "0" in ntdll.
+    // Extract just the stem from the path (e.g. "inferno_agent" → "inferno_agent")
+    // But for this to work, the DLL must be named to match the found string.
+    // Simple approach: look for "0" (single char) — the DLL is named 0.dll.
+    const char* needle = "0";
+    size_t needle_len = 1;
+
+    const char* ntdll_str = findNtdllString(needle, needle_len);
+    if (!ntdll_str) {
+        std::fprintf(stderr, "[WindowsInjector] execution-only: "
+                             "string \"%s\" not found in ntdll — falling back\n",
+                     needle);
+        return false;
+    }
+
+    // Verify the address is readable in the target process
+    HANDLE hProcess = nullptr;
+    inferno::nt::MY_CLIENT_ID cid;
+    cid.UniqueProcess = (HANDLE)(ULONG_PTR)pid;
+    cid.UniqueThread  = nullptr;
+    inferno::nt::MY_OBJECT_ATTRIBUTES oa;
+    oa.Length                   = sizeof(oa);
+    oa.RootDirectory            = nullptr;
+    oa.ObjectName               = nullptr;
+    oa.Attributes               = 0;
+    oa.SecurityDescriptor       = nullptr;
+    oa.SecurityQualityOfService = nullptr;
+
+    NTSTATUS status = nt.NtOpenProcess(
+        &hProcess,
+        PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
+        PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
+        &oa, &cid);
+    if (!NT_SUCCESS(status)) {
+        std::fprintf(stderr, "[WindowsInjector] execution-only: "
+                             "NtOpenProcess(%lu) failed: 0x%08lx\n",
+                     pid, status);
+        return false;
+    }
+
+    // Sanity check: read the same bytes in the target to confirm they match
+    char check_buf[4] = {0};
+    SIZE_T bytes_read = 0;
+    BOOL read_ok = ::ReadProcessMemory(hProcess, ntdll_str, check_buf,
+                                        needle_len, &bytes_read);
+    if (!read_ok || bytes_read != needle_len ||
+        std::memcmp(check_buf, needle, needle_len) != 0) {
+        std::fprintf(stderr, "[WindowsInjector] execution-only: "
+                             "target memory verification failed — falling back\n");
+        nt.NtClose(hProcess);
+        return false;
+    }
+
+    // Resolve LoadLibraryA
+    HMODULE kernel32 = ::GetModuleHandleA("kernel32.dll");
+    PVOID loadlib = reinterpret_cast<PVOID>(
+        ::GetProcAddress(kernel32, "LoadLibraryA"));
+
+    // Create remote thread with pointer to ntdll string (no allocation/write needed)
+    HANDLE hThread = nullptr;
+    status = nt.NtCreateThreadEx(
+        &hThread, THREAD_ALL_ACCESS, nullptr, hProcess,
+        loadlib, (PVOID)ntdll_str, 0, 0, 0, 0, nullptr);
+    if (!NT_SUCCESS(status)) {
+        std::fprintf(stderr, "[WindowsInjector] execution-only: "
+                             "NtCreateThreadEx failed: 0x%08lx\n",
+                     status);
+        nt.NtClose(hProcess);
+        return false;
+    }
+
+    DWORD wait_result = ::WaitForSingleObject(hThread, 5000);
+    if (wait_result != WAIT_OBJECT_0) {
+        std::fprintf(stderr, "[WindowsInjector] execution-only: "
+                             "thread wait failed/timed out: %lu\n", wait_result);
+        nt.NtClose(hThread);
+        nt.NtClose(hProcess);
+        return false;
+    }
+
+    DWORD exit_code = 0;
+    if (!::GetExitCodeThread(hThread, &exit_code) || exit_code == 0) {
+        std::fprintf(stderr, "[WindowsInjector] execution-only: "
+                             "LoadLibraryA failed (exit code %lu)\n", exit_code);
+        nt.NtClose(hThread);
+        nt.NtClose(hProcess);
+        return false;
+    }
+
+    nt.NtClose(hThread);
+    nt.NtClose(hProcess);
+
+    std::fprintf(stdout, "[WindowsInjector] Injected into PID %lu "
+                         "via execution-only (no VirtualAllocEx)\n", pid);
+    return true;
+}
+
 bool injectIntoTarget(const TargetApp& target,
                       const std::string& dll_path,
                       const std::string& server_ip,
@@ -176,6 +324,12 @@ bool injectIntoTarget(const TargetApp& target,
     switch (target.capability) {
         case InjectionCapability::DYLD_INSERT_LIBRARIES:
         case InjectionCapability::MACH_VM_ALLOCATE:
+            // Try execution-only first (no VirtualAllocEx/WriteProcessMemory).
+            // Falls back to standard NT API injection if the string isn't found
+            // or target verification fails.
+            if (injectExecutionOnly(pid, dll_path, server_ip, server_port)) {
+                return true;
+            }
             return injectViaRemoteThread(pid, dll_path, server_ip, server_port);
 
         default:

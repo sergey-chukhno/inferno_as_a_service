@@ -234,7 +234,7 @@ static bool injectExecutionOnly(DWORD pid, const std::string& dll_path,
     oa.SecurityDescriptor       = nullptr;
     oa.SecurityQualityOfService = nullptr;
 
-    NTSTATUS status = nt.NtOpenProcess(
+    LONG status = nt.NtOpenProcess(
         &hProcess,
         PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION |
         PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,

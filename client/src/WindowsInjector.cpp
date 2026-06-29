@@ -35,7 +35,7 @@ const char* findNtdllString(const char* needle, size_t needle_len) {
     const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(nt);
     for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
         const char* sec_name = reinterpret_cast<const char*>(sections[i].Name);
-        if (::_stricmp(sec_name, ".rdata") != 0) continue;
+        if (::_strnicmp(sec_name, ".rdata", 8) != 0) continue;
 
         const uint8_t* sec_start = base + sections[i].VirtualAddress;
         SIZE_T sec_size = sections[i].SizeOfRawData;

@@ -16,6 +16,41 @@
 
 namespace inferno { namespace tier2 {
 
+// ── Execution-only helper (always available on Windows, even in tests) ──
+#ifdef _WIN32
+
+const char* findNtdllString(const char* needle, size_t needle_len) {
+    HMODULE ntdll = ::GetModuleHandleA("ntdll.dll");
+    if (!ntdll) return nullptr;
+
+    const uint8_t* base = reinterpret_cast<const uint8_t*>(ntdll);
+
+    const IMAGE_DOS_HEADER* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
+
+    const IMAGE_NT_HEADERS* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
+        base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
+
+    const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(nt);
+    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
+        const char* sec_name = reinterpret_cast<const char*>(sections[i].Name);
+        if (::_stricmp(sec_name, ".rdata") != 0) continue;
+
+        const uint8_t* sec_start = base + sections[i].VirtualAddress;
+        SIZE_T sec_size = sections[i].SizeOfRawData;
+        for (SIZE_T off = 0; off + needle_len <= sec_size; ++off) {
+            if (std::memcmp(sec_start + off, needle, needle_len) == 0) {
+                return reinterpret_cast<const char*>(sec_start + off);
+            }
+        }
+        break;
+    }
+    return nullptr;
+}
+
+#endif
+
 #if defined(INFERNO_TESTING)
 // In testing mode, skip actual injection — just report success
 bool injectIntoTarget(const TargetApp&, const std::string&,
@@ -161,48 +196,7 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
     return true;
 }
 
-// ── Execution-only injection ────────────────────────────────────
-// Find a known string inside ntdll.dll's read-only data section.
-// The address is the same in every process (ntdll is a known DLL,
-// ASLR base is shared across all processes on the same boot).
-// Naming our DLL to match this string lets us call
-// CreateRemoteThread(LoadLibraryA, &ntdll_string) without needing
-// VirtualAllocEx or WriteProcessMemory.
-
-static const char* findNtdllString(const char* needle, size_t needle_len) {
-    HMODULE ntdll = ::GetModuleHandleA("ntdll.dll");
-    if (!ntdll) return nullptr;
-
-    const uint8_t* base = reinterpret_cast<const uint8_t*>(ntdll);
-
-    // DOS header → NT headers
-    const IMAGE_DOS_HEADER* dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
-    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return nullptr;
-
-    const IMAGE_NT_HEADERS* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(
-        base + dos->e_lfanew);
-    if (nt->Signature != IMAGE_NT_SIGNATURE) return nullptr;
-
-    // Walk sections to find .rdata
-    const IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(nt);
-    for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i) {
-        const char* sec_name = reinterpret_cast<const char*>(sections[i].Name);
-        if (::_stricmp(sec_name, ".rdata") != 0) continue;
-
-        // Scan the section for the needle
-        const uint8_t* sec_start = base + sections[i].VirtualAddress;
-        SIZE_T sec_size = sections[i].SizeOfRawData;
-        for (SIZE_T off = 0; off + needle_len <= sec_size; ++off) {
-            if (std::memcmp(sec_start + off, needle, needle_len) == 0) {
-                return reinterpret_cast<const char*>(sec_start + off);
-            }
-        }
-        break; // scanned .rdata, found or not
-    }
-    return nullptr;
-}
-
-// Execution-only injection: uses an existing string inside ntdll.dll
+// ── Execution-only injection: uses an existing string inside ntdll.dll
 // as the LoadLibraryA argument — no VirtualAllocEx/WriteProcessMemory.
 static bool injectExecutionOnly(DWORD pid, const std::string& dll_path,
                                  const std::string& server_ip,

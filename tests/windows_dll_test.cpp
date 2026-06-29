@@ -67,6 +67,17 @@ void test_loader_binary_exists() {
     std::fprintf(stdout, "[PASS] test_loader_binary_exists\n");
 }
 
+void test_find_ntdll_string() {
+    const char* found = inferno::tier2::findNtdllString("0", 1);
+    if (!found) {
+        std::fprintf(stderr, "[FAIL] test_find_ntdll_string: "
+                             "\"0\" not found in ntdll.dll .rdata\n");
+        std::exit(1);
+    }
+    std::fprintf(stdout, "[PASS] test_find_ntdll_string: found at %p\n",
+                 (void*)found);
+}
+
 void test_windows_injector_stub() {
     inferno::tier2::TargetApp target;
     target.path = "C:\\test.exe";

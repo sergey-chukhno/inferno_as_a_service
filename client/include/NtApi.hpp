@@ -3,6 +3,10 @@
 #include <cstdint>
 #include <cstdlib>
 
+// <windows.h> sets up the target architecture and all Windows base types
+// (HANDLE, LONG, DWORD, ULONG, PVOID, NTAPI, etc.). We must include it
+// directly — pulling in <windef.h> or <winnt.h> individually bypasses the
+// architecture setup that <windows.h> performs.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif

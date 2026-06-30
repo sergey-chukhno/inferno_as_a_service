@@ -42,7 +42,9 @@ bool isDylibShuttingDown() {
 #define EXPORT_SYMBOL
 #endif
 
-extern "C" EXPORT_SYMBOL int inferno_agent_entry_ran = 0;
+extern "C" {
+    EXPORT_SYMBOL int inferno_agent_entry_ran = 0;
+}
 
 static void agentThreadFunc() {
     inferno_agent_entry_ran = 1;

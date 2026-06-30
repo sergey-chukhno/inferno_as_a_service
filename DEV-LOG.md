@@ -707,6 +707,44 @@ All three workstreams implemented across two PRs:
 - Reflective DLL loader (#4) — manual PE mapper, eliminates DLL-on-disk + PEB module list entry
 - API call stack spoofing (#5) — Moonwalk++ / Draugr technique, deferred
 
+---
+
+## Phase 4C — Self-Delete + Windows IFEO Persistence ✅
+
+**Objective**: After successful injection, the standalone agent binary deletes itself from disk. On Windows, establish per-process persistence via IFEO Debugger so the injected DLL is re-delivered on every boot.
+
+**New files**: `tests/self_delete_test.cpp`, `tests/inject_e2e_macos_test.cpp`
+
+**Modified files**: `Agent.hpp`, `Agent.cpp`, `main.cpp`, `WindowsInjector.hpp`, `WindowsInjector.cpp`, `NtApi.hpp`, `entry_dylib.cpp`, `entry_dll.cpp`, `CMakeLists.txt`, `tests/main_test.cpp`
+
+### Technical milestones
+
+- **`Agent::selfDelete()`**: Three-platform implementation:
+  - macOS/Linux: `fork()` → child sleeps 2s → `unlink()` binary → parent `_exit(0)`
+  - Windows: rename `.exe` to temp name → spawn detached bat that deletes renamed file → `ExitProcess(0)`
+  - Guarded under `INFERNO_TESTING` (sets a flag instead of killing the process)
+- **Integration in `handleInjection()`**: After `injectIntoTarget()` returns success:
+  1. Sends `INJECT_RES` to server (unchanged)
+  2. Calls `persistInjectedAgent()` with the target path
+  3. Calls `selfDelete()` — never returns (`_exit(0)`)
+- **Windows injected persistence** (`persistInjectedAgent()`):
+  - Copies agent binary → re-injector at discreet Edge directory path
+  - Copies agent DLL alongside
+  - Writes `.cfg` config file: target exe name, DLL path, server IP, port
+  - Sets IFEO Debugger under `HKCU\...\Image File Execution Options\<target>.exe`
+  - On reboot: IFEO fires → re-injector starts → reads config → waits for target → injects DLL → exits (zero lingering footprint)
+- **`--reinject` mode** (`main.cpp`): new entry point for the re-injector binary. Reads `.cfg` config, calls `findProcessPid()` with 30s poll, injects DLL via new PID-based overload
+- **`WindowsInjector` refactor**: Extracted `findProcessPid()` (exported), `injectIntoProcess()`, `openTargetProcess()` helpers. Added `injectIntoTarget(DWORD pid, ...)` for PID-based injection
+- **`getAgentDllPath()` on Windows**: Returns DLL path relative to agent binary directory
+
+### Cross-platform fixes
+
+- `NtApi.hpp`: Restored unconditional `<windows.h>` include (architecture setup required)
+- `WindowsInjector.cpp`: Moved `<windows.h>` to first include (Windows convention)
+- `entry_dylib.cpp`: Guarded `__attribute__((constructor/destructor))` with `!defined(_WIN32)` — MSVC doesn't support them
+- `entry_dll.cpp`/`entry_dylib.cpp`: Moved to platform-specific test source blocks — prevents duplicate `isDylibShuttingDown()` symbols
+- `extern "C" int x = 0;` → `extern "C" { int x = 0; }` — GCC `-Werror` fix for redundant `extern` with initializer
+
 ### Detection Surface Update
 
 | # | Vector | Severity | Status |
@@ -717,9 +755,27 @@ All three workstreams implemented across two PRs:
 | 4 | DLL in PEB module list — visible to `EnumProcessModules` | Medium | ❌ Not mitigated (requires reflective loader) |
 | 5 | `WaitForSingleObject` + `VirtualFreeEx` cleanup pattern | Low | ✅ Eliminated in execution-only path (no cleanup needed) |
 
+### Test Coverage
+
+| Test | Platform | What it verifies |
+|------|----------|-----------------|
+| `test_self_delete_flag_default_false` | All | Flag is false before any call |
+| `test_self_delete_flag_set_on_call` | All | Flag is true after `selfDelete()` |
+| `test_self_delete_flag_resets` | All | Flag resets correctly |
+| `test_self_delete_skipped_with_empty_binary_path` | All | Testing stub works without crash |
+| `test_injected_persistence_macos` | `__APPLE__` | Plist contains `DYLD_INSERT_LIBRARIES` + server config |
+| `test_reinject_config_roundtrip` | `_WIN32` | Config write/read roundtrip |
+| `test_persistence_windows_registry_key` | `_WIN32` | IFEO Debugger key created with correct value |
+| `inferno_inject_e2e_macos_test` | macOS | Real DBeaver.app injection — launches app, verifies dylib loaded, cleans up |
+
+### Verification
+- **macOS**: DBeaver injection E2E test passes — dylib loads, Agent thread inside DBeaver connects to C2
+- **Linux**: All unit tests pass (32/32)
+- **Windows**: All unit tests pass (test build), client compiles with MSVC
+- **Handshake**: Manual test confirms client-server connection works without regression
+
 ### Next Steps
 - **Phase 4B.5 (continued)**: Reflective DLL loader, API call stack spoofing (deferred).
-- **Phase 4C**: Windows + macOS self-delete after injection.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).
 - **Phase 5**: Transport & Protocol Evasion — Malleable C2 framing, covert transports,

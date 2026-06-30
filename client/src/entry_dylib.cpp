@@ -27,9 +27,11 @@ bool isDylibShuttingDown() {
 
 }} // namespace inferno::agent
 
-#if defined(INFERNO_DYLIB) || defined(INFERNO_TESTING)
+#if (defined(INFERNO_DYLIB) || defined(INFERNO_TESTING)) && !defined(_WIN32)
 
-extern "C" int inferno_agent_entry_ran = 0;
+extern "C" {
+    int inferno_agent_entry_ran = 0;
+}
 
 __attribute__((destructor))
 static void agent_exit() {

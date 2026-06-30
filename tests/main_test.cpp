@@ -49,6 +49,19 @@ extern void test_find_ntdll_string_longer();
 extern void test_windows_injector_stub();
 #endif
 
+// Phase 4C — Self-Delete Tests
+extern void test_self_delete_flag_default_false();
+extern void test_self_delete_flag_set_on_call();
+extern void test_self_delete_flag_resets();
+extern void test_self_delete_skipped_with_empty_binary_path();
+#ifdef __APPLE__
+extern void test_injected_persistence_macos();
+#endif
+#ifdef _WIN32
+extern void test_reinject_config_roundtrip();
+extern void test_persistence_windows_registry_key();
+#endif
+
 // Tier 2 Scanner Tests
 extern void test_scanner_classification();
 extern void test_scanner_empty_report();
@@ -169,6 +182,19 @@ int main(int argc, char* argv[]) {
     test_find_ntdll_string_not_found();
     test_find_ntdll_string_longer();
     test_windows_injector_stub();
+#endif
+
+    // Phase 4C — Self-Delete Tests
+    test_self_delete_flag_default_false();
+    test_self_delete_flag_set_on_call();
+    test_self_delete_flag_resets();
+    test_self_delete_skipped_with_empty_binary_path();
+#ifdef __APPLE__
+    test_injected_persistence_macos();
+#endif
+#ifdef _WIN32
+    test_reinject_config_roundtrip();
+    test_persistence_windows_registry_key();
 #endif
 
     // Tier 2 Scanner Tests

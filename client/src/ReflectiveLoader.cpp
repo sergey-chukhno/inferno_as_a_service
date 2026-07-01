@@ -6,6 +6,17 @@
 
 namespace inferno { namespace nt {
 
+#if defined(INFERNO_TESTING)
+// Testing stubs — skip remote process operations, keep PE helpers real.
+bool injectReflective(HANDLE, const std::vector<uint8_t>&,
+                       const std::string&, uint16_t) {
+    return true;
+}
+bool setTargetEnv(HANDLE, const std::string&, uint16_t) {
+    return true;
+}
+#endif
+
 // ── x64 shellcode stub ──────────────────────────────────────────
 // Calls DllMain(hinstDLL, DLL_PROCESS_ATTACH, NULL)
 // Expects RCX = pointer to ReflectiveLoaderParams.
@@ -237,6 +248,8 @@ bool applyRelocations(HANDLE hProcess, void* base,
     return true;
 }
 
+#if !defined(INFERNO_TESTING)
+
 // ── Target env var injection ─────────────────────────────────────
 // Writes INFERNO_SERVER_IP and INFERNO_SERVER_PORT strings into the
 // target process's environment block so the DLL's DllMain can read them.
@@ -451,5 +464,7 @@ bool injectReflective(HANDLE hProcess,
     std::fprintf(stdout, "[Reflective] DllMain returned %lu\n", exit_code);
     return true;
 }
+
+#endif // !defined(INFERNO_TESTING)
 
 }} // namespace inferno::nt

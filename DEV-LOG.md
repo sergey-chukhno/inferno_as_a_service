@@ -717,8 +717,54 @@ All three workstreams implemented across two PRs:
 | 4 | DLL in PEB module list — visible to `EnumProcessModules` | Medium | ❌ Not mitigated (requires reflective loader) |
 | 5 | `WaitForSingleObject` + `VirtualFreeEx` cleanup pattern | Low | ✅ Eliminated in execution-only path (no cleanup needed) |
 
+---
+
+## Phase 4B.5-#4 — Reflective DLL Loader ✅
+
+**Objective**: Eliminate the DLL-on-disk artifact by manually mapping `inferno_agent.dll` from a memory buffer into the target process. The DLL never touches disk and is never registered in the PEB module list.
+
+**New files**: `ReflectiveLoader.hpp`, `ReflectiveLoader.cpp`, `ReflectiveLdrShellcode.asm`, `reflective_loader_test.cpp`
+
+### Technical milestones
+
+- **`injectReflective()`**: Full orchestrator — parse PE → `NtAllocateVirtualMemory` at preferred base → write sections → resolve imports → apply relocations → launch shellcode → wait for DllMain → cleanup stub.
+- **PE section mapper** (`mapPESections()`): Writes DOS/NT headers + each section (`.text`, `.rdata`, `.data`, `.reloc`) to the target at correct virtual addresses via `NtWriteVirtualMemory`.
+- **Import resolver** (`resolveImports()`): Walks `IMAGE_IMPORT_DESCRIPTOR` array from the local buffer. For each imported DLL/function, calls `LoadLibraryA` + `GetProcAddress` in the injector (system DLLs share ASLR base across processes), writes the resolved address into the target's IAT via `WriteProcessMemory`.
+- **Relocation applier** (`applyRelocations()`): Walks `.reloc` blocks from local buffer, reads current values from target via `ReadProcessMemory`, applies `delta = actual_base - preferred_base`, writes patched values back.
+- **Shellcode stub**: 35-byte x64 byte array (with MASM `.asm` equivalent): reads `ReflectiveLoaderParams` from stack → calls `DllMain(hinstDLL, DLL_PROCESS_ATTACH, NULL)`. Embedded directly in the binary — no external dependency.
+- **Target env var injection** (`setTargetEnv()`): Allocates `INFERNO_SERVER_IP` / `INFERNO_SERVER_PORT` strings in target memory via `NtAllocateVirtualMemory` / `NtWriteVirtualMemory`. Note: linking into PEB is incomplete (see follow-ups).
+
+### Key design decisions
+
+- **All parsing from local buffer**: `resolveImports` and `applyRelocations` read PE structures from the injector's local `dll_bytes` buffer, not from target memory (which isn't in our address space). Only writes go to the target via `WriteProcessMemory`/`NtWriteVirtualMemory`.
+- **System-wide ASLR**: On Windows, system DLLs (`kernel32.dll`, `ntdll.dll`, etc.) are mapped at the same virtual address in every process. This allows resolving `LoadLibraryA` / `GetProcAddress` in the injector and writing the same address into the target's IAT.
+- **`if constexpr` for compile-time constants**: Used in tests to avoid MSVC C4127 warning on `sizeof` comparisons.
+
+### Detection Surface Update
+
+| # | Vector | Severity | Status |
+|---|--------|----------|--------|
+| 1 | `CreateRemoteThread` + `LoadLibraryA` — 4-call sequence signature | High | ✅ Eliminated — replaced by `NtCreateThreadEx` + shellcode stub |
+| 2 | `OpenProcess(PROCESS_ALL_ACCESS)` | High | ✅ Already using minimal specific masks |
+| 3 | DLL file on disk — AV scan + forensic artifact | High | ✅ **Eliminated** — memory-only mapping |
+| 4 | DLL in PEB module list — visible to `EnumProcessModules` | Medium | ✅ **Eliminated** — never registered |
+| 5 | `WaitForSingleObject` + `VirtualFreeEx` cleanup pattern | Low | ✅ Eliminated in execution-only path |
+
+### Test Coverage (Windows-only)
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_pe_header_validation` | Valid MZ/PE headers are accepted |
+| `test_pe_header_invalid_signature` | Bad DOS signature is rejected |
+| `test_pe_header_empty_buffer` | Empty buffer is rejected |
+| `test_shellcode_bytes_valid` | Shellcode is non-null, < 128 bytes |
+| `test_parameter_block_layout` | `ReflectiveLoaderParams` is exactly 16 bytes |
+| `test_relocation_no_delta` | `applyRelocations` with delta=0 succeeds (no-op) |
+
 ### Next Steps
-- **🔜 4B.5-#4 — Reflective DLL loader**: Next priority. Eliminates DLL-on-disk artifact — the last remaining critical detection surface on Windows. Prerequisite for fileless media capture.
+- **🔜 Follow-up #1 — Wire into injectIntoTarget()**: Try reflective first, fall back to NT API if it fails.
+- **🔜 Follow-up #2 — Embed DLL bytes in agent binary**: For truly fileless injector (no DLL on disk at all).
+- **🔜 Follow-up #3 — Set env vars in target PEB**: So injected agent connects to correct C2.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).
 - **Phase 5**: Transport & Protocol Evasion — Malleable C2 framing, covert transports,

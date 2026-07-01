@@ -66,6 +66,9 @@ extern void test_pe_header_empty_buffer();
 extern void test_shellcode_bytes_valid();
 extern void test_parameter_block_layout();
 extern void test_relocation_no_delta();
+extern void test_read_binary_file_empty_path();
+extern void test_inject_reflective_stub_links();
+extern void test_inject_intotarget_reflective_path_invoked();
 #endif
 
 // Tier 2 Scanner Tests
@@ -207,6 +210,9 @@ int main(int argc, char* argv[]) {
     test_shellcode_bytes_valid();
     test_parameter_block_layout();
     test_relocation_no_delta();
+    test_read_binary_file_empty_path();
+    test_inject_reflective_stub_links();
+    test_inject_intotarget_reflective_path_invoked();
 #endif
 
     // Tier 2 Scanner Tests

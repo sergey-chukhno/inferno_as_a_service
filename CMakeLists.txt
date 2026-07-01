@@ -228,6 +228,8 @@ if(WIN32)
         client/src/entry_dll.cpp
         client/src/ReflectiveLoader.cpp
         tests/reflective_loader_test.cpp
+        tests/windows_dll_test.cpp
+        tests/wire_reflective_test.cpp
     )
 else()
     target_sources(inferno_tests PRIVATE

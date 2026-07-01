@@ -60,6 +60,12 @@ extern void test_injected_persistence_macos();
 #ifdef _WIN32
 extern void test_reinject_config_roundtrip();
 extern void test_persistence_windows_registry_key();
+extern void test_pe_header_validation();
+extern void test_pe_header_invalid_signature();
+extern void test_pe_header_empty_buffer();
+extern void test_shellcode_bytes_valid();
+extern void test_parameter_block_layout();
+extern void test_relocation_no_delta();
 #endif
 
 // Tier 2 Scanner Tests
@@ -195,6 +201,12 @@ int main(int argc, char* argv[]) {
 #ifdef _WIN32
     test_reinject_config_roundtrip();
     test_persistence_windows_registry_key();
+    test_pe_header_validation();
+    test_pe_header_invalid_signature();
+    test_pe_header_empty_buffer();
+    test_shellcode_bytes_valid();
+    test_parameter_block_layout();
+    test_relocation_no_delta();
 #endif
 
     // Tier 2 Scanner Tests

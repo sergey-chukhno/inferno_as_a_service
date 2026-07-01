@@ -718,8 +718,7 @@ All three workstreams implemented across two PRs:
 | 5 | `WaitForSingleObject` + `VirtualFreeEx` cleanup pattern | Low | ✅ Eliminated in execution-only path (no cleanup needed) |
 
 ### Next Steps
-- **Phase 4B.5 (continued)**: Reflective DLL loader, API call stack spoofing (deferred).
-- **Phase 4C**: Windows + macOS self-delete after injection.
+- **🔜 4B.5-#4 — Reflective DLL loader**: Next priority. Eliminates DLL-on-disk artifact — the last remaining critical detection surface on Windows. Prerequisite for fileless media capture.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).
 - **Phase 5**: Transport & Protocol Evasion — Malleable C2 framing, covert transports,

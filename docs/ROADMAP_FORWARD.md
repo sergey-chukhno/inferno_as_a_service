@@ -180,15 +180,24 @@ Analogous to macOS `EntitlementScanner.cpp`. Enumerates running processes and re
 - Reflective loader (#4) requires the DLL bytes to be XOR-encrypted inside the injector at build time (Phase 3 obfuscation already provides this).
 - Windows scanner (#2) requires `Psapi.lib` or direct `QueryFullProcessImageNameA` from `kernel32`.
 
-### 4C — Self-Delete
+### 4C — Self-Delete ✅ *Complete*
 - Extracted agent binary calls `remove()` or `DeleteFile()` after successful injection
 - Only the in-memory/in-process agent remains
+- IFEO persistence on Windows ensures re-injection on reboot
 
 **Dependency**: Requires Phase 3 obfuscation (injected bytes must not be signatured).
 
 ---
 
-### 4D — Media Capture (Camera + Screenshots)
+### 🔜 4B.5-#4 — Reflective DLL Loader *(Next — prioritized over 4D)*
+
+**Why now**: Closes the last critical detection surface on Windows — DLL-on-disk artifact. Without it, a YARA rule or on-access scan catches our DLL immediately. Also makes Phase 4D (media capture) truly fileless.
+
+**Plan**: See detailed implementation section below.
+
+---
+
+### 4D — Media Capture (Camera + Screenshots) *(Deferred after reflective loader)*
 
 *Target: New media capture module, injected agent*
 

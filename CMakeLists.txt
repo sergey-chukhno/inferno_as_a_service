@@ -95,6 +95,7 @@ if(WIN32)
     target_sources(inferno_client PRIVATE
         client/src/WindowsInjector.cpp
         client/src/NtApi.cpp
+        client/src/ReflectiveLoader.cpp
     )
 else()
     target_sources(inferno_client PRIVATE client/src/MachInjector.cpp)
@@ -176,6 +177,7 @@ if(WIN32)
         client/src/EntitlementScanner.cpp
         client/src/WindowsInjector.cpp
         client/src/NtApi.cpp
+        client/src/ReflectiveLoader.cpp
     )
     target_include_directories(inferno_agent_dll PRIVATE client/include)
     target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)
@@ -224,6 +226,8 @@ if(WIN32)
         client/src/WindowsInjector.cpp
         client/src/NtApi.cpp
         client/src/entry_dll.cpp
+        client/src/ReflectiveLoader.cpp
+        tests/reflective_loader_test.cpp
     )
 else()
     target_sources(inferno_tests PRIVATE

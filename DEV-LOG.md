@@ -884,8 +884,8 @@ the DLL always fell back to `127.0.0.1:4242` regardless of what the injector pas
   1. Allocates env strings in target memory via `NtAllocateVirtualMemory` (unchanged)
   2. Calls `NtQueryInformationProcess` to get the PEB base address
   3. Reads `PEB.ProcessParameters` via `ReadProcessMemory`
-  4. Reads `RTL_USER_PROCESS_PARAMETERS.Environment` via `ReadProcessMemory`
-  5. Patches the Environment pointer to point at our allocated block via `WriteProcessMemory`
+  4. Patches the Environment field inside ProcessParameters (+0x80) to point
+     at our allocated block via `WriteProcessMemory`
   6. On any failure, logs and returns `true` (DLL uses fallback defaults) — no regression
   - x86 fallback: skipped with a log message (x64-only, matching the reflective loader's architecture)
   - `setTargetEnv` moved outside the `INFERNO_TESTING` guard so unit tests can call it directly

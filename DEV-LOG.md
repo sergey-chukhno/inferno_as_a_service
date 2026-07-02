@@ -796,7 +796,6 @@ All three workstreams implemented across two PRs:
 ```
 
 ### Next Steps
-- **#3 — Set env vars in target PEB**: So injected agent connects to correct C2.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).
 - **Phase 5**: Transport & Protocol Evasion — Malleable C2 framing, covert transports,
@@ -860,3 +859,56 @@ directly to `injectReflective()` — no file I/O at all.
 - **Test guards**: The test file is guarded by both `_WIN32` and `INFERNO_HAS_EMBEDDED_DLL` —
   skipped on non-Windows or when Python3 is unavailable. No test infrastructure change needed
   for other platforms.
+
+---
+
+## Follow-up #3 — Set Env Vars in Target PEB ✅
+
+**Objective**: Make `INFERNO_SERVER_IP` and `INFERNO_SERVER_PORT` visible to the reflectively-loaded
+DLL's `getenv()` by patching the target process's PEB environment block pointer. Previously,
+`setTargetEnv()` allocated the env strings in target memory but never linked them into the PEB —
+the DLL always fell back to `127.0.0.1:4242` regardless of what the injector passed.
+
+### Modified files
+
+- **`client/include/NtApi.hpp`** — Added self-defined structs for PEB walking (`MY_PEB`,
+  `MY_RTL_USER_PROCESS_PARAMETERS`, `MY_PROCESS_BASIC_INFORMATION`) with x64 field offsets
+  and `static_assert` layout verification. Added `pNtQueryInformationProcess` function pointer
+  type and `NtQueryInformationProcess` member to the `NtApi` struct.
+
+- **`client/src/NtApi.cpp`** — Resolved `NtQueryInformationProcess` from ntdll alongside
+  existing NT API functions.
+
+- **`client/src/ReflectiveLoader.cpp`** — Replaced the `setTargetEnv()` no-op stub with real
+  PEB patching:
+  1. Allocates env strings in target memory via `NtAllocateVirtualMemory` (unchanged)
+  2. Calls `NtQueryInformationProcess` to get the PEB base address
+  3. Reads `PEB.ProcessParameters` via `ReadProcessMemory`
+  4. Reads `RTL_USER_PROCESS_PARAMETERS.Environment` via `ReadProcessMemory`
+  5. Patches the Environment pointer to point at our allocated block via `WriteProcessMemory`
+  6. On any failure, logs and returns `true` (DLL uses fallback defaults) — no regression
+  - x86 fallback: skipped with a log message (x64-only, matching the reflective loader's architecture)
+  - `setTargetEnv` moved outside the `INFERNO_TESTING` guard so unit tests can call it directly
+
+### New files
+
+- **`tests/peb_env_test.cpp`** — Two tests (Windows x64 only):
+  - `test_peb_env_vars_visible` — calls `setTargetEnv(GetCurrentProcess(), "1.2.3.4", 5678)`,
+    then verifies `GetEnvironmentVariable` returns the injected values. Restores originals.
+  - `test_peb_env_vars_fallback_on_failure` — verifies the function returns `true` (best-effort)
+    even when parts of the pipeline fail.
+
+### Architecture Decisions
+
+- **Struct completeness**: Defined full `MY_PEB` and `MY_RTL_USER_PROCESS_PARAMETERS` structs
+  with correct x64 offsets rather than hardcoded magic numbers. `static_assert` guards catch
+  layout regressions.
+- **No RtlFreeHeap on old environment**: The old environment block pointer is read but not freed.
+  A single `PAGE_READWRITE` allocation (~100 bytes) per injection is negligible and cleaned up
+  on process exit. Calling `RtlFreeHeap` would require a remote thread, increasing detection
+  surface.
+- **No RtlCreateEnvironment/RtlSetEnvironmentVariable**: The PEB walk approach is simpler and
+  avoids a secondary remote thread. These can be added in the future if needed.
+- **x64 only**: The struct layouts are x64-specific. x86 support deferred — would require
+  different struct layouts (32-bit pointers, different offsets) and is incompatible with the
+  existing x64-only shellcode.

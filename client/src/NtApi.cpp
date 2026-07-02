@@ -25,10 +25,13 @@ NtApi& NtApi::resolve() {
             ::GetProcAddress(ntdll, "NtClose"));
         api.NtFreeVirtualMemory = reinterpret_cast<pNtFreeVirtualMemory>(
             ::GetProcAddress(ntdll, "NtFreeVirtualMemory"));
+        api.NtQueryInformationProcess = reinterpret_cast<pNtQueryInformationProcess>(
+            ::GetProcAddress(ntdll, "NtQueryInformationProcess"));
 
         if (!api.NtOpenProcess || !api.NtAllocateVirtualMemory ||
             !api.NtWriteVirtualMemory || !api.NtCreateThreadEx ||
-            !api.NtClose || !api.NtFreeVirtualMemory) {
+            !api.NtClose || !api.NtFreeVirtualMemory ||
+            !api.NtQueryInformationProcess) {
             std::fprintf(stderr, "[NtApi] Failed to resolve one or more NT API functions\n");
         }
         return api;

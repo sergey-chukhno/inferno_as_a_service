@@ -12,9 +12,6 @@ bool injectReflective(HANDLE, const std::vector<uint8_t>&,
                        const std::string&, uint16_t) {
     return true;
 }
-bool setTargetEnv(HANDLE, const std::string&, uint16_t) {
-    return true;
-}
 #endif
 
 // ── x64 shellcode stub ──────────────────────────────────────────
@@ -248,8 +245,6 @@ bool applyRelocations(HANDLE hProcess, void* base,
     return true;
 }
 
-#if !defined(INFERNO_TESTING)
-
 // ── Target env var injection ─────────────────────────────────────
 // Writes INFERNO_SERVER_IP and INFERNO_SERVER_PORT strings into the
 // target process's environment block so the DLL's DllMain can read them.
@@ -288,26 +283,68 @@ bool setTargetEnv(HANDLE hProcess,
         return false;
     }
 
-    // Find the PEB and update ProcessParameters->Environment
-    // This is architecture-specific — for x64:
-    // PEB at offset 0x10 from TEB, ProcessParameters at PEB+0x20
-    // Environment at ProcessParameters+0x80
-    // We read the PEB via NtQueryInformationProcess (ProcessBasicInformation)
-    // or directly using the known TEB address from the thread's stack.
+    // Patch PEB so GetEnvironmentVariable finds our variables
+    // Uses NtQueryInformationProcess to get PebBaseAddress, then walks
+    // PEB → ProcessParameters → Environment pointer chain.
+    // x64-specific: PEB+0x20 → ProcessParameters; +0x80 → Environment.
+#ifdef _WIN64
+    MY_PROCESS_BASIC_INFORMATION pbi;
+    ULONG retLen = 0;
+    status = nt.NtQueryInformationProcess(
+        hProcess, 0, &pbi, sizeof(pbi), &retLen);
+    if (!NT_SUCCESS(status) || !pbi.PebBaseAddress) {
+        std::fprintf(stderr, "[Reflective] NtQueryInformationProcess "
+                             "failed (0x%08lx) — env vars not set\n", status);
+        return true; // DLL uses fallback defaults
+    }
 
-    // Simplified approach: use ZwQueryInformationProcess to get PEB address
-    // then read/write the Environment pointer via ReadProcessMemory/WriteProcessMemory.
-    // For the initial implementation, skip PEB update — the env strings
-    // are allocated in target memory but not linked into the PEB.
-    // The DLL's DllMain uses GetEnvironmentVariable which reads from PEB,
-    // so this won't work without PEB patching.
-    //
-    // FUTURE: Use RtlCreateEnvironment / RtlSetEnvironmentVariable remotely.
-    // For now, return true (DLL falls back to 127.0.0.1:4242).
+    MY_PEB peb;
+    SIZE_T br = 0;
+    if (!::ReadProcessMemory(hProcess, pbi.PebBaseAddress,
+                              &peb, sizeof(peb), &br) ||
+        br != sizeof(peb) || !peb.ProcessParameters) {
+        std::fprintf(stderr, "[Reflective] ReadProcessMemory PEB failed"
+                             " — env vars not set\n");
+        return true;
+    }
 
+    MY_RTL_USER_PROCESS_PARAMETERS params;
+    if (!::ReadProcessMemory(hProcess, peb.ProcessParameters,
+                              &params, sizeof(params), &br) ||
+        br != sizeof(params)) {
+        std::fprintf(stderr, "[Reflective] ReadProcessMemory "
+                             "ProcessParameters failed — env vars not set\n");
+        return true;
+    }
+
+    // Save old Environment pointer (not freed — negligible leak,
+    // process cleans up on exit)
+    (void)params.Environment;
+
+    // Patch Environment pointer to our allocated block
+    if (!::WriteProcessMemory(hProcess,
+            static_cast<BYTE*>(peb.ProcessParameters) +
+                offsetof(MY_RTL_USER_PROCESS_PARAMETERS, Environment),
+            &env_mem, sizeof(PVOID), &br) ||
+        br != sizeof(PVOID)) {
+        std::fprintf(stderr, "[Reflective] WriteProcessMemory "
+                             "Environment failed — env vars not set\n");
+        return true;
+    }
+
+    std::fprintf(stdout, "[Reflective] Environment patched at "
+                         "ProcessParameters+0x%zx\n",
+                 offsetof(MY_RTL_USER_PROCESS_PARAMETERS, Environment));
+#else
+    // x86 PEB layout differs — skip patching
     (void)env_mem;
-    return true; // Best-effort — DLL has fallback defaults
+    std::fprintf(stderr, "[Reflective] x86 PEB layout not supported — "
+                         "env vars not set\n");
+#endif
+    return true;
 }
+
+#if !defined(INFERNO_TESTING)
 
 // ── Main reflective injection entry point ──────────────────────
 

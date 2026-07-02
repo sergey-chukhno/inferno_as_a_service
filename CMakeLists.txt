@@ -189,6 +189,34 @@ if(WIN32)
 
     add_executable(inferno_loader client/src/windows_loader.cpp)
     target_compile_definitions(inferno_loader PRIVATE _CRT_SECURE_NO_WARNINGS)
+
+    # ── Embed XOR-encrypted DLL into the agent binary ─────────────────────
+    find_package(Python3 QUIET)
+    if(Python3_FOUND)
+        set(DLL_EMBEDDED_HEADER "${CMAKE_CURRENT_BINARY_DIR}/inferno_agent_dll_embedded.h")
+        set(INFERNO_DLL_XOR_KEY "2B7E151628AED2A6")
+
+        add_custom_command(
+            OUTPUT  ${DLL_EMBEDDED_HEADER}
+            COMMAND ${Python3_EXECUTABLE}
+                    "${CMAKE_CURRENT_SOURCE_DIR}/client/dll2header.py"
+                    "--key" "${INFERNO_DLL_XOR_KEY}"
+                    "$<TARGET_FILE:inferno_agent_dll>"
+                    "${DLL_EMBEDDED_HEADER}"
+            DEPENDS inferno_agent_dll
+                    "${CMAKE_CURRENT_SOURCE_DIR}/client/dll2header.py"
+            COMMENT "Generating inferno_agent_dll_embedded.h (XOR-encrypted)"
+            VERBATIM
+        )
+
+        add_custom_target(inferno_agent_dll_embedded_target
+            DEPENDS ${DLL_EMBEDDED_HEADER})
+        add_dependencies(inferno_client inferno_agent_dll_embedded_target)
+        target_include_directories(inferno_client PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+        target_compile_definitions(inferno_client PRIVATE INFERNO_HAS_EMBEDDED_DLL)
+    else()
+        message(WARNING "Python3 not found — inferno_client will read DLL from disk")
+    endif()
 endif()
 
 # ==========================================
@@ -230,6 +258,7 @@ if(WIN32)
         tests/reflective_loader_test.cpp
         tests/windows_dll_test.cpp
         tests/wire_reflective_test.cpp
+        tests/embedded_dll_test.cpp
     )
 else()
     target_sources(inferno_tests PRIVATE
@@ -261,6 +290,11 @@ if(WIN32)
         tests/windows_dll_test.cpp
     )
     add_dependencies(inferno_tests inferno_agent_dll inferno_loader)
+    if(Python3_FOUND)
+        target_compile_definitions(inferno_tests PRIVATE INFERNO_HAS_EMBEDDED_DLL)
+        target_include_directories(inferno_tests PRIVATE ${CMAKE_CURRENT_BINARY_DIR})
+        add_dependencies(inferno_tests inferno_agent_dll_embedded_target)
+    endif()
 endif()
 
 add_test(NAME CoreNetworkingTests COMMAND inferno_tests)

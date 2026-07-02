@@ -761,11 +761,102 @@ All three workstreams implemented across two PRs:
 | `test_parameter_block_layout` | `ReflectiveLoaderParams` is exactly 16 bytes |
 | `test_relocation_no_delta` | `applyRelocations` with delta=0 succeeds (no-op) |
 
+---
+
+## Follow-up #1 — Wire Reflective Loader into Injection Chain ✅
+
+**Objective**: Make the reflective DLL loader the primary injection path, with automatic fallback to execution-only → NT API methods.
+
+**New files**: `tests/wire_reflective_test.cpp`
+
+**Modified files**: `WindowsInjector.cpp`, `ReflectiveLoader.cpp`, `tests/main_test.cpp`, `CMakeLists.txt`
+
+### Technical milestones
+
+- **`readBinaryFile()` helper**: Loads DLL from disk into `std::vector<uint8_t>` for the reflective mapper.
+- **`injectIntoTarget(TargetApp& ...)`** — primary path used by `Agent::handleInjection`:
+  - Opens target process → reads DLL bytes → calls `injectReflective()`
+  - On failure: falls back to execution-only → NT API injection
+- **`injectIntoTarget(DWORD pid, ...)`** — used by IFEO re-injector:
+  - Same reflective-first strategy
+  - Falls back to `injectIntoProcess()` (NT API LoadLibraryA)
+- **`INFERNO_TESTING` stubs**: Only `injectReflective()` and `setTargetEnv()` are stubbed — PE helpers keep their real implementations for unit testing.
+
+### Injection chain (final)
+
+```
+1. injectReflective()              ← fileless, no PEB entry
+   Read DLL → map sections → resolve imports → relocations → DllMain
+
+2. injectExecutionOnly()           ← no VirtualAllocEx
+   Use ntdll "0" string as LoadLibraryA argument
+
+3. injectViaRemoteThread()         ← full NT API
+   NtAllocateVirtualMemory → NtWriteVirtualMemory → NtCreateThreadEx
+```
+
 ### Next Steps
-- **🔜 Follow-up #1 — Wire into injectIntoTarget()**: Try reflective first, fall back to NT API if it fails.
-- **🔜 Follow-up #2 — Embed DLL bytes in agent binary**: For truly fileless injector (no DLL on disk at all).
-- **🔜 Follow-up #3 — Set env vars in target PEB**: So injected agent connects to correct C2.
+- **#3 — Set env vars in target PEB**: So injected agent connects to correct C2.
 - **Phase 4D**: Media Capture — Camera snapshot + screenshot exfiltration
   (Windows-first, macOS Tier-2-dependent).
 - **Phase 5**: Transport & Protocol Evasion — Malleable C2 framing, covert transports,
   mTLS 1.3.
+
+---
+
+## Follow-up #2 — Embed DLL Bytes in Agent Binary ✅
+
+**Objective**: Make the reflective loader truly fileless by embedding an XOR-encrypted copy of
+`inferno_agent.dll` inside `inferno_client.exe`. The agent decrypts it in memory and passes it
+directly to `injectReflective()` — no file I/O at all.
+
+### New files
+
+- **`client/dll2header.py`** — Build-time script that XOR-encrypts the compiled DLL and emits
+  `inferno_agent_dll_embedded.h` with `ENCRYPTED_DLL[]`, `XOR_KEY[]`, and `ENCRYPTED_DLL_SIZE`.
+  Key (`2B7E151628AED2A6`) matches the wrapper's binary encryption key.
+- **`client/include/EmbeddedDll.hpp`** — Includes the generated header and provides
+  `decryptEmbeddedDll()` (returns `std::vector<uint8_t>` in memory) and
+  `extractEmbeddedDllTo(path)` (last-resort disk write for LoadLibraryA fallback).
+- **`tests/embedded_dll_test.cpp`** — Two tests:
+  - `test_decrypted_dll_is_valid_pe` — decrypts, validates MZ/PE/NT signatures, machine type,
+    and non-zero entry point.
+  - `test_decrypted_dll_roundtrip_to_disk` — extracts via `extractEmbeddedDllTo`, reads back,
+    validates DOS magic.
+
+### Modified files
+
+- **`CMakeLists.txt`** — On Windows, adds a `add_custom_command` (Python3) that runs
+  `dll2header.py` after `inferno_agent_dll` builds. Wires the generated header as a dependency
+  and include path for both `inferno_client` and `inferno_tests`. Defines
+  `INFERNO_HAS_EMBEDDED_DLL` for agent/tests when Python3 is available; falls back to disk
+  read with a CMake warning.
+- **`client/src/WindowsInjector.cpp`** — Two-tier injection decision:
+  - **EXE build** (`INFERNO_HAS_EMBEDDED_DLL` + no `INFERNO_DLL`): Tier 1 uses
+    `decryptEmbeddedDll()` directly — no disk I/O. If reflective fails,
+    `extractEmbeddedDllTo()` writes the DLL to `dll_path` just before the LoadLibraryA
+    fallback (last resort, common path stays fileless).
+  - **DLL build** (`INFERNO_DLL`) or **EXE without Python3**: Falls back to original
+    `readBinaryFile(dll_path)` disk read.
+
+### Detection Surface Update
+
+| # | Vector | Severity | Status |
+|---|--------|----------|--------|
+| 1 | `CreateRemoteThread` + `LoadLibraryA` | High | ✅ Eliminated |
+| 2 | `OpenProcess(PROCESS_ALL_ACCESS)` | High | ✅ Already mitigated |
+| 3 | DLL file on disk — AV scan + forensic artifact | High | ✅ **Eliminated** — reflective path is fully fileless; last-resort disk write only on reflective failure |
+| 4 | DLL in PEB module list | Medium | ✅ Eliminated |
+| 5 | Shellcode / API sequence signatures | Low | ✅ Mitigated |
+
+### Architecture Decisions
+
+- **Dual path**: The EXE build decrypts from embedded bytes; the DLL build (which cannot embed
+  itself) reads from disk. This avoids a circular dependency while keeping the primary injector
+  fileless.
+- **Last-resort extraction**: Only writes to disk if reflective injection fails *and* the
+  LoadLibraryA fallback is about to run. The common path (reflective succeeds) never touches
+  disk.
+- **Test guards**: The test file is guarded by both `_WIN32` and `INFERNO_HAS_EMBEDDED_DLL` —
+  skipped on non-Windows or when Python3 is unavailable. No test infrastructure change needed
+  for other platforms.

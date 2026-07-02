@@ -70,8 +70,10 @@ struct MY_RTL_USER_PROCESS_PARAMETERS {
 };
 
 static_assert(sizeof(MY_PEB) == 0x28, "MY_PEB x64 layout mismatch");
-static_assert(sizeof(MY_RTL_USER_PROCESS_PARAMETERS) >= 0x88,
-              "MY_RTL_USER_PROCESS_PARAMETERS too small");
+static_assert(sizeof(MY_RTL_USER_PROCESS_PARAMETERS) == 0x88,
+              "MY_RTL_USER_PROCESS_PARAMETERS x64 layout mismatch");
+static_assert(offsetof(MY_RTL_USER_PROCESS_PARAMETERS, Environment) == 0x80,
+              "MY_RTL_USER_PROCESS_PARAMETERS.Environment must be at +0x80 on x64");
 
 struct MY_PROCESS_BASIC_INFORMATION {
     NTSTATUS ExitStatus;
@@ -81,6 +83,8 @@ struct MY_PROCESS_BASIC_INFORMATION {
     ULONG_PTR UniqueProcessId;
     ULONG_PTR InheritedFromUniqueProcessId;
 };
+
+constexpr ULONG kProcessBasicInformation = 0;
 // ─────────────────────────────────────────────────────────────────
 
 // ── NT API function pointer types ──────────────────────────────

@@ -291,11 +291,12 @@ bool setTargetEnv(HANDLE hProcess,
     MY_PROCESS_BASIC_INFORMATION pbi;
     ULONG retLen = 0;
     status = nt.NtQueryInformationProcess(
-        hProcess, 0, &pbi, sizeof(pbi), &retLen);
-    if (!NT_SUCCESS(status) || !pbi.PebBaseAddress) {
+        hProcess, kProcessBasicInformation, &pbi, sizeof(pbi), &retLen);
+    if (!NT_SUCCESS(status) || retLen < sizeof(pbi) || !pbi.PebBaseAddress) {
         std::fprintf(stderr, "[Reflective] NtQueryInformationProcess "
-                             "failed (0x%08lx) — env vars not set\n", status);
-        return true; // DLL uses fallback defaults
+                             "failed (0x%08lx) — env vars not set\n",
+                     static_cast<unsigned long>(status));
+        return true;
     }
 
     MY_PEB peb;
@@ -308,24 +309,13 @@ bool setTargetEnv(HANDLE hProcess,
         return true;
     }
 
-    MY_RTL_USER_PROCESS_PARAMETERS params;
-    if (!::ReadProcessMemory(hProcess, peb.ProcessParameters,
-                              &params, sizeof(params), &br) ||
-        br != sizeof(params)) {
-        std::fprintf(stderr, "[Reflective] ReadProcessMemory "
-                             "ProcessParameters failed — env vars not set\n");
-        return true;
-    }
-
-    // Save old Environment pointer (not freed — negligible leak,
-    // process cleans up on exit)
-    (void)params.Environment;
-
-    // Patch Environment pointer to our allocated block
-    if (!::WriteProcessMemory(hProcess,
-            static_cast<BYTE*>(peb.ProcessParameters) +
-                offsetof(MY_RTL_USER_PROCESS_PARAMETERS, Environment),
-            &env_mem, sizeof(PVOID), &br) ||
+    // Patch Environment pointer inside ProcessParameters to point at our
+    // allocated block. The old environment is intentionally leaked
+    // (~100 bytes, cleaned up on process exit).
+    void* env_field = static_cast<BYTE*>(peb.ProcessParameters) +
+        offsetof(MY_RTL_USER_PROCESS_PARAMETERS, Environment);
+    if (!::WriteProcessMemory(hProcess, env_field,
+                               &env_mem, sizeof(PVOID), &br) ||
         br != sizeof(PVOID)) {
         std::fprintf(stderr, "[Reflective] WriteProcessMemory "
                              "Environment failed — env vars not set\n");

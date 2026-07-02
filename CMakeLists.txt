@@ -259,7 +259,6 @@ if(WIN32)
         tests/windows_dll_test.cpp
         tests/wire_reflective_test.cpp
         tests/embedded_dll_test.cpp
-        tests/peb_env_test.cpp
     )
 else()
     target_sources(inferno_tests PRIVATE

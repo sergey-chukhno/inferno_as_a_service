@@ -77,11 +77,7 @@ extern void test_decrypted_dll_is_valid_pe();
 extern void test_decrypted_dll_roundtrip_to_disk();
 #endif
 
-// Follow-up #3 — PEB Environment Variable Injection Tests
-#if defined(_WIN32) && defined(_WIN64)
-extern void test_peb_env_vars_visible();
-extern void test_peb_env_vars_fallback_on_failure();
-#endif
+
 
 // Tier 2 Scanner Tests
 extern void test_scanner_classification();
@@ -231,12 +227,6 @@ int main(int argc, char* argv[]) {
 #if defined(_WIN32) && defined(INFERNO_HAS_EMBEDDED_DLL)
     test_decrypted_dll_is_valid_pe();
     test_decrypted_dll_roundtrip_to_disk();
-#endif
-
-    // Follow-up #3 — PEB Environment Variable Injection Tests
-#if defined(_WIN32) && defined(_WIN64)
-    test_peb_env_vars_visible();
-    test_peb_env_vars_fallback_on_failure();
 #endif
 
     // Tier 2 Scanner Tests

@@ -77,6 +77,8 @@ extern void test_decrypted_dll_is_valid_pe();
 extern void test_decrypted_dll_roundtrip_to_disk();
 #endif
 
+
+
 // Tier 2 Scanner Tests
 extern void test_scanner_classification();
 extern void test_scanner_empty_report();

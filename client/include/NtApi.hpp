@@ -76,7 +76,7 @@ static_assert(offsetof(MY_RTL_USER_PROCESS_PARAMETERS, Environment) == 0x80,
               "MY_RTL_USER_PROCESS_PARAMETERS.Environment must be at +0x80 on x64");
 
 struct MY_PROCESS_BASIC_INFORMATION {
-    NTSTATUS ExitStatus;
+    LONG     ExitStatus;  // NTSTATUS — use LONG to avoid winternl.h dependency
     PVOID    PebBaseAddress;
     ULONG_PTR AffinityMask;
     LONG     BasePriority;

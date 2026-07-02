@@ -71,6 +71,12 @@ extern void test_inject_reflective_stub_links();
 extern void test_inject_intotarget_reflective_path_invoked();
 #endif
 
+// Follow-up #2 — Embedded DLL Decryption Tests
+#if defined(_WIN32) && defined(INFERNO_HAS_EMBEDDED_DLL)
+extern void test_decrypted_dll_is_valid_pe();
+extern void test_decrypted_dll_roundtrip_to_disk();
+#endif
+
 // Tier 2 Scanner Tests
 extern void test_scanner_classification();
 extern void test_scanner_empty_report();
@@ -213,6 +219,12 @@ int main(int argc, char* argv[]) {
     test_read_binary_file_empty_path();
     test_inject_reflective_stub_links();
     test_inject_intotarget_reflective_path_invoked();
+#endif
+
+    // Follow-up #2 — Embedded DLL Decryption Tests
+#if defined(_WIN32) && defined(INFERNO_HAS_EMBEDDED_DLL)
+    test_decrypted_dll_is_valid_pe();
+    test_decrypted_dll_roundtrip_to_disk();
 #endif
 
     // Tier 2 Scanner Tests

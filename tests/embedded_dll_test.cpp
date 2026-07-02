@@ -136,15 +136,3 @@ void test_decrypted_dll_roundtrip_to_disk() {
 
 #endif // INFERNO_HAS_EMBEDDED_DLL
 #endif // _WIN32
-
-int main() {
-#if defined(_WIN32) && defined(INFERNO_HAS_EMBEDDED_DLL)
-    test_decrypted_dll_is_valid_pe();
-    test_decrypted_dll_roundtrip_to_disk();
-    std::fprintf(stdout, "[PASS] All embedded DLL tests passed\n");
-#else
-    std::fprintf(stdout, "[SKIP] Embedded DLL tests are Windows-only "
-                         "(requires Python3 at build time)\n");
-#endif
-    return 0;
-}

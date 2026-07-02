@@ -5,6 +5,10 @@
 
 #ifdef _WIN32
 #ifdef INFERNO_HAS_EMBEDDED_DLL
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
 
 #include "../client/include/EmbeddedDll.hpp"
 
@@ -33,12 +37,14 @@ void test_decrypted_dll_is_valid_pe() {
         reinterpret_cast<const IMAGE_DOS_HEADER*>(dll.data());
     if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
         std::fprintf(stderr, "[FAIL] test_decrypted_dll_is_valid_pe: "
-                             "bad DOS magic 0x%04x\n", dos->e_magic);
+                             "bad DOS magic 0x%04x\n",
+                     dos->e_magic);
         std::exit(1);
     }
 
     // NT headers must be within bounds and have valid signature
-    if (dos->e_lfanew + sizeof(IMAGE_NT_HEADERS) > dll.size()) {
+    if (dos->e_lfanew + static_cast<LONG>(sizeof(IMAGE_NT_HEADERS)) >
+        static_cast<LONG>(dll.size())) {
         std::fprintf(stderr, "[FAIL] test_decrypted_dll_is_valid_pe: "
                              "NT headers out of bounds (e_lfanew=%ld)\n",
                      static_cast<long>(dos->e_lfanew));
@@ -72,7 +78,8 @@ void test_decrypted_dll_is_valid_pe() {
 
     std::fprintf(stdout, "[PASS] test_decrypted_dll_is_valid_pe "
                          "(%zu bytes, entry RVA 0x%x)\n",
-                 dll.size(), nt->OptionalHeader.AddressOfEntryPoint);
+                 dll.size(),
+                 static_cast<unsigned>(nt->OptionalHeader.AddressOfEntryPoint));
 }
 
 void test_decrypted_dll_roundtrip_to_disk() {
@@ -96,7 +103,7 @@ void test_decrypted_dll_roundtrip_to_disk() {
     long file_size = std::ftell(f);
     std::fseek(f, 0, SEEK_SET);
 
-    if (file_size < static_cast<long>(sizeof(IMAGE_DOS_HEADER))) {
+    if (file_size < static_cast<LONG>(sizeof(IMAGE_DOS_HEADER))) {
         std::fprintf(stderr, "[FAIL] test_decrypted_dll_roundtrip_to_disk: "
                              "written file too small (%ld bytes)\n", file_size);
         std::fclose(f);

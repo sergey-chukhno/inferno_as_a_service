@@ -28,6 +28,9 @@ namespace inferno {
 
         INJECT = 0x010A,      // Server -> Agent: inject dylib into target app
         INJECT_RES = 0x010B,  // Agent -> Server: injection result
+
+        SCREENSHOT_REQ = 0x010C, // Server -> Agent: request screenshot
+        SCREENSHOT_RES = 0x010D, // Agent -> Server: screenshot JPEG data
 };
 
 } // namespace inferno

@@ -912,3 +912,75 @@ the DLL always fell back to `127.0.0.1:4242` regardless of what the injector pas
 - **x64 only**: The struct layouts are x64-specific. x86 support deferred — would require
   different struct layouts (32-bit pointers, different offsets) and is incompatible with the
   existing x64-only shellcode.
+
+---
+
+## Phase 4D — Media Capture: Windows Screenshot (Week 1) ✅
+
+**Objective**: Enable on-demand desktop screenshot capture from the C2 dashboard. The capture runs
+inside the injected agent process (`inferno_agent.dll`), using `IDXGIOutputDuplication` (D3D GPU)
+with `BitBlt` fallback. JPEG compression via GDI+ (zero new dependencies). Transmitted over the
+existing encrypted TCP socket — no new connections, no disk writes.
+
+### New files
+
+- **`client/include/ScreenCapture.hpp`** — `CaptureResult` struct, `captureScreen()`, `encodeJpeg()` API.
+- **`client/src/ScreenCapture.cpp`** — Implementation:
+  - Primary: `IDXGIOutputDuplication` via D3D11 (GPU, multi-monitor)
+  - Fallback: `BitBlt` + `GetDIBits` (GDI, CPU, single-monitor)
+  - Downscale to 1280×720 default via nearest-neighbor
+  - JPEG encode via `Gdiplus::Bitmap::Save` (quality 85)
+  - Grayscale option for 30–50% size reduction
+  - `GetLastInputInfo()` gate: skip capture if user idle >5 min
+- **`server/include/ui/components/MediaPanel.hpp`** / **`server/src/ui/components/MediaPanel.cpp`** —
+  New dashboard tab with agent selector, "📷 Capture Screenshot" button, JPEG thumbnail preview,
+  and "Save to Loot" button.
+- **`tests/screencapture_test.cpp`** — Three tests:
+  - `test_encode_jpeg_rgb` — encodes 2×2 pattern, verifies `0xFFD8` SOI marker
+  - `test_encode_jpeg_grayscale_smaller` — verifies grayscale output is smaller than color
+  - `test_screenshot_packet_roundtrip` — SCREENSHOT_REQ/RES serialization round-trip
+
+### Modified files
+
+- **`common/include/Opcodes.hpp`** — Added `SCREENSHOT_REQ = 0x010C`, `SCREENSHOT_RES = 0x010D`.
+- **`client/include/Agent.hpp`** — Added `handleScreenshot()` declaration.
+- **`client/src/Agent.cpp`** — Routes `SCREENSHOT_REQ` → `capture::captureScreen()` → `SCREENSHOT_RES`.
+- **`server/include/network/server.hpp`** — Added `screenshotReceived` signal, `sendScreenshotCommand()`.
+- **`server/src/network/server.cpp`** — Parses SCREENSHOT_RES payload (status, dimensions, JPEG data),
+  emits `screenshotReceived` signal; implements `sendScreenshotCommand()`.
+- **`server/include/ui/MainWindow.hpp`** — Added `MediaPanel* m_mediaPanel` member.
+- **`server/src/ui/MainWindow.cpp`** — Creates MediaPanel as Tab 5, connects Capture button → server,
+  screenshot result → preview, agent list sync on connect/disconnect.
+- **`CMakeLists.txt`** — Added `ScreenCapture.cpp` to all Windows targets, `gdiplus` link dependency,
+  `MediaPanel.cpp` to server, `screencapture_test.cpp` to tests.
+- **`tests/main_test.cpp`** — Registered screencapture test calls.
+- **`docs/ROADMAP_FORWARD.md`** — Updated Phase 4D section with 4-sprint delivery plan, stealth
+  matrix, and platform-permission table.
+
+### Protocol
+
+| Opcode | Direction | Payload |
+|--------|-----------|---------|
+| `SCREENSHOT_REQ` (0x010C) | Server → Agent | `[subtype:1][w:4][h:4][flags:1]` |
+| `SCREENSHOT_RES` (0x010D) | Agent → Server | `[status:2][w:4][h:4][size:4][JPEG...]` |
+
+### Stealth considerations
+
+- **Diskless pipeline**: GPU → RAM → GDI+ JPEG → AES encrypt → send. No file I/O.
+- **EDR blending**: `IDXGIOutputDuplication` is the same API used by Teams/Zoom screen-share.
+  `BitBlt` fallback is used by every screenshot tool on Windows — no anomaly.
+- **Idle gate**: Capture skipped when `GetLastInputInfo()` shows >5 min idle. Reduces waste and
+  avoids capturing empty desktop screens.
+- **On-demand only**: No polling loop, no timer. Operator-initiated via button click.
+- **Existing encryption**: JPEG travels inside AES-256-GCM encrypted packets on the same persistent
+  TCP socket as all other agent traffic — no new connection fingerprint.
+
+### Architecture decisions
+
+- **GDI+ over libjpeg-turbo**: Zero new dependencies — `Gdiplus.dll` ships on every Windows version
+  since XP. Slightly slower encode (~50ms for 1080p) is acceptable for on-demand capture. Migration
+  to libjpeg-turbo deferred unless throughput becomes an issue.
+- **DXGI primary, BitBlt fallback**: DXGI is faster and supports multi-monitor, but requires D3D11
+  hardware. BitBlt works universally (Remote Desktop, VMs, headless). The fallback is seamless.
+- **New MediaPanel tab** rather than injecting into InjectionPanel: keeps the injection UI clean,
+  allows future camera and media gallery features in the same tab.

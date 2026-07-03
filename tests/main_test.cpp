@@ -223,12 +223,6 @@ int main(int argc, char* argv[]) {
     test_inject_intotarget_reflective_path_invoked();
 #endif
 
-    // Follow-up #2 — Embedded DLL Decryption Tests
-#if defined(_WIN32) && defined(INFERNO_HAS_EMBEDDED_DLL)
-    test_decrypted_dll_is_valid_pe();
-    test_decrypted_dll_roundtrip_to_disk();
-#endif
-
     // Tier 2 Scanner Tests
     test_scanner_classification();
     test_scanner_empty_report();

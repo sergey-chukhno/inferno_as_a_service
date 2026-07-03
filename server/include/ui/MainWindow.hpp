@@ -19,6 +19,7 @@ class KeylogPanel;
 class IntelligencePanel;
 class PropagationPanel;
 class InjectionPanel;
+class MediaPanel;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -70,6 +71,7 @@ private:
     IntelligencePanel*  m_intelligencePanel;
     PropagationPanel*   m_propagationPanel;
     InjectionPanel*     m_injectionPanel;
+    MediaPanel*         m_mediaPanel;
 
     // Mapping Buffer
     QMap<QString, QString> m_agentIpToUuid; // Maps IP to persistent UUID

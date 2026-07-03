@@ -43,10 +43,24 @@ void test_encode_jpeg_rgb() {
 }
 
 void test_encode_jpeg_grayscale_smaller() {
-    std::vector<uint8_t> pixels(16 * 16 * 4, 128); // solid gray
+    // Use a red/green checkerboard — in color, each tile has different RGB;
+    // in grayscale they collapse to similar values, reducing entropy.
+    std::vector<uint8_t> pixels(32 * 32 * 4, 0);
+    for (int y = 0; y < 32; ++y) {
+        for (int x = 0; x < 32; ++x) {
+            size_t off = (static_cast<size_t>(y) * 32 + x) * 4;
+            if ((x / 4 + y / 4) % 2 == 0) {
+                pixels[off] = 0; pixels[off+1] = 0;       // B=0, G=0
+                pixels[off+2] = 255; pixels[off+3] = 255; // R=255, A=255
+            } else {
+                pixels[off] = 0; pixels[off+1] = 255;     // B=0, G=255
+                pixels[off+2] = 0; pixels[off+3] = 255;   // R=0, A=255
+            }
+        }
+    }
 
-    auto color = inferno::capture::encodeJpeg(pixels.data(), 16, 16, 85, false);
-    auto gray  = inferno::capture::encodeJpeg(pixels.data(), 16, 16, 85, true);
+    auto color = inferno::capture::encodeJpeg(pixels.data(), 32, 32, 85, false);
+    auto gray  = inferno::capture::encodeJpeg(pixels.data(), 32, 32, 85, true);
 
     if (color.empty() || gray.empty()) {
         std::fprintf(stderr, "[FAIL] test_encode_jpeg_grayscale_smaller: "

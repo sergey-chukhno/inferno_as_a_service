@@ -295,12 +295,15 @@ CaptureResult captureScreen(uint32_t max_width, uint32_t max_height,
                              bool grayscale) {
     CaptureResult result;
 
-    // Skip capture if user >5 min idle (GetTickCount64 avoids wrap)
+    // Skip capture if user >5 min idle.
+    // Both lii.dwTime and GetTickCount() are DWORD (32-bit).
+    // Unsigned DWORD wrapping is well-defined — the subtraction
+    // yields the correct elapsed time even across a 49.7-day wrap.
     LASTINPUTINFO lii;
     lii.cbSize = sizeof(lii);
     if (::GetLastInputInfo(&lii)) {
-        ULONGLONG now = ::GetTickCount64();
-        if (now - static_cast<ULONGLONG>(lii.dwTime) > 300000) {
+        DWORD now = ::GetTickCount();
+        if (now - lii.dwTime > 300000) {
             result.error_msg = "user idle >5min, skipping capture";
             return result;
         }

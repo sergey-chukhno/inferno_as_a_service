@@ -66,9 +66,9 @@ void test_encode_jpeg_grayscale_smaller() {
 
 void test_screenshot_packet_roundtrip() {
     // Verify SCREENSHOT_REQ serializes correctly
-    Packet req(static_cast<uint16_t>(inferno::Opcode::SCREENSHOT_REQ), "");
+    inferno::Packet req(static_cast<uint16_t>(inferno::Opcode::SCREENSHOT_REQ), "");
     auto req_data = req.serialize();
-    auto parsed_req = Packet::deserialize(req_data);
+    auto parsed_req = inferno::Packet::deserialize(req_data);
     if (!parsed_req.has_value()) {
         std::fprintf(stderr, "[FAIL] test_screenshot_packet_roundtrip: "
                              "SCREENSHOT_REQ deserialize failed\n");
@@ -94,9 +94,9 @@ void test_screenshot_packet_roundtrip() {
     payload.push_back(0xDE); payload.push_back(0xAD); payload.push_back(0xBE); payload.push_back(0xEF);
 
     std::string payload_str(payload.begin(), payload.end());
-    Packet res(static_cast<uint16_t>(inferno::Opcode::SCREENSHOT_RES), payload_str);
+    inferno::Packet res(static_cast<uint16_t>(inferno::Opcode::SCREENSHOT_RES), payload_str);
     auto res_data = res.serialize();
-    auto parsed_res = Packet::deserialize(res_data);
+    auto parsed_res = inferno::Packet::deserialize(res_data);
     if (!parsed_res.has_value()) {
         std::fprintf(stderr, "[FAIL] test_screenshot_packet_roundtrip: "
                              "SCREENSHOT_RES deserialize failed\n");

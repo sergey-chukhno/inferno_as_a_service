@@ -5,6 +5,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <ole2.h>      // IStream for Gdiplus
 #include <gdiplus.h>
 #include <d3d11.h>
 #include <dxgi1_2.h>

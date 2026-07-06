@@ -19,4 +19,10 @@ struct CameraResult {
 // Returns CameraResult with JPEG bytes or an error message.
 CameraResult captureCamera(int width = 640, int height = 480);
 
+// Convert NV12 (YUV 4:2:0 planar) to BGRA 32bpp.
+// Exposed for unit testing.
+void nv12ToBgra(const uint8_t* y_plane, const uint8_t* uv_plane,
+                int width, int height, int y_pitch, int uv_pitch,
+                std::vector<uint8_t>& bgra);
+
 }} // namespace inferno::capture

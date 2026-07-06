@@ -42,9 +42,9 @@ static bool isInsideBrowser() {
 
 // ── NV12 → BGRA conversion (software) ─────────────────────────
 
-static void nv12ToBgra(const uint8_t* y_plane, const uint8_t* uv_plane,
-                        int width, int height, int y_pitch, int uv_pitch,
-                        std::vector<uint8_t>& bgra) {
+void nv12ToBgra(const uint8_t* y_plane, const uint8_t* uv_plane,
+                int width, int height, int y_pitch, int uv_pitch,
+                std::vector<uint8_t>& bgra) {
     bgra.resize(static_cast<size_t>(width) * height * 4);
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {

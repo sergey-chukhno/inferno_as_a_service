@@ -84,6 +84,8 @@ extern void test_encode_jpeg_grayscale_smaller();
 extern void test_screenshot_packet_roundtrip();
 extern void test_camera_packet_roundtrip();
 extern void test_camera_packet_subtype_screenshot();
+extern void test_nv12_to_bgra_gray();
+extern void test_nv12_to_bgra_red();
 #endif
 
 // Tier 2 Scanner Tests
@@ -243,6 +245,8 @@ int main(int argc, char* argv[]) {
     test_screenshot_packet_roundtrip();
     test_camera_packet_roundtrip();
     test_camera_packet_subtype_screenshot();
+    test_nv12_to_bgra_gray();
+    test_nv12_to_bgra_red();
 #endif
 
     // Tier 2 Scanner Tests

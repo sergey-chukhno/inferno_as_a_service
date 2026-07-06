@@ -107,6 +107,8 @@ CameraResult captureCamera(int width, int height) {
         return result;
     }
 
+    HRESULT hr = S_OK;
+
     // Enumerate video capture devices
     IMFAttributes* attributes = nullptr;
     hr = ::MFCreateAttributes(&attributes, 1);

@@ -116,7 +116,7 @@ endif()
 
 if(WIN32)
     target_compile_definitions(inferno_client PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32 gdiplus mfplat mfreadwrite mfuuid)
+    target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32 gdiplus mf mfplat mfreadwrite mfuuid)
     # Note: WIN32_EXECUTABLE is intentionally NOT set — the agent uses
     # FreeConsole() at runtime to hide the console window, keeping
     # standard main() as the entry point for cross-platform compatibility.
@@ -188,7 +188,7 @@ if(WIN32)
     target_include_directories(inferno_agent_dll PRIVATE client/include)
     target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)
     target_compile_definitions(inferno_agent_dll PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32 gdiplus mfplat mfreadwrite mfuuid)
+    target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32 gdiplus mf mfplat mfreadwrite mfuuid)
     set_target_properties(inferno_agent_dll PROPERTIES
         OUTPUT_NAME "inferno_agent"
     )
@@ -294,7 +294,7 @@ if(WIN32)
     target_compile_definitions(inferno_tests PRIVATE
         TEST_BINARY_DIR="$<TARGET_FILE_DIR:inferno_agent_dll>"
     )
-    target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32 gdiplus mfplat mfreadwrite mfuuid)
+    target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32 gdiplus mf mfplat mfreadwrite mfuuid)
     target_sources(inferno_tests PRIVATE
         tests/windows_dll_test.cpp
     )

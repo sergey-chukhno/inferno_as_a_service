@@ -23,10 +23,11 @@ void test_nv12_to_bgra_gray() {
     std::vector<uint8_t> bgra;
     inferno::capture::nv12ToBgra(y_plane, uv_plane, 4, 2, 4, 4, bgra);
 
-    if (bgra.size() != 4 * 2 * 4) {
+    size_t expected = static_cast<size_t>(4) * 2 * 4;
+    if (bgra.size() != expected) {
         std::fprintf(stderr, "[FAIL] test_nv12_to_bgra_gray: "
                              "expected %zu bytes, got %zu\n",
-                     4 * 2 * 4, bgra.size());
+                     expected, bgra.size());
         std::exit(1);
     }
 

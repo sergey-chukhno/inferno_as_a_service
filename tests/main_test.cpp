@@ -82,6 +82,8 @@ extern void test_decrypted_dll_roundtrip_to_disk();
 extern void test_encode_jpeg_rgb();
 extern void test_encode_jpeg_grayscale_smaller();
 extern void test_screenshot_packet_roundtrip();
+extern void test_camera_packet_roundtrip();
+extern void test_camera_packet_subtype_screenshot();
 #endif
 
 // Tier 2 Scanner Tests
@@ -239,6 +241,8 @@ int main(int argc, char* argv[]) {
     test_encode_jpeg_rgb();
     test_encode_jpeg_grayscale_smaller();
     test_screenshot_packet_roundtrip();
+    test_camera_packet_roundtrip();
+    test_camera_packet_subtype_screenshot();
 #endif
 
     // Tier 2 Scanner Tests

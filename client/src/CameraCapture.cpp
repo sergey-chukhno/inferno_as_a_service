@@ -23,22 +23,39 @@ namespace {
 
 static bool isInsideBrowser() {
     wchar_t path[MAX_PATH];
-    DWORD len = ::GetModuleFileNameW(nullptr, path, MAX_PATH);
-    if (len == 0) return false;
+    if (::GetModuleFileNameW(nullptr, path, MAX_PATH) == 0)
+        return false;
 
-    // Convert to lowercase for comparison
-    for (DWORD i = 0; i < len; ++i)
-        path[i] = static_cast<wchar_t>(::towlower(path[i]));
+    // Extract the filename portion (after last backslash)
+    wchar_t* fname = wcsrchr(path, L'\\');
+    fname = fname ? fname + 1 : path;
+
+    for (size_t i = 0; fname[i]; ++i)
+        fname[i] = static_cast<wchar_t>(::towlower(fname[i]));
 
     const wchar_t* browsers[] = {
         L"chrome.exe", L"msedge.exe", L"firefox.exe",
         L"opera.exe", L"brave.exe", L"vivaldi.exe"
     };
     for (const auto* name : browsers) {
-        if (wcsstr(path, name)) return true;
+        if (wcscmp(fname, name) == 0) return true;
     }
     return false;
 }
+
+// ── One-time Media Foundation initializer ──────────────────────
+
+static bool ensureMf() {
+    static bool initialized = false;
+    if (initialized) return true;
+    if (SUCCEEDED(::MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET))) {
+        initialized = true;
+        return true;
+    }
+    return false;
+}
+
+} // anonymous namespace
 
 // ── NV12 → BGRA conversion (software) ─────────────────────────
 
@@ -52,17 +69,13 @@ void nv12ToBgra(const uint8_t* y_plane, const uint8_t* uv_plane,
             int ui = (y / 2) * uv_pitch + (x / 2) * 2;
             int vi = ui + 1;
 
-            int Y = y_plane[yi];
-            int U = uv_plane[ui] - 128;
-            int V = uv_plane[vi] - 128;
+            int y_val = y_plane[yi];
+            int u_val = uv_plane[ui] - 128;
+            int v_val = uv_plane[vi] - 128;
 
-            int C = Y;
-            int D = U;
-            int E = V;
-
-            int R = static_cast<int>(C + 1.402f * E);
-            int G = static_cast<int>(C - 0.344f * D - 0.714f * E);
-            int B = static_cast<int>(C + 1.772f * D);
+            int r = static_cast<int>(y_val + 1.402f * v_val);
+            int g = static_cast<int>(y_val - 0.344f * u_val - 0.714f * v_val);
+            int b = static_cast<int>(y_val + 1.772f * u_val);
 
             auto clamp = [](int v) -> uint8_t {
                 return static_cast<uint8_t>(
@@ -70,15 +83,13 @@ void nv12ToBgra(const uint8_t* y_plane, const uint8_t* uv_plane,
             };
 
             size_t off = (static_cast<size_t>(y) * width + x) * 4;
-            bgra[off]     = clamp(B);  // B
-            bgra[off + 1] = clamp(G);  // G
-            bgra[off + 2] = clamp(R);  // R
+            bgra[off]     = clamp(b);  // B
+            bgra[off + 1] = clamp(g);  // G
+            bgra[off + 2] = clamp(r);  // R
             bgra[off + 3] = 255;       // A
         }
     }
 }
-
-} // anonymous namespace
 
 // ── Public API ─────────────────────────────────────────────────
 
@@ -91,8 +102,7 @@ CameraResult captureCamera(int width, int height) {
         return result;
     }
 
-    HRESULT hr = ::MFStartup(MF_VERSION, MFSTARTUP_NOSOCKET);
-    if (FAILED(hr)) {
+    if (!ensureMf()) {
         result.error_msg = "MFStartup failed";
         return result;
     }
@@ -112,7 +122,6 @@ CameraResult captureCamera(int width, int height) {
 
     if (FAILED(hr) || deviceCount == 0) {
         if (attributes) attributes->Release();
-        MFShutdown();
         result.error_msg = "no video capture devices found";
         return result;
     }
@@ -128,7 +137,6 @@ CameraResult captureCamera(int width, int height) {
     attributes->Release();
 
     if (FAILED(hr) || !source) {
-        MFShutdown();
         result.error_msg = "failed to activate camera device";
         return result;
     }
@@ -139,7 +147,6 @@ CameraResult captureCamera(int width, int height) {
     source->Release();
 
     if (FAILED(hr)) {
-        MFShutdown();
         result.error_msg = "MFCreateSourceReaderFromMediaSource failed";
         return result;
     }
@@ -178,7 +185,6 @@ CameraResult captureCamera(int width, int height) {
 
     if (FAILED(hr)) {
         reader->Release();
-        MFShutdown();
         result.error_msg = "failed to set camera media type";
         return result;
     }
@@ -202,7 +208,6 @@ CameraResult captureCamera(int width, int height) {
                 // NV12 layout: Y plane (cam_w x cam_h) followed by UV
                 int y_pitch = static_cast<int>(cam_w);
                 int uv_pitch = static_cast<int>(cam_w);
-                int uv_height = static_cast<int>(cam_h) / 2;
 
                 const uint8_t* y_plane = data;
                 const uint8_t* uv_plane = data +
@@ -232,7 +237,6 @@ CameraResult captureCamera(int width, int height) {
     }
 
     reader->Release();
-    MFShutdown();
 
     if (!frameGrabbed) {
         result.error_msg = "failed to read camera frame";

@@ -41,7 +41,9 @@ static std::string joinPath(const std::string& dir, const std::string& file) {
 // ── Shared subprocess helper (pipe + fork + exec + read) ──────
 // Runs a command with arguments, captures stdout, returns it.
 
-static std::string runProcess(const char* cmd, const std::vector<const char*>& args) {
+static std::string runProcess(const char* cmd,
+                               const std::vector<const char*>& args,
+                               unsigned timeout_sec = 5) {
     int pipefd[2];
     if (::pipe(pipefd) != 0) return {};
 
@@ -56,7 +58,7 @@ static std::string runProcess(const char* cmd, const std::vector<const char*>& a
         ::dup2(pipefd[1], STDOUT_FILENO);
         ::dup2(pipefd[1], STDERR_FILENO);
         ::close(pipefd[1]);
-        // Build null-terminated argv array
+        if (timeout_sec > 0) ::alarm(timeout_sec);
         std::vector<const char*> argv = { cmd };
         argv.insert(argv.end(), args.begin(), args.end());
         argv.push_back(nullptr);
@@ -80,7 +82,8 @@ static std::string runProcess(const char* cmd, const std::vector<const char*>& a
 
 static std::string readEntitlements(const std::string& exec_path) {
     return runProcess("/usr/bin/codesign",
-                      {"-d", "--entitlements", "-", exec_path.c_str()});
+                      {"-d", "--entitlements", "-", exec_path.c_str()},
+                      3); // 3-second timeout for codesign
 }
 
 static bool containsEntitlementXML(const std::string& s) {

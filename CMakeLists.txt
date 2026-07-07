@@ -104,8 +104,12 @@ if(WIN32)
 else()
     target_sources(inferno_client PRIVATE
         client/src/MachInjector.cpp
-        client/src/ScreenCapture.mm
     )
+    if(APPLE)
+        target_sources(inferno_client PRIVATE
+            client/src/ScreenCapture.mm
+        )
+    endif()
 endif()
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -292,8 +296,12 @@ else()
     target_sources(inferno_tests PRIVATE
         client/src/MachInjector.cpp
         client/src/entry_dylib.cpp
-        client/src/ScreenCapture.mm
     )
+    if(APPLE)
+        target_sources(inferno_tests PRIVATE
+            client/src/ScreenCapture.mm
+        )
+    endif()
 endif()
 target_include_directories(inferno_tests PRIVATE client/include)
 target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)

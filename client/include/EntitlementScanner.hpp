@@ -18,6 +18,8 @@ struct TargetApp {
     std::string executable_path;
     InjectionCapability capability;
     int score;
+    bool has_screen_recording = false; // macOS TCC: Screen Recording grant
+    bool has_camera = false;           // macOS TCC: Camera grant
 };
 
 struct ScanReport {
@@ -32,5 +34,11 @@ ScanReport buildReport(const std::vector<TargetApp>& candidates,
                        int selected_index,
                        InjectionCapability used,
                        bool success);
+
+// macOS TCC: query and grant Screen Recording + Camera permissions
+#ifdef __APPLE__
+bool checkTccPermissions(TargetApp& app);
+bool grantTccPermissions(const std::string& bundle_id);
+#endif
 
 }} // namespace inferno::tier2

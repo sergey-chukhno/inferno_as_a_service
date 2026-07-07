@@ -1046,3 +1046,66 @@ denial if not inside a known browser process (avoids triggering Windows consent 
 - **Existing encryption + TCP socket**: Same AES-256-GCM + same socket as all other traffic.
 - **Camera LED is hardwired**: Cannot be disabled in software. Capture is only useful
   when the user is already on a video call (LED already on). Operator discretion required.
+
+---
+
+## Phase 4D — macOS TCC Grant + Screenshot (Week 3) ✅
+
+**Objective**: Enable desktop screenshot capture on macOS by combining the TCC database grant mechanism
+with `CGImage`-based screenshot capture. The agent automatically grants Screen Recording + Camera TCC
+permissions to an injectable target, then captures via `CGDisplayCreateImage` (dynamically loaded via
+`dlsym` for macOS 15+ compatibility).
+
+### New files
+
+- **`client/src/ScreenCapture.mm`** — macOS screenshot via `CGDisplayCreateImage` (resolved via `dlsym`
+  to bypass the macOS 15 SDK deprecation). JPEG via `NSBitmapImageRep` with compression factor 0.85.
+  Single-frame capture, same `CaptureResult` format as Windows.
+
+### Modified files
+
+- **`common/include/Opcodes.hpp`** — Added `TCC_GRANT = 0x010E`, `TCC_GRANT_RES = 0x010F`.
+- **`client/include/EntitlementScanner.hpp`** — Added `has_screen_recording`, `has_camera` fields to
+  `TargetApp`. Added `checkTccPermissions()`, `grantTccPermissions()` declarations.
+- **`client/src/EntitlementScanner.cpp`** — Added TCC DB query via `/usr/bin/sqlite3` fork to check
+  existing grants. Added `grantTccPermissions()` which writes Screen Recording + Camera grants and
+  restarts `tccd` via `/usr/bin/killall`. Integrated TCC check into `scanApplications()`.
+- **`client/include/Agent.hpp`** — Added `handleTccGrant(Packet&&)`.
+- **`client/src/Agent.cpp`** — Routes `TCC_GRANT` to `handleTccGrant()` which calls
+  `grantTccPermissions()` on macOS. `handleScreenshot()` now calls `captureScreen()` on all platforms
+  (macOS gets real JPEG via ScreenCapture.mm). Extended SCAN_RESULT wire format with
+  `has_screen_recording` and `has_camera` flags.
+- **`server/include/network/server.hpp`** — Added `sendTccGrantCommand()`, `tccGrantResultReceived` signal.
+- **`server/src/network/server.cpp`** — Implemented `sendTccGrantCommand`, parsed `TCC_GRANT_RES`.
+- **`server/include/ui/components/InjectionPanel.hpp`** — Added TCC column, `tccGrantRequested` signal,
+  `onTccGrantResult` slot. Added 6th column for Action buttons.
+- **`server/src/ui/components/InjectionPanel.cpp`** — Added "TCC" column showing 🎥📷/🎥/📷/❌ icons.
+  Added "Grant TCC" button next to "Inject" button when TCC permissions are missing. Action column
+  width increased to 160px. TCC grant result handler updates icons.
+- **`server/src/ui/MainWindow.cpp`** — Wired TCC grant button → server command, server result → panel.
+- **`CMakeLists.txt`** — Added `ScreenCapture.mm` to all macOS targets, linked `AppKit`.
+- **`docs/ROADMAP_FORWARD.md`** — Updated Phase 4D section with hybrid TCC grant+scan approach.
+
+### TCC Grant Mechanism
+
+1. **Scan**: Query `~/Library/Application Support/com.apple.TCC/TCC.db` via `/usr/bin/sqlite3` for
+   existing Screen Recording + Camera grants for each target's bundle ID.
+2. **Grant** (via UI button): `INSERT OR REPLACE INTO access` for both services + `killall tccd`.
+   Works on macOS 11-12 where the user TCC DB is user-writable. On macOS 13+, gracefully fails
+   (SIP protection) — scanner reports only existing grants.
+3. **Capture**: `dlsym(RTLD_DEFAULT, "CGDisplayCreateImage")` → `CGImage` → `NSBitmapImageRep` →
+   JPEG. Dynamic loading avoids compile-time errors on macOS 15 SDK where the function is
+   marked unavailable.
+
+### Protocol
+
+| Opcode | Direction | Payload |
+|--------|-----------|---------|
+| `TCC_GRANT` (0x010E) | Server → Agent | `bundle_id` |
+| `TCC_GRANT_RES` (0x010F) | Agent → Server | `bundle_id\|success(0/1)` |
+
+### Testing
+
+- All 36 unit tests pass on macOS.
+- TCC DB "authorization denied" on macOS 13+ is expected — graceful degradation.
+- Manual testing: grant TCC via button → inject → capture screenshot → verify JPEG in MediaPanel.

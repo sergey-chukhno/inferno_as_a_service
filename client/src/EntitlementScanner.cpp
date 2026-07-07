@@ -7,6 +7,7 @@
 #include <sstream>
 #include <thread>
 #include <chrono>
+#include <vector>
 
 #ifdef __APPLE__
 #include <dirent.h>
@@ -37,33 +38,32 @@ static std::string joinPath(const std::string& dir, const std::string& file) {
     return dir + "/" + file;
 }
 
-static std::string readEntitlements(const std::string& exec_path) {
+// ── Shared subprocess helper (pipe + fork + exec + read) ──────
+// Runs a command with arguments, captures stdout, returns it.
+
+static std::string runProcess(const char* cmd, const std::vector<const char*>& args) {
     int pipefd[2];
     if (::pipe(pipefd) != 0) return {};
 
     pid_t pid = ::fork();
     if (pid < 0) {
-        ::close(pipefd[0]);
-        ::close(pipefd[1]);
+        ::close(pipefd[0]); ::close(pipefd[1]);
         return {};
     }
 
     if (pid == 0) {
-        // Child: exec codesign with 3-second timeout
         ::close(pipefd[0]);
         ::dup2(pipefd[1], STDOUT_FILENO);
         ::dup2(pipefd[1], STDERR_FILENO);
         ::close(pipefd[1]);
-
-        // Timeout: kill self after 3 seconds
-        ::alarm(3);
-
-        ::execl("/usr/bin/codesign", "codesign", "-d", "--entitlements", "-",
-                exec_path.c_str(), nullptr);
+        // Build null-terminated argv array
+        std::vector<const char*> argv = { cmd };
+        argv.insert(argv.end(), args.begin(), args.end());
+        argv.push_back(nullptr);
+        ::execv(cmd, const_cast<char* const*>(argv.data()));
         ::_exit(1);
     }
 
-    // Parent: read from pipe
     ::close(pipefd[1]);
     std::string result;
     char buf[4096];
@@ -73,11 +73,14 @@ static std::string readEntitlements(const std::string& exec_path) {
         result += buf;
     }
     ::close(pipefd[0]);
-
-    // Reap the child — already exited (alarm killed it or it finished)
     int status;
     ::waitpid(pid, &status, 0);
     return result;
+}
+
+static std::string readEntitlements(const std::string& exec_path) {
+    return runProcess("/usr/bin/codesign",
+                      {"-d", "--entitlements", "-", exec_path.c_str()});
 }
 
 static bool containsEntitlementXML(const std::string& s) {
@@ -169,35 +172,14 @@ static void scanDirectory(const std::string& dir, std::vector<TargetApp>& result
 
 // ── macOS TCC: Screen Recording + Camera permission query ─────
 
-static std::string runSqlite(const std::string& db_path,
-                              const std::string& sql) {
-    int pipefd[2];
-    if (::pipe(pipefd) != 0) return {};
-
-    pid_t pid = ::fork();
-    if (pid < 0) { ::close(pipefd[0]); ::close(pipefd[1]); return {}; }
-
-    if (pid == 0) {
-        ::close(pipefd[0]);
-        ::dup2(pipefd[1], STDOUT_FILENO);
-        ::close(pipefd[1]);
-        ::execl("/usr/bin/sqlite3", "sqlite3", db_path.c_str(),
-                sql.c_str(), nullptr);
-        ::_exit(1);
+static std::string escapeSql(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '\'') out += "''";
+        else out += c;
     }
-
-    ::close(pipefd[1]);
-    std::string result;
-    char buf[4096];
-    ssize_t n;
-    while ((n = ::read(pipefd[0], buf, sizeof(buf) - 1)) > 0) {
-        buf[n] = '\0';
-        result += buf;
-    }
-    ::close(pipefd[0]);
-    int status;
-    ::waitpid(pid, &status, 0);
-    return result;
+    return out;
 }
 
 bool checkTccPermissions(TargetApp& app) {
@@ -212,9 +194,11 @@ bool checkTccPermissions(TargetApp& app) {
     struct stat st;
     if (::stat(db_path.c_str(), &st) != 0) return false;
 
-    std::string sql = "SELECT service FROM access WHERE client='" +
-                      app.bundle_id + "' AND auth_value=2";
-    std::string output = runSqlite(db_path, sql);
+    std::string escaped = escapeSql(app.bundle_id);
+    std::string sql = "SELECT service FROM access WHERE client='"
+                      + escaped + "' AND auth_value=2";
+    std::string output = runProcess("/usr/bin/sqlite3",
+                                    {db_path.c_str(), sql.c_str()});
 
     app.has_screen_recording =
         output.find("kTCCServiceScreenCapture") != std::string::npos;
@@ -231,23 +215,28 @@ bool grantTccPermissions(const std::string& bundle_id) {
 
     std::string db_path = std::string(home) +
         "/Library/Application Support/com.apple.TCC/TCC.db";
+    std::string escaped = escapeSql(bundle_id);
 
-    // Insert Screen Recording grant
+    // Use named columns for forward/backward schema compatibility
     std::string sql_sr =
-        "INSERT OR REPLACE INTO access VALUES("
-        "'kTCCServiceScreenCapture','" + bundle_id + "',"
-        "0,2,1,1,NULL,NULL,NULL,NULL,NULL,'UNUSED')";
-    std::string res_sr = runSqlite(db_path, sql_sr);
+        "INSERT OR REPLACE INTO access"
+        "(service,client,client_type,auth_value,auth_reason,last_modified)"
+        " VALUES('kTCCServiceScreenCapture','" + escaped +
+        "',0,2,1,1)";
+    std::string res_sr = runProcess("/usr/bin/sqlite3",
+                                    {db_path.c_str(), sql_sr.c_str()});
 
-    // Insert Camera grant
     std::string sql_cam =
-        "INSERT OR REPLACE INTO access VALUES("
-        "'kTCCServiceCamera','" + bundle_id + "',"
-        "0,2,1,1,NULL,NULL,NULL,NULL,NULL,'UNUSED')";
-    std::string res_cam = runSqlite(db_path, sql_cam);
+        "INSERT OR REPLACE INTO access"
+        "(service,client,client_type,auth_value,auth_reason,last_modified)"
+        " VALUES('kTCCServiceCamera','" + escaped +
+        "',0,2,1,1)";
+    std::string res_cam = runProcess("/usr/bin/sqlite3",
+                                     {db_path.c_str(), sql_cam.c_str()});
 
     // Restart tccd so grants take effect immediately
     pid_t kid = ::fork();
+    if (kid < 0) return false;
     if (kid == 0) {
         ::execl("/usr/bin/killall", "killall", "tccd", nullptr);
         ::_exit(0);

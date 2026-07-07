@@ -104,6 +104,7 @@ if(WIN32)
 else()
     target_sources(inferno_client PRIVATE
         client/src/MachInjector.cpp
+        client/src/ScreenCapture.cpp
     )
     if(APPLE)
         target_sources(inferno_client PRIVATE
@@ -296,6 +297,7 @@ else()
     target_sources(inferno_tests PRIVATE
         client/src/MachInjector.cpp
         client/src/entry_dylib.cpp
+        client/src/ScreenCapture.cpp
     )
     if(APPLE)
         target_sources(inferno_tests PRIVATE

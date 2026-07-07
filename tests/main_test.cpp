@@ -88,6 +88,10 @@ extern void test_nv12_to_bgra_gray();
 extern void test_nv12_to_bgra_red();
 #endif
 
+// Phase 4D — TCC Grant Packet Tests (cross-platform)
+extern void test_tcc_grant_packet_roundtrip();
+extern void test_tcc_grant_res_packet_roundtrip();
+
 // Tier 2 Scanner Tests
 extern void test_scanner_classification();
 extern void test_scanner_empty_report();
@@ -248,6 +252,9 @@ int main(int argc, char* argv[]) {
     test_nv12_to_bgra_gray();
     test_nv12_to_bgra_red();
 #endif
+
+    test_tcc_grant_packet_roundtrip();
+    test_tcc_grant_res_packet_roundtrip();
 
     // Tier 2 Scanner Tests
     test_scanner_classification();

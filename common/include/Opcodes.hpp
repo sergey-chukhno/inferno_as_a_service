@@ -31,6 +31,9 @@ namespace inferno {
 
         SCREENSHOT_REQ = 0x010C, // Server -> Agent: request screenshot
         SCREENSHOT_RES = 0x010D, // Agent -> Server: screenshot JPEG data
+
+        TCC_GRANT = 0x010E,      // Server -> Agent: grant TCC permissions to bundle
+        TCC_GRANT_RES = 0x010F,  // Agent -> Server: TCC grant result
 };
 
 } // namespace inferno

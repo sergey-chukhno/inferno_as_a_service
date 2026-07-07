@@ -378,4 +378,20 @@ CaptureResult captureScreen(uint32_t max_width, uint32_t max_height,
 
 }} // namespace inferno::capture
 
-#endif // _WIN32
+#elif !defined(__APPLE__) // Linux stub
+
+namespace inferno { namespace capture {
+
+CaptureResult captureScreen(uint32_t, uint32_t, bool) {
+    CaptureResult result;
+    result.error_msg = "screenshot not supported on this platform";
+    return result;
+}
+
+std::vector<uint8_t> encodeJpeg(const uint8_t*, int, int, int, bool) {
+    return {};
+}
+
+}} // namespace inferno::capture
+
+#endif

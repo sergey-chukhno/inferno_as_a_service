@@ -1,6 +1,7 @@
 #include "../include/CryptoContext.hpp"
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/hmac.h>
 #include <cstring>
 #include <stdexcept>
 #include <iostream>
@@ -212,6 +213,46 @@ std::optional<std::vector<uint8_t>> CryptoContext::decrypt(
 
     plaintext.resize(static_cast<size_t>(plaintext_len));
     return plaintext;
+}
+
+// ── HMAC-SHA256 ───────────────────────────────────────────────
+
+std::vector<uint8_t> CryptoContext::hmacSha256(const uint8_t* key, size_t key_len,
+                                                 const uint8_t* data, size_t data_len) {
+    unsigned int out_len = 0;
+    std::vector<uint8_t> result(EVP_MAX_MD_SIZE);
+    if (::HMAC(EVP_sha256(), key, static_cast<int>(key_len),
+               data, static_cast<int>(data_len),
+               result.data(), &out_len) == nullptr) {
+        return {};
+    }
+    result.resize(out_len);
+    return result;
+}
+
+std::vector<uint8_t> CryptoContext::hmacSha256(const std::vector<uint8_t>& key,
+                                                 const std::vector<uint8_t>& data) {
+    return hmacSha256(key.data(), key.size(), data.data(), data.size());
+}
+
+// ── Session key derivation ────────────────────────────────────
+// Compiled-in handshake secret — separate from the AES-GCM key.
+namespace {
+    static const uint8_t kHandshakeSecret[32] = {
+        0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
+        0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
+        0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08
+    };
+}
+
+std::vector<uint8_t> CryptoContext::deriveSessionKey(const uint8_t* greeting) {
+    // session_key = HMAC-SHA256(handshake_secret, greeting)[:16]
+    auto full = hmacSha256(kHandshakeSecret, sizeof(kHandshakeSecret),
+                           greeting, GREETING_SIZE);
+    if (full.size() < SESSION_KEY_SIZE) return {};
+    full.resize(SESSION_KEY_SIZE);
+    return full;
 }
 
 } // namespace inferno

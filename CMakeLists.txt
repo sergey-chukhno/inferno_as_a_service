@@ -190,6 +190,18 @@ if(APPLE)
     add_test(NAME MacOSCapture COMMAND inferno_macos_capture_test)
 endif()
 
+# Malleable Packet Tests (cross-platform)
+add_executable(inferno_malleable_test
+    tests/malleable_packet_test.cpp
+)
+target_include_directories(inferno_malleable_test PRIVATE
+    common/include
+)
+target_link_libraries(inferno_malleable_test PRIVATE
+    inferno_common OpenSSL::Crypto
+)
+add_test(NAME MalleablePacket COMMAND inferno_malleable_test)
+
 # ==========================================
 # 5b. Agent DLL (Phase 4B — Windows Injection)
 # ==========================================

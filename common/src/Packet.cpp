@@ -15,34 +15,96 @@
 
 namespace inferno {
 
+// ── Legacy magic ──────────────────────────────────────────────
+
 static constexpr uint32_t MAGIC = 0xDEADBEEF;
+
+// ── Malleable header layout variants ──────────────────────────
+// Each variant maps the 3 fields (opcode:2, size:4, reserved:4 = 10 bytes)
+// into the 10-byte MalleableHeader differently.
+// Masks are applied byte-by-byte at the positions below.
+
+enum MalleableVariant : uint8_t {
+    VAR_0 = 0,  // size(4) | opcode(2) | reserved(4)
+    VAR_1 = 1,  // opcode(2) | reserved(2) | size_hi(2) | size_lo(2)
+    VAR_2 = 2,  // reserved(1) | size_hi(2) | opcode(2) | size_lo(2) | reserved(3)
+    VAR_COUNT
+};
+
+struct VariantLayout {
+    // For each byte position in the 10-byte header, what field does it hold?
+    // 0 = reserved (checksum stored in first reserved byte)
+    // 1 = opcode byte 0 (high)
+    // 2 = opcode byte 1 (low)
+    // 3 = size byte 0 (high)
+    // 4 = size byte 1
+    // 5 = size byte 2
+    // 6 = size byte 3 (low)
+    int fields[10];
+};
+
+static const VariantLayout kLayouts[3] = {
+    // VAR_0: [size(4)] [opcode(2)] [reserved(4)]
+    { { 3, 4, 5, 6, 1, 2, 0, 0, 0, 0 } },
+    // VAR_1: [opcode(2)] [reserved(2)] [size_hi(2)] [size_lo(2)]
+    { { 1, 2, 0, 0, 3, 4, 5, 6, 0, 0 } },
+    // VAR_2: [res(1)] [size_hi(2)] [opcode(2)] [size_lo(2)] [res(3)]
+    { { 0, 3, 4, 1, 2, 5, 6, 0, 0, 0 } }
+};
 
 // ── Constructors ──────────────────────────────────────────────
 
 Packet::Packet() {
-    m_header.magic         = MAGIC;
-    m_header.opcode        = 0;
-    m_header.payload_size  = 0;
+    m_header.magic        = MAGIC;
+    m_header.opcode       = 0;
+    m_header.payload_size = 0;
 }
 
 Packet::Packet(uint16_t opcode, const std::vector<uint8_t>& payload)
     : m_payload(payload) {
-    m_header.magic         = MAGIC;
-    m_header.opcode        = opcode;
-    m_header.payload_size  = 0;  // computed in serialize()
+    m_header.magic        = MAGIC;
+    m_header.opcode       = opcode;
+    m_header.payload_size = 0;
 }
 
 Packet::Packet(uint16_t opcode, const std::string& string_payload)
     : m_payload(string_payload.begin(), string_payload.end()) {
-    m_header.magic         = MAGIC;
-    m_header.opcode        = opcode;
-    m_header.payload_size  = 0;
+    m_header.magic        = MAGIC;
+    m_header.opcode       = opcode;
+    m_header.payload_size = 0;
 }
 
-Packet::Packet(const PacketHeader& header, std::vector<uint8_t> payload, size_t wire_payload_size)
-    : m_header(header), m_payload(std::move(payload)), m_wire_payload_size(wire_payload_size) {}
+Packet::Packet(uint16_t opcode, const std::string& string_payload,
+               const uint8_t* session_key, uint64_t packet_counter)
+    : m_use_malleable(true), m_packet_counter(packet_counter),
+      m_payload(string_payload.begin(), string_payload.end()) {
+    std::memcpy(m_session_key, session_key, SESSION_KEY_SIZE);
+    m_header.magic        = MAGIC;
+    m_header.opcode       = opcode;
+    m_header.payload_size = 0;
+}
+
+Packet::Packet(const PacketHeader& header, std::vector<uint8_t> payload,
+               size_t wire_payload_size)
+    : m_header(header), m_payload(std::move(payload)),
+      m_wire_payload_size(wire_payload_size) {}
 
 Packet::~Packet() = default;
+
+// ── Malleable mask builder ────────────────────────────────────
+
+std::vector<uint8_t> Packet::buildMalleableMask(const uint8_t* session_key,
+                                                 uint64_t packet_counter) {
+    // Derive 32 bytes of mask material: HMAC(session_key, counter)
+    auto counter_bytes = std::vector<uint8_t>(sizeof(packet_counter));
+    for (size_t i = 0; i < sizeof(packet_counter); ++i) {
+        counter_bytes[i] = static_cast<uint8_t>(
+            (packet_counter >> (56 - i * 8)) & 0xFF);
+    }
+    return CryptoContext::hmacSha256(session_key, SESSION_KEY_SIZE,
+                                      counter_bytes.data(),
+                                      counter_bytes.size());
+}
 
 // ── Serialize ─────────────────────────────────────────────────
 
@@ -50,16 +112,14 @@ std::vector<uint8_t> Packet::serialize() const {
     const auto& ctx = CryptoContext::instance();
     static bool warned = false;
 
-    // Build opcode AAD (2 bytes, network order) — authenticates the command
-    // type so an attacker cannot tamper with it in transit. payload_size is
-    // excluded from AAD because it's not known until after encryption.
+    // AAD: opcode (2 bytes, network order)
     const uint8_t aad[2] = {
         static_cast<uint8_t>((m_header.opcode >> 8) & 0xFF),
         static_cast<uint8_t>(m_header.opcode & 0xFF)
     };
     std::vector<uint8_t> aad_vec(aad, aad + sizeof(aad));
 
-    // Encrypt payload with opcode as AAD
+    // Encrypt payload
     std::vector<uint8_t> wire_payload;
     if (ctx.isInitialized()) {
         wire_payload = ctx.encrypt(m_payload, aad_vec);
@@ -80,10 +140,53 @@ std::vector<uint8_t> Packet::serialize() const {
         return {};
     }
 
+    if (m_use_malleable) {
+        // ── Malleable format ─────────────────────────────────
+        auto mask = buildMalleableMask(m_session_key, m_packet_counter);
+        if (mask.size() < 10) return {};
+
+        MalleableVariant variant = static_cast<MalleableVariant>(mask[0] % VAR_COUNT);
+        const auto& layout = kLayouts[variant];
+
+        uint8_t opcode_bytes[2] = {
+            static_cast<uint8_t>((m_header.opcode >> 8) & 0xFF),
+            static_cast<uint8_t>(m_header.opcode & 0xFF)
+        };
+        uint8_t size_bytes[4] = {
+            static_cast<uint8_t>((wire_payload.size() >> 24) & 0xFF),
+            static_cast<uint8_t>((wire_payload.size() >> 16) & 0xFF),
+            static_cast<uint8_t>((wire_payload.size() >> 8) & 0xFF),
+            static_cast<uint8_t>(wire_payload.size() & 0xFF)
+        };
+
+        // Build plaintext header (reserved bytes stay 0)
+        uint8_t plaintext[10] = {0};
+        for (int i = 0; i < 10; ++i) {
+            int f = layout.fields[i];
+            if (f == 1) plaintext[i] = opcode_bytes[0];
+            else if (f == 2) plaintext[i] = opcode_bytes[1];
+            else if (f >= 3 && f <= 6) plaintext[i] = size_bytes[f - 3];
+        }
+
+        // XOR with mask
+        MalleableHeader raw;
+        for (int i = 0; i < 10; ++i) {
+            raw.bytes[i] = plaintext[i] ^ mask[i];
+        }
+
+        // Build wire buffer: 10-byte malleable header + encrypted payload
+        std::vector<uint8_t> buffer;
+        buffer.reserve(10 + wire_payload.size());
+        buffer.insert(buffer.end(), raw.bytes, raw.bytes + 10);
+        buffer.insert(buffer.end(), wire_payload.begin(), wire_payload.end());
+        return buffer;
+    }
+
+    // ── Legacy format ────────────────────────────────────────
     PacketHeader net_header;
-    net_header.magic         = htonl(m_header.magic);
-    net_header.opcode        = htons(m_header.opcode);
-    net_header.payload_size  = htonl(static_cast<uint32_t>(wire_payload.size()));
+    net_header.magic        = htonl(m_header.magic);
+    net_header.opcode       = htons(m_header.opcode);
+    net_header.payload_size = htonl(static_cast<uint32_t>(wire_payload.size()));
 
     const uint8_t* hdr = reinterpret_cast<const uint8_t*>(&net_header);
     std::vector<uint8_t> buffer;
@@ -95,78 +198,126 @@ std::vector<uint8_t> Packet::serialize() const {
 
 // ── Deserialize ───────────────────────────────────────────────
 
-std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data) {
-    if (raw_data.size() < sizeof(PacketHeader)) {
-        return std::nullopt;
-    }
+std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data,
+                                           const uint8_t* session_key,
+                                           uint64_t packet_counter) {
+    if (raw_data.size() < 10) return std::nullopt;
+
+        if (session_key) {
+            // Try malleable: try all 3 variants, attempt decrypt on each
+            auto mask = buildMalleableMask(session_key, packet_counter);
+            if (mask.size() >= 10) {
+                for (int v = 0; v < VAR_COUNT; ++v) {
+                    MalleableHeader raw_header;
+                    std::memcpy(raw_header.bytes, raw_data.data(), 10);
+                    const auto& layout = kLayouts[v];
+
+                    // Unmask fields for this variant
+                    uint8_t opcode_bytes[2] = {0, 0};
+                    uint8_t size_bytes[4] = {0, 0, 0, 0};
+                    for (int i = 0; i < 10; ++i) {
+                        uint8_t p = raw_header.bytes[i] ^ mask[i];
+                        int f = layout.fields[i];
+                        if (f == 1) opcode_bytes[0] = p;
+                        else if (f == 2) opcode_bytes[1] = p;
+                        else if (f >= 3 && f <= 6) size_bytes[f - 3] = p;
+                    }
+
+                    uint16_t cand_opcode =
+                        (static_cast<uint16_t>(opcode_bytes[0]) << 8) |
+                         static_cast<uint16_t>(opcode_bytes[1]);
+                    uint32_t cand_sz =
+                        (static_cast<uint32_t>(size_bytes[0]) << 24) |
+                        (static_cast<uint32_t>(size_bytes[1]) << 16) |
+                        (static_cast<uint32_t>(size_bytes[2]) << 8)  |
+                         static_cast<uint32_t>(size_bytes[3]);
+
+                    if (cand_sz > MAX_WIRE_SIZE) continue;
+                    if (raw_data.size() < 10 + cand_sz) continue;
+
+                    std::vector<uint8_t> wire_payload(
+                        raw_data.begin() + 10,
+                        raw_data.begin() + 10 + cand_sz);
+
+                    // Attempt decrypt — GCM auth tag confirms correct variant
+                    const auto& ctx = CryptoContext::instance();
+                    std::vector<uint8_t> plaintext;
+                    bool decrypted_ok = false;
+
+                    if (ctx.isInitialized()) {
+                        // Must have at least GCM overhead to be valid
+                        if (wire_payload.size() < CryptoContext::OVERHEAD) continue;
+                        const uint8_t aad[2] = {
+                            static_cast<uint8_t>((cand_opcode >> 8) & 0xFF),
+                            static_cast<uint8_t>(cand_opcode & 0xFF)
+                        };
+                        std::vector<uint8_t> aad_vec(aad, aad + 2);
+                        auto d = ctx.decrypt(wire_payload, aad_vec);
+                        if (d.has_value()) {
+                            plaintext = std::move(*d);
+                            decrypted_ok = true;
+                        }
+                    } else {
+                        // No crypto — accept first variant with matching wire_sz
+                        if (cand_sz != raw_data.size() - 10) continue;
+                        plaintext = std::move(wire_payload);
+                        decrypted_ok = true;
+                    }
+
+                    if (decrypted_ok && plaintext.size() <= MAX_PLAINTEXT_SIZE) {
+                        PacketHeader h;
+                        h.magic = MAGIC;
+                        h.opcode = cand_opcode;
+                        h.payload_size = cand_sz;
+                        return Packet(h, std::move(plaintext), cand_sz);
+                    }
+                }
+            }
+            // All malleable variants failed — return nullopt
+            return std::nullopt;
+        }
+
+    // Legacy: must have at least sizeof(PacketHeader) bytes
+    // (only reached when session_key is null — no malleable attempted)
+    if (raw_data.size() < sizeof(PacketHeader)) return std::nullopt;
 
     PacketHeader header;
     std::memcpy(&header, raw_data.data(), sizeof(PacketHeader));
+    header.magic        = ntohl(header.magic);
+    header.opcode       = ntohs(header.opcode);
+    header.payload_size = ntohl(header.payload_size);
 
-    header.magic         = ntohl(header.magic);
-    header.opcode        = ntohs(header.opcode);
-    header.payload_size  = ntohl(header.payload_size);
-
-    if (header.magic != MAGIC) {
-        return std::nullopt;
-    }
-
-    if (header.payload_size > MAX_WIRE_SIZE) {
-        return std::nullopt;
-    }
-
-    if (raw_data.size() < sizeof(PacketHeader) + header.payload_size) {
-        return std::nullopt;
-    }
+    if (header.magic != MAGIC) return std::nullopt;
+    if (header.payload_size > MAX_WIRE_SIZE) return std::nullopt;
+    if (raw_data.size() < sizeof(PacketHeader) + header.payload_size) return std::nullopt;
 
     size_t wire_payload_size = header.payload_size;
-
     std::vector<uint8_t> wire_payload(
         raw_data.begin() + sizeof(PacketHeader),
         raw_data.begin() + sizeof(PacketHeader) + wire_payload_size);
 
-    // Decrypt
     const auto& ctx = CryptoContext::instance();
     std::vector<uint8_t> plaintext;
-
     if (ctx.isInitialized() && wire_payload.size() >= CryptoContext::OVERHEAD) {
-        // AAD: the opcode bytes (same as during serialize)
         const uint8_t aad[2] = {
             static_cast<uint8_t>((header.opcode >> 8) & 0xFF),
             static_cast<uint8_t>(header.opcode & 0xFF)
         };
         std::vector<uint8_t> aad_vec(aad, aad + 2);
         auto decrypted = ctx.decrypt(wire_payload, aad_vec);
-        if (!decrypted.has_value()) {
-            std::cerr << "[Packet] Decryption failed (tampered or wrong key).\n";
-            return std::nullopt;
-        }
+        if (!decrypted.has_value()) return std::nullopt;
         plaintext = std::move(*decrypted);
     } else {
-        // Either not initialized, or payload is too small to be encrypted.
-        // Treat as plaintext.
         plaintext = std::move(wire_payload);
     }
-
-    if (plaintext.size() > MAX_PLAINTEXT_SIZE) {
-        return std::nullopt;
-    }
-
+    if (plaintext.size() > MAX_PLAINTEXT_SIZE) return std::nullopt;
     return Packet(header, std::move(plaintext), wire_payload_size);
 }
 
 // ── Getters ───────────────────────────────────────────────────
 
-uint16_t Packet::getOpcode() const {
-    return m_header.opcode;
-}
-
-const std::vector<uint8_t>& Packet::getPayload() const {
-    return m_payload;
-}
-
-size_t Packet::getWirePayloadSize() const {
-    return m_wire_payload_size;
-}
+uint16_t Packet::getOpcode() const { return m_header.opcode; }
+const std::vector<uint8_t>& Packet::getPayload() const { return m_payload; }
+size_t Packet::getWirePayloadSize() const { return m_wire_payload_size; }
 
 } // namespace inferno

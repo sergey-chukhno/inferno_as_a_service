@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <optional>
 #include <string>
-#include <array>
 #include "Opcodes.hpp"
 #include "CryptoContext.hpp"
 

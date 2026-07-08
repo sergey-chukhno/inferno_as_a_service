@@ -1109,3 +1109,52 @@ permissions to an injectable target, then captures via `CGDisplayCreateImage` (d
 - All 36 unit tests pass on macOS.
 - TCC DB "authorization denied" on macOS 13+ is expected — graceful degradation.
 - Manual testing: grant TCC via button → inject → capture screenshot → verify JPEG in MediaPanel.
+
+---
+
+## Phase 5: Transport & Protocol Evasion — P1: Malleable C2 Framing ✅
+
+**Objective**: Eliminate all static patterns in the packet header so that no two packets share
+recognisable bytes. Replaces the fixed `0xDEADBEEF` magic with per-packet XOR-masked headers
+using 3 rotating layout variants, authenticated via AES-GCM.
+
+### New files
+
+- **`tests/malleable_packet_test.cpp`** — 7 tests: HMAC consistency, header-only roundtrip
+  (30 counters, no crypto), full encrypted roundtrip (30 counters, all 3 variants), 100-packet
+  no-static-magic verification, wrong-key rejection, legacy fallback.
+
+### Modified files
+
+- **`common/include/CryptoContext.hpp`**, **`common/src/CryptoContext.cpp`** — Added
+  `hmacSha256()` (OpenSSL `HMAC`), `deriveSessionKey()`, `GREETING_SIZE = 64`,
+  `SESSION_KEY_SIZE = 16`. Compiled-in `kHandshakeSecret` for session key derivation.
+- **`common/include/Packet.hpp`** — Added malleable constructor `Packet(opcode, payload,
+  session_key, counter)`, `MalleableHeader` struct, `LEGACY_MAGIC`, `SESSION_KEY_SIZE`.
+  New `deserialize()` overload with optional session key and counter.
+- **`common/src/Packet.cpp`** — Implemented 3 header layout variants (`VariantLayout` /
+  `kLayouts[3]`). `buildMalleableMask()` computes per-packet XOR key via
+  `HMAC-SHA256(session_key, counter)`. Serialize masks headers by variant, deserialize
+  tries all 3 variants and validates via GCM authentication tag.
+- **`CMakeLists.txt`** — Added `inferno_malleable_test` standalone test executable.
+
+### Design
+
+| Component | Detail |
+|-----------|--------|
+| **Session key** | `HMAC-SHA256(kHandshakeSecret, server_64_byte_greeting)[:16]` — unique per session |
+| **3 header variants** | Field positions rotate (size/opcode/reserved) — selected by `mask[0] % 3` |
+| **Per-packet mask** | 32 bytes from `HMAC-SHA256(session_key, packet_counter)` — XOR'd with header bytes |
+| **Variant detection** | Deserializer tries all 3 variants; correct one passes AES-GCM auth tag verification |
+| **Backward compat** | `deserialize(buf)` without key uses legacy `0xDEADBEEF` magic path |
+
+### Tests (7)
+
+| Test | Verifies |
+|------|----------|
+| `test_hmac_consistency` | Same input → same HMAC; different input → different HMAC |
+| `test_malleable_header_only_roundtrip` | Empty payload roundtrip, all 3 variants, no crypto |
+| `test_malleable_all_variants_roundtrip` | 30 encrypted roundtrips covering all variants |
+| `test_malleable_no_static_magic` | 100 packets have 100 different first 4 bytes |
+| `test_malleable_wrong_key_rejected` | Wrong session key → deserialize returns `nullopt` |
+| `test_malleable_legacy_fallback` | Legacy `0xDEADBEEF` still accepted |

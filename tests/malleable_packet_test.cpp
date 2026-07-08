@@ -129,6 +129,7 @@ void test_malleable_all_variants_roundtrip() {
 }
 
 void test_malleable_no_static_magic() {
+    inferno::CryptoContext::instance().initDefault();
     std::vector<uint32_t> first_words;
     for (uint64_t counter = 0; counter < 100; ++counter) {
         inferno::Packet pkt(
@@ -179,6 +180,7 @@ void test_malleable_wrong_key_rejected() {
 }
 
 void test_malleable_legacy_fallback() {
+    inferno::CryptoContext::instance().initDefault();
     inferno::Packet pkt(static_cast<uint16_t>(inferno::Opcode::PING),
                          "legacy_data");
     auto wire = pkt.serialize();

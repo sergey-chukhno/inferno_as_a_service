@@ -238,7 +238,7 @@ std::vector<uint8_t> CryptoContext::hmacSha256(const std::vector<uint8_t>& key,
 // ── Session key derivation ────────────────────────────────────
 // Compiled-in handshake secret — separate from the AES-GCM key.
 namespace {
-    static const uint8_t kHandshakeSecret[32] = {
+    const uint8_t kHandshakeSecret[32] = {
         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
         0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00,
         0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE,

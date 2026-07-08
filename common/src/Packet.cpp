@@ -33,7 +33,7 @@ enum MalleableVariant : uint8_t {
 
 struct VariantLayout {
     // For each byte position in the 10-byte header, what field does it hold?
-    // 0 = reserved (checksum stored in first reserved byte)
+    // 0 = reserved (unused; GCM authentication validates the variant)
     // 1 = opcode byte 0 (high)
     // 2 = opcode byte 1 (low)
     // 3 = size byte 0 (high)

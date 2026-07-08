@@ -103,12 +103,6 @@ void test_malleable_all_variants_roundtrip() {
 
         auto parsed = inferno::Packet::deserialize(wire, kTestKey, counter);
         if (!parsed.has_value()) {
-            // Debug output on failure
-            std::fprintf(stderr, "[DEBUG] counter=%llu wire[0..9]:",
-                         static_cast<unsigned long long>(counter));
-            for (int i = 0; i < 10; ++i)
-                std::fprintf(stderr, " %02x", wire[i]);
-            std::fprintf(stderr, "\n");
             std::fprintf(stderr, "[FAIL] test_malleable_all_variants: "
                                  "deserialize failed at counter %llu\n",
                          static_cast<unsigned long long>(counter));

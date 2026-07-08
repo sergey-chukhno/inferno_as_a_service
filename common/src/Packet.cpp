@@ -183,15 +183,24 @@ std::vector<uint8_t> Packet::serialize() const {
     }
 
     // ── Legacy format ────────────────────────────────────────
-    PacketHeader net_header;
-    net_header.magic        = htonl(m_header.magic);
-    net_header.opcode       = htons(m_header.opcode);
-    net_header.payload_size = htonl(static_cast<uint32_t>(wire_payload.size()));
-
-    const uint8_t* hdr = reinterpret_cast<const uint8_t*>(&net_header);
+    // Build header byte-by-byte in big-endian wire order
+    // (avoid unaligned access on ARM from packed struct)
     std::vector<uint8_t> buffer;
-    buffer.reserve(sizeof(PacketHeader) + wire_payload.size());
-    buffer.insert(buffer.end(), hdr, hdr + sizeof(PacketHeader));
+    buffer.reserve(10 + wire_payload.size());
+    // magic (4 bytes, big-endian)
+    buffer.push_back(static_cast<uint8_t>((m_header.magic >> 24) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((m_header.magic >> 16) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((m_header.magic >> 8) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>(m_header.magic & 0xFF));
+    // opcode (2 bytes, big-endian)
+    buffer.push_back(static_cast<uint8_t>((m_header.opcode >> 8) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>(m_header.opcode & 0xFF));
+    // payload_size (4 bytes, big-endian)
+    uint32_t sz = static_cast<uint32_t>(wire_payload.size());
+    buffer.push_back(static_cast<uint8_t>((sz >> 24) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((sz >> 16) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>((sz >> 8) & 0xFF));
+    buffer.push_back(static_cast<uint8_t>(sz & 0xFF));
     buffer.insert(buffer.end(), wire_payload.begin(), wire_payload.end());
     return buffer;
 }
@@ -279,29 +288,38 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data,
 
     // Legacy: must have at least sizeof(PacketHeader) bytes
     // (only reached when session_key is null — no malleable attempted)
-    if (raw_data.size() < sizeof(PacketHeader)) return std::nullopt;
+    // Use byte-level reads to avoid unaligned access on ARM from packed struct.
+    if (raw_data.size() < 10) return std::nullopt;
 
-    PacketHeader header;
-    std::memcpy(&header, raw_data.data(), sizeof(PacketHeader));
-    header.magic        = ntohl(header.magic);
-    header.opcode       = ntohs(header.opcode);
-    header.payload_size = ntohl(header.payload_size);
+    uint32_t legacy_magic =
+        (static_cast<uint32_t>(raw_data[0]) << 24) |
+        (static_cast<uint32_t>(raw_data[1]) << 16) |
+        (static_cast<uint32_t>(raw_data[2]) << 8)  |
+         static_cast<uint32_t>(raw_data[3]);
+    uint16_t legacy_opcode =
+        (static_cast<uint16_t>(raw_data[4]) << 8) |
+         static_cast<uint16_t>(raw_data[5]);
+    uint32_t legacy_size =
+        (static_cast<uint32_t>(raw_data[6]) << 24) |
+        (static_cast<uint32_t>(raw_data[7]) << 16) |
+        (static_cast<uint32_t>(raw_data[8]) << 8)  |
+         static_cast<uint32_t>(raw_data[9]);
 
-    if (header.magic != MAGIC) return std::nullopt;
-    if (header.payload_size > MAX_WIRE_SIZE) return std::nullopt;
-    if (raw_data.size() < sizeof(PacketHeader) + header.payload_size) return std::nullopt;
+    if (legacy_magic != MAGIC) return std::nullopt;
+    if (legacy_size > MAX_WIRE_SIZE) return std::nullopt;
+    if (raw_data.size() < 10 + legacy_size) return std::nullopt;
 
-    size_t wire_payload_size = header.payload_size;
+    size_t wire_payload_size = legacy_size;
     std::vector<uint8_t> wire_payload(
-        raw_data.begin() + sizeof(PacketHeader),
-        raw_data.begin() + sizeof(PacketHeader) + wire_payload_size);
+        raw_data.begin() + 10,
+        raw_data.begin() + 10 + wire_payload_size);
 
     const auto& ctx = CryptoContext::instance();
     std::vector<uint8_t> plaintext;
     if (ctx.isInitialized() && wire_payload.size() >= CryptoContext::OVERHEAD) {
         const uint8_t aad[2] = {
-            static_cast<uint8_t>((header.opcode >> 8) & 0xFF),
-            static_cast<uint8_t>(header.opcode & 0xFF)
+            static_cast<uint8_t>((legacy_opcode >> 8) & 0xFF),
+            static_cast<uint8_t>(legacy_opcode & 0xFF)
         };
         std::vector<uint8_t> aad_vec(aad, aad + 2);
         auto decrypted = ctx.decrypt(wire_payload, aad_vec);
@@ -311,7 +329,12 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data,
         plaintext = std::move(wire_payload);
     }
     if (plaintext.size() > MAX_PLAINTEXT_SIZE) return std::nullopt;
-    return Packet(header, std::move(plaintext), wire_payload_size);
+
+    PacketHeader h;
+    h.magic = MAGIC;
+    h.opcode = legacy_opcode;
+    h.payload_size = legacy_size;
+    return Packet(h, std::move(plaintext), wire_payload_size);
 }
 
 // ── Getters ───────────────────────────────────────────────────

@@ -207,9 +207,9 @@ std::optional<Packet> Packet::deserialize(const std::vector<uint8_t>& raw_data,
             // Try malleable: try all 3 variants, attempt decrypt on each
             auto mask = buildMalleableMask(session_key, packet_counter);
             if (mask.size() >= 10) {
+                MalleableHeader raw_header;
+                std::memcpy(raw_header.bytes, raw_data.data(), 10);
                 for (int v = 0; v < VAR_COUNT; ++v) {
-                    MalleableHeader raw_header;
-                    std::memcpy(raw_header.bytes, raw_data.data(), 10);
                     const auto& layout = kLayouts[v];
 
                     // Unmask fields for this variant

@@ -221,6 +221,11 @@ void test_socket_malleable_wrong_key() {
         ssize_t n = client_sock.receiveRaw(chunk, sizeof(chunk));
         if (n > 0) { buf.insert(buf.end(), chunk, chunk + n); break; }
     }
+    if (buf.empty()) {
+        std::fprintf(stderr, "[FAIL] test_socket_malleable_wrong_key: "
+                             "no data received — test is a false positive\n");
+        std::exit(1);
+    }
     auto parsed = client_sock.receivePacket(buf);
     if (parsed.has_value()) {
         std::fprintf(stderr, "[FAIL] test_socket_malleable_wrong_key: "

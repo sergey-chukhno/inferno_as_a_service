@@ -264,15 +264,12 @@ ssize_t Socket::sendPacket(uint16_t opcode, const std::string& payload) {
 
 std::optional<Packet> Socket::receivePacket(std::vector<uint8_t>& buffer) {
     if (!isValid()) return std::nullopt;
-    std::optional<Packet> result;
     if (m_malleable) {
-        result = Packet::deserialize(buffer, m_session_key, m_recv_counter);
+        auto result = Packet::deserialize(buffer, m_session_key, m_recv_counter);
         if (result.has_value()) ++m_recv_counter;
+        return result;
     }
-    if (!result.has_value()) {
-        result = Packet::deserialize(buffer, nullptr, 0);
-    }
-    return result;
+    return Packet::deserialize(buffer, nullptr, 0);
 }
 
 void Socket::setSessionKey(const uint8_t* key, size_t len) {

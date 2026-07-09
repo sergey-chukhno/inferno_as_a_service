@@ -210,7 +210,7 @@ void Agent::handleListening() {
             continue;
         }
 
-        auto packet_opt = ::inferno::Packet::deserialize(m_receive_buffer);
+        auto packet_opt = m_socket.receivePacket(m_receive_buffer);
         if (!packet_opt.has_value()) {
             break; // Incomplete packet — wait for more data
         }

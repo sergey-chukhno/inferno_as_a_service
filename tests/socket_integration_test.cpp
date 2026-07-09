@@ -282,12 +282,92 @@ void test_session_key_derivation() {
     std::fprintf(stdout, "[PASS] test_session_key_derivation\n");
 }
 
+void test_greeting_exchange_full() {
+    // Simulate the full server→client greeting exchange:
+    // Server sends 64 random bytes, client reads them and derives session key.
+    inferno::CryptoContext::instance().initDefault();
+
+    inferno::Socket server_sock, client_sock;
+    if (!createLoopbackPair(server_sock, client_sock)) {
+        std::fprintf(stdout, "[SKIP] test_greeting_exchange_full "
+                             "(loopback not available)\n");
+        return;
+    }
+
+    // Server generates greeting and sends it
+    uint8_t greeting[64];
+    for (int i = 0; i < 64; ++i) greeting[i] = static_cast<uint8_t>(i);
+    server_sock.sendRaw(greeting, 64);
+
+    // Derive key on server side
+    auto server_key = inferno::CryptoContext::deriveSessionKey(greeting);
+    server_sock.setSessionKey(server_key.data(), server_key.size());
+
+    // Client reads greeting — simulate what connectTo() does
+    uint8_t received[64];
+    size_t total = 0;
+    while (total < 64) {
+        ssize_t n = client_sock.receiveRaw(received + total, 64 - total);
+        if (n <= 0) break;
+        total += static_cast<size_t>(n);
+    }
+    if (total != 64) {
+        std::fprintf(stderr, "[FAIL] test_greeting_exchange_full: "
+                             "received %zu bytes (expected 64)\n", total);
+        std::exit(1);
+    }
+
+    // Client derives key from received greeting
+    auto client_key = inferno::CryptoContext::deriveSessionKey(received);
+    client_sock.setSessionKey(client_key.data(), client_key.size());
+
+    // Both sides should have the same key
+    if (server_key.size() != client_key.size()) {
+        std::fprintf(stderr, "[FAIL] test_greeting_exchange_full: "
+                             "key size mismatch\n");
+        std::exit(1);
+    }
+    for (size_t i = 0; i < server_key.size(); ++i) {
+        if (server_key[i] != client_key[i]) {
+            std::fprintf(stderr, "[FAIL] test_greeting_exchange_full: "
+                                 "key mismatch at byte %zu\n", i);
+            std::exit(1);
+        }
+    }
+
+    // Now communicate with the derived key
+    server_sock.sendPacket(static_cast<uint16_t>(inferno::Opcode::PING), "greeting_test");
+
+    std::vector<uint8_t> buf;
+    for (int retry = 0; retry < 10; ++retry) {
+        uint8_t chunk[4096];
+        ssize_t n = client_sock.receiveRaw(chunk, sizeof(chunk));
+        if (n > 0) { buf.insert(buf.end(), chunk, chunk + n); break; }
+    }
+    auto parsed = client_sock.receivePacket(buf);
+    if (!parsed.has_value()) {
+        std::fprintf(stderr, "[FAIL] test_greeting_exchange_full: "
+                             "receivePacket after greeting failed\n");
+        std::exit(1);
+    }
+    if (parsed->getOpcode() != static_cast<uint16_t>(inferno::Opcode::PING)) {
+        std::fprintf(stderr, "[FAIL] test_greeting_exchange_full: "
+                             "opcode mismatch\n");
+        std::exit(1);
+    }
+
+    server_sock.close();
+    client_sock.close();
+    std::fprintf(stdout, "[PASS] test_greeting_exchange_full\n");
+}
+
 int main() {
     test_socket_malleable_roundtrip();
     test_socket_malleable_bidirectional();
     test_socket_legacy_fallback();
     test_socket_malleable_wrong_key();
     test_session_key_derivation();
+    test_greeting_exchange_full();
     std::fprintf(stdout, "[PASS] All socket integration tests passed\n");
     return 0;
 }

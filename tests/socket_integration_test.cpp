@@ -21,7 +21,7 @@ static bool createLoopbackPair(inferno::Socket& server, inferno::Socket& client,
     // Get the actual port (needed when port=0)
     uint16_t actual_port = listen_sock.getPort();
     // Try to connect
-    if (!client.connectTo("127.0.0.1", actual_port)) return false;
+    if (!client.connectTo("127.0.0.1", actual_port, false)) return false;
 
     auto accepted = listen_sock.acceptNode();
     if (!accepted.has_value()) return false;

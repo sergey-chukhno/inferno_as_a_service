@@ -55,7 +55,8 @@ public:
     // Core networking
     bool                  bindNode(const std::string& ip, uint16_t port);
     bool                  listen(int backlog = SOMAXCONN);
-    bool                  connectTo(const std::string& ip, uint16_t port);
+    bool                  connectTo(const std::string& ip, uint16_t port,
+                                    bool expectGreeting = true);
     std::optional<Socket> acceptNode();
 
     // Raw I/O (for greeting exchange before packet framing)

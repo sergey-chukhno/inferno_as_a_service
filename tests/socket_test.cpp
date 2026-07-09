@@ -22,7 +22,7 @@ void test_end_to_end_connection() {
     assert(bound_port > 0 && "Server should have a valid bound port");
 
     Socket client;
-    assert(client.connectTo("127.0.0.1", bound_port)==true && "Client should connect to the server");
+    assert(client.connectTo("127.0.0.1", bound_port, false)==true && "Client should connect to the server");
     std::optional<Socket> accepted_client = server.acceptNode();
     assert(accepted_client.has_value() && "Server should accept the connection");
     assert(accepted_client->isValid() && "Accepted client socket should be valid!");

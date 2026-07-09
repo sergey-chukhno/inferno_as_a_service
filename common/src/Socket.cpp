@@ -153,7 +153,7 @@ bool Socket::listen(int backlog) {
     return true; 
 }
 
-bool Socket::connectTo(const std::string& ip, uint16_t port) {
+bool Socket::connectTo(const std::string& ip, uint16_t port, bool expectGreeting) {
     if (m_socket_fd != INVALID_SOCKET) {
         return false;
     }
@@ -180,29 +180,34 @@ bool Socket::connectTo(const std::string& ip, uint16_t port) {
     setReceiveTimeout(10);
     setKeepAlive(30, 10);
 
-    // Malleable C2 greeting exchange: read 64 random bytes from server
-    uint8_t greeting[CryptoContext::GREETING_SIZE];
-    size_t total = 0;
-    while (total < sizeof(greeting)) {
-        ssize_t n = ::recv(m_socket_fd,
-                           reinterpret_cast<char*>(greeting) + total,
-                           sizeof(greeting) - total, 0);
-        if (n <= 0) break;
-        total += static_cast<size_t>(n);
-    }
-    if (total == sizeof(greeting)) {
-        auto key = CryptoContext::deriveSessionKey(greeting);
-        if (key.size() >= sizeof(m_session_key)) {
-            std::memcpy(m_session_key, key.data(), sizeof(m_session_key));
-            m_malleable = true;
-            m_send_counter = 0;
-            m_recv_counter = 0;
-            std::fprintf(stdout, "[Socket] Malleable session established (key=%zu bytes)\n",
-                         key.size());
+    if (expectGreeting) {
+        // Malleable C2 greeting exchange: read 64 random bytes from server
+        uint8_t greeting[CryptoContext::GREETING_SIZE];
+        size_t total = 0;
+        while (total < sizeof(greeting)) {
+            ssize_t n = ::recv(m_socket_fd,
+                               reinterpret_cast<char*>(greeting) + total,
+                               sizeof(greeting) - total, 0);
+            if (n <= 0) break;
+            total += static_cast<size_t>(n);
         }
-    } else {
-        std::fprintf(stderr, "[Socket] Greeting read failed: got %zu of %zu bytes\n",
-                     total, sizeof(greeting));
+        if (total != sizeof(greeting)) {
+            std::fprintf(stderr, "[Socket] Greeting read failed: got %zu of %zu bytes\n",
+                         total, sizeof(greeting));
+            close();
+            return false;
+        }
+
+        auto key = CryptoContext::deriveSessionKey(greeting);
+        if (key.size() != sizeof(m_session_key)) {
+            std::fprintf(stderr, "[Socket] Greeting key derivation failed (%zu bytes)\n",
+                         key.size());
+            close();
+            return false;
+        }
+        setSessionKey(key.data(), key.size());
+        std::fprintf(stdout, "[Socket] Malleable session established (key=%zu bytes)\n",
+                     key.size());
     }
 
     return true;

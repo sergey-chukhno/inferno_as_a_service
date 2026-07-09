@@ -186,7 +186,8 @@ bool Socket::connectTo(const std::string& ip, uint16_t port) {
         if (key.size() >= sizeof(m_session_key)) {
             std::memcpy(m_session_key, key.data(), sizeof(m_session_key));
             m_malleable = true;
-            m_packet_counter = 0;
+            m_send_counter = 0;
+            m_recv_counter = 0;
         }
     }
 
@@ -229,9 +230,9 @@ ssize_t Socket::sendPacket(uint16_t opcode, const std::string& payload) {
     if (!isValid()) return -1;
     std::vector<uint8_t> data;
     if (m_malleable) {
-        Packet p(opcode, payload, m_session_key, m_packet_counter);
+        Packet p(opcode, payload, m_session_key, m_send_counter);
         data = p.serialize();
-        ++m_packet_counter;
+        ++m_send_counter;
     } else {
         Packet p(opcode, payload);
         data = p.serialize();
@@ -246,8 +247,8 @@ std::optional<Packet> Socket::receivePacket(std::vector<uint8_t>& buffer) {
     if (!isValid()) return std::nullopt;
     std::optional<Packet> result;
     if (m_malleable) {
-        result = Packet::deserialize(buffer, m_session_key, m_packet_counter);
-        if (result.has_value()) ++m_packet_counter;
+        result = Packet::deserialize(buffer, m_session_key, m_recv_counter);
+        if (result.has_value()) ++m_recv_counter;
     }
     if (!result.has_value()) {
         result = Packet::deserialize(buffer, nullptr, 0);
@@ -263,9 +264,6 @@ void Socket::setSessionKey(const uint8_t* key, size_t len) {
 }
 
 bool Socket::hasSessionKey() const { return m_malleable; }
-const uint8_t* Socket::sessionKey() const { return m_session_key; }
-uint64_t Socket::nextPacketCounter() { return m_packet_counter; }
-void Socket::didDeserializePacket() { if (m_malleable) ++m_packet_counter; }
 
 ssize_t Socket::sendData(const std::vector<uint8_t>& data) const {
     if (!isValid()) {

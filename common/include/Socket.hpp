@@ -39,7 +39,8 @@ private:
     // Malleable C2 session key (set via greeting exchange or externally)
     bool     m_malleable = false;
     uint8_t  m_session_key[16]{};
-    uint64_t m_packet_counter = 0;
+    uint64_t m_send_counter = 0;
+    uint64_t m_recv_counter = 0;
 
 public:
     Socket();
@@ -72,9 +73,6 @@ public:
     // Session key management (for malleable C2 framing)
     void                 setSessionKey(const uint8_t* key, size_t len);
     bool                 hasSessionKey() const;
-    const uint8_t*       sessionKey() const;
-    uint64_t             nextPacketCounter();
-    void                 didDeserializePacket(); // call after successful malleable deserialize
 
     // Timeouts & keepalive
     bool setReceiveTimeout(unsigned seconds);

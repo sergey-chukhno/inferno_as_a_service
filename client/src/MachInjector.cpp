@@ -21,9 +21,15 @@ bool injectIntoTarget(const TargetApp&, const std::string&,
 #elif defined(__APPLE__)
 
 static bool launchWithDyldEnv(const TargetApp& target,
-                               const std::string& dylib_path,
-                               const std::string& server_ip,
-                               uint16_t server_port) {
+                                const std::string& dylib_path,
+                                const std::string& server_ip,
+                                uint16_t server_port) {
+    // Kill any existing instance of the target before launching anew.
+    // This ensures DYLD_INSERT_LIBRARIES takes effect (macOS prevents
+    // launching a second instance of most GUI apps).
+    std::string kill_cmd = "pkill -f " + target.executable_path + " 2>/dev/null; sleep 1";
+    ::system(kill_cmd.c_str());
+
     pid_t pid = ::fork();
     if (pid < 0) {
         std::fprintf(stderr, "[MachInjector] fork() failed: %s\n",

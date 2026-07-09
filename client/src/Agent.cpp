@@ -192,27 +192,26 @@ void Agent::handleListening() {
 
     // Sliding buffer loop: process ALL complete packets in the buffer
     while (true) {
-        // Guard: need at least a full header to inspect
-        if (m_receive_buffer.size() < sizeof(PacketHeader)) break;
+        if (m_receive_buffer.size() < 10) break;
 
-        // Resync: peek at magic before calling deserialize().
-        // deserialize() returns nullopt for BOTH "incomplete data" and "invalid magic/checksum".
-        // Without this check, a single corrupted prefix byte causes an infinite stall.
-        const uint32_t magic =
-            (static_cast<uint32_t>(m_receive_buffer[0]) << 24) |
-            (static_cast<uint32_t>(m_receive_buffer[1]) << 16) |
-            (static_cast<uint32_t>(m_receive_buffer[2]) << 8)  |
-             static_cast<uint32_t>(m_receive_buffer[3]);
-
-        if (magic != 0xDEADBEEF) {
-            std::cerr << "[Agent] Buffer desync detected — discarding 1 byte to resync.\n";
-            m_receive_buffer.erase(m_receive_buffer.begin());
-            continue;
-        }
+        std::fprintf(stderr, "[Agent] Buffer %zu bytes, malleable=%s\n",
+                    m_receive_buffer.size(),
+                    m_socket.hasSessionKey() ? "yes" : "no");
 
         auto packet_opt = m_socket.receivePacket(m_receive_buffer);
         if (!packet_opt.has_value()) {
-            break; // Incomplete packet — wait for more data
+            // Legacy resync: discard bytes that don't start with 0xDEADBEEF
+            const uint32_t magic =
+                (static_cast<uint32_t>(m_receive_buffer[0]) << 24) |
+                (static_cast<uint32_t>(m_receive_buffer[1]) << 16) |
+                (static_cast<uint32_t>(m_receive_buffer[2]) << 8)  |
+                 static_cast<uint32_t>(m_receive_buffer[3]);
+            if (magic != 0xDEADBEEF) {
+                std::fprintf(stderr, "[Agent] Buffer desync (magic=0x%08x), discarding 1 byte\n", magic);
+                m_receive_buffer.erase(m_receive_buffer.begin());
+                continue;
+            }
+            break;
         }
         const size_t packet_size = sizeof(PacketHeader) + packet_opt->getWirePayloadSize();
         handleDispatching(std::move(*packet_opt));

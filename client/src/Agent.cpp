@@ -437,9 +437,24 @@ void Agent::handleInjection(Packet&& packet) {
 
     // Build TargetApp on the fly — capability defaults to DYLD_INSERT_LIBRARIES
     inferno::tier2::TargetApp target;
-    target.executable_path = target_path;
     target.path = target_path;
     target.capability = inferno::tier2::InjectionCapability::DYLD_INSERT_LIBRARIES;
+
+    // Derive executable path from .app bundle path:
+    // "/Applications/DBeaver.app" → "/Applications/DBeaver.app/Contents/MacOS/DBeaver"
+#ifdef __APPLE__
+    if (target_path.size() > 4 && target_path.substr(target_path.size() - 4) == ".app") {
+        size_t last_slash = target_path.rfind('/');
+        std::string app_name = (last_slash != std::string::npos)
+            ? target_path.substr(last_slash + 1, target_path.size() - last_slash - 5)
+            : target_path.substr(0, target_path.size() - 4);
+        target.executable_path = target_path + "/Contents/MacOS/" + app_name;
+    } else {
+        target.executable_path = target_path;
+    }
+#else
+    target.executable_path = target_path;
+#endif
 
     std::string dylib_path = getAgentDylibPath();
 

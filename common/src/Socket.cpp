@@ -188,7 +188,12 @@ bool Socket::connectTo(const std::string& ip, uint16_t port) {
             m_malleable = true;
             m_send_counter = 0;
             m_recv_counter = 0;
+            std::fprintf(stdout, "[Socket] Malleable session established (key=%zu bytes)\n",
+                         key.size());
         }
+    } else {
+        std::fprintf(stderr, "[Socket] Greeting read failed: got %zu of %zu bytes\n",
+                     total, sizeof(greeting));
     }
 
     return true;

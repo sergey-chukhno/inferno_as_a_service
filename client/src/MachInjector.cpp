@@ -21,15 +21,35 @@ bool injectIntoTarget(const TargetApp&, const std::string&,
 #elif defined(__APPLE__)
 
 static bool launchWithDyldEnv(const TargetApp& target,
-                               const std::string& dylib_path,
-                               const std::string& server_ip,
-                               uint16_t server_port) {
+                                const std::string& dylib_path,
+                                const std::string& server_ip,
+                                uint16_t server_port) {
+    // Ensure no existing instance is running — DYLD_INSERT_LIBRARIES
+    // only works at process launch, and macOS prevents launching a
+    // second instance of most GUI apps.
+    size_t sep = target.executable_path.rfind('/');
+    std::string app_name = (sep != std::string::npos)
+        ? target.executable_path.substr(sep + 1) : target.executable_path;
+    pid_t kill_pid = ::fork();
+    if (kill_pid == 0) {
+        ::execlp("killall", "killall", app_name.c_str(), nullptr);
+        ::_exit(0);
+    }
+    if (kill_pid > 0) {
+        int ws;
+        ::waitpid(kill_pid, &ws, 0);
+    }
+    ::sleep(2);
+
     pid_t pid = ::fork();
     if (pid < 0) {
         std::fprintf(stderr, "[MachInjector] fork() failed: %s\n",
                      std::strerror(errno));
         return false;
     }
+
+    std::fprintf(stdout, "[MachInjector] Launching %s with dylib %s\n",
+                 target.executable_path.c_str(), dylib_path.c_str());
 
     if (pid == 0) {
         ::setenv("DYLD_INSERT_LIBRARIES", dylib_path.c_str(), 1);

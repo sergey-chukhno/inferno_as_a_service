@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include <cstdint>
+#include <cstring>
 #include <optional>
 
 #ifdef _WIN32
@@ -11,7 +12,7 @@
 #endif
 #include <winsock2.h>
 #include <ws2tcpip.h>
-#include <basetsd.h> // For SSIZE_T
+#include <basetsd.h>
 using socket_t = SOCKET;
 using ssize_t = SSIZE_T;
 #else
@@ -27,48 +28,58 @@ using socket_t = int;
 
 namespace inferno {
 
+class Packet;
+
 class Socket {
 private:
     socket_t    m_socket_fd;
     std::string m_ip;
     uint16_t    m_port;
 
+    // Malleable C2 session key (set via greeting exchange or externally)
+    bool     m_malleable = false;
+    uint8_t  m_session_key[16]{};
+    uint64_t m_send_counter = 0;
+    uint64_t m_recv_counter = 0;
+
 public:
-    // Default constructor required to satisfy Coplien Canonical Form
     Socket();
-
-    // Custom constructor used internally by acceptNode()
     Socket(socket_t fd, const std::string& ip, uint16_t port);
-
-    // Destructor
     ~Socket();
 
-    // Copy semantics are deleted: a Socket owns a unique fd,
-    // copying would lead to a double-close. Use std::move instead.
     Socket(const Socket& other)            = delete;
     Socket& operator=(const Socket& other) = delete;
-
-    // Move Constructor and Move Assignment (transfers ownership of the fd)
     Socket(Socket&& other) noexcept;
     Socket& operator=(Socket&& other) noexcept;
 
     // Core networking
     bool                  bindNode(const std::string& ip, uint16_t port);
     bool                  listen(int backlog = SOMAXCONN);
-    bool                  connectTo(const std::string& ip, uint16_t port);
+    bool                  connectTo(const std::string& ip, uint16_t port,
+                                    bool expectGreeting = true);
     std::optional<Socket> acceptNode();
-    // Returns a new Socket via move semantics
 
-    // I/O Operations
+    // Raw I/O (for greeting exchange before packet framing)
+    bool     sendRaw(const uint8_t* data, size_t len) const;
+    ssize_t  receiveRaw(uint8_t* buf, size_t max_len) const;
+
+    // Packet I/O (uses malleable format when session key is negotiated)
+    ssize_t sendPacket(uint16_t opcode, const std::string& payload);
+    std::optional<class Packet> receivePacket(std::vector<uint8_t>& buffer);
+
+    // Direct I/O (raw bytes, no framing)
     ssize_t sendData(const std::vector<uint8_t>& data) const;
     ssize_t receiveData(std::vector<uint8_t>& buffer, size_t max_bytes) const;
 
-    // Closes the socket and marks it as invalid
-    void close() noexcept;
+    // Session key management (for malleable C2 framing)
+    void                 setSessionKey(const uint8_t* key, size_t len);
+    bool                 hasSessionKey() const;
 
-    // Timeouts & keepalive for dead-connection detection
+    // Timeouts & keepalive
     bool setReceiveTimeout(unsigned seconds);
     bool setKeepAlive(unsigned idle_sec, unsigned interval_sec);
+
+    void close() noexcept;
 
     // Getters
     [[nodiscard]] socket_t    getFd()    const;

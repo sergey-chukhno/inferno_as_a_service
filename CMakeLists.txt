@@ -202,6 +202,19 @@ target_link_libraries(inferno_malleable_test PRIVATE
 )
 add_test(NAME MalleablePacket COMMAND inferno_malleable_test)
 
+# Socket Integration Tests (malleable C2 framing through real loopback sockets)
+add_executable(inferno_socket_integration_test
+    tests/socket_integration_test.cpp
+)
+target_include_directories(inferno_socket_integration_test PRIVATE
+    common/include
+)
+target_link_libraries(inferno_socket_integration_test PRIVATE
+    inferno_common OpenSSL::Crypto
+)
+add_test(NAME SocketIntegration COMMAND inferno_socket_integration_test)
+set_tests_properties(SocketIntegration PROPERTIES TIMEOUT 30)
+
 # ==========================================
 # 5b. Agent DLL (Phase 4B — Windows Injection)
 # ==========================================

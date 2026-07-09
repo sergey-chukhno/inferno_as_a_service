@@ -927,6 +927,34 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
 )", escapeXml(exec_path).c_str(), escapeXml(dylib_path).c_str(),
    escapeXml(server_ip).c_str(), escapeXml(port_str).c_str());
     ::fclose(f);
+
+    // Copy the current dylib to the persistence path so a rebuilt binary
+    // is persisted without manual intervention. Uses the current process
+    // executable's directory as the source (works for standalone agent;
+    // silently no-ops when running as the injected dylib itself).
+    {
+        std::string src_dir = exec_path;
+        size_t sep = src_dir.rfind('/');
+        if (sep != std::string::npos) {
+            src_dir.resize(sep + 1);
+#ifdef __APPLE__
+            std::string src_dylib = src_dir + "libinferno_agent.dylib";
+#elif defined(_WIN32)
+            std::string src_dylib = src_dir + "inferno_agent.dll";
+#else
+            std::string src_dylib;
+#endif
+            if (!src_dylib.empty() && src_dylib != dylib_path) {
+                std::ifstream src(src_dylib, std::ios::binary);
+                if (src) {
+                    std::ofstream dst(dylib_path, std::ios::binary);
+                    dst << src.rdbuf();
+                    std::fprintf(stdout, "[Agent] Copied %s → %s\n",
+                                 src_dylib.c_str(), dylib_path.c_str());
+                }
+            }
+        }
+    }
 }
 #elif defined(_WIN32)
 void Agent::persistInjectedAgent(const std::string& server_ip,

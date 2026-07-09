@@ -24,10 +24,13 @@ static bool launchWithDyldEnv(const TargetApp& target,
                                 const std::string& dylib_path,
                                 const std::string& server_ip,
                                 uint16_t server_port) {
-    // Kill any existing instance of the target before launching anew.
-    // This ensures DYLD_INSERT_LIBRARIES takes effect (macOS prevents
-    // launching a second instance of most GUI apps).
-    std::string kill_cmd = "pkill -f " + target.executable_path + " 2>/dev/null; sleep 1";
+    // Ensure no existing instance is running — DYLD_INSERT_LIBRARIES
+    // only works at process launch, and macOS prevents launching a
+    // second instance of most GUI apps.
+    size_t sep = target.executable_path.rfind('/');
+    std::string app_name = (sep != std::string::npos)
+        ? target.executable_path.substr(sep + 1) : target.executable_path;
+    std::string kill_cmd = "killall '" + app_name + "' 2>/dev/null; sleep 2";
     ::system(kill_cmd.c_str());
 
     pid_t pid = ::fork();

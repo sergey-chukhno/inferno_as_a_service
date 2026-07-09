@@ -273,9 +273,16 @@ std::optional<Packet> Socket::receivePacket(std::vector<uint8_t>& buffer) {
 }
 
 void Socket::setSessionKey(const uint8_t* key, size_t len) {
-    if (len > sizeof(m_session_key))
-        len = sizeof(m_session_key);
-    std::memcpy(m_session_key, key, len);
+    if (key == nullptr || len != sizeof(m_session_key)) {
+        std::memset(m_session_key, 0, sizeof(m_session_key));
+        m_malleable = false;
+        m_send_counter = 0;
+        m_recv_counter = 0;
+        return;
+    }
+    std::memcpy(m_session_key, key, sizeof(m_session_key));
+    m_send_counter = 0;
+    m_recv_counter = 0;
     m_malleable = true;
 }
 

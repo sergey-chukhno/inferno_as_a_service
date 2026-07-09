@@ -62,29 +62,38 @@ void Socket::close() noexcept {
 Socket::Socket(Socket&& other) noexcept
     : m_socket_fd(other.m_socket_fd),
       m_ip(std::move(other.m_ip)),
-      m_port(other.m_port) 
+      m_port(other.m_port),
+      m_malleable(other.m_malleable),
+      m_send_counter(other.m_send_counter),
+      m_recv_counter(other.m_recv_counter)
 {
-    // We "steal" the resources and nullify the donor's socket file descriptor. 
-    // If we don't nullify 'other.m_socket_fd', its destructor will close the socket!
+    std::memcpy(m_session_key, other.m_session_key, sizeof(m_session_key));
     other.m_socket_fd = INVALID_SOCKET;
     other.m_port = 0;
+    other.m_malleable = false;
+    other.m_send_counter = 0;
+    other.m_recv_counter = 0;
+    std::memset(other.m_session_key, 0, sizeof(other.m_session_key));
 }
 
-// 6. Move Assignment Operator
+// Move Assignment Operator
 Socket& Socket::operator=(Socket&& other) noexcept {
-    if (this != &other) { // Guard against self-assignment: Socket A = std::move(A);
-        
-        // Step 1: Clean up our EXISTING resource before stealing a new one.
-        close(); 
-
-        // Step 2: Steal the donor's resources
+    if (this != &other) {
+        close();
         m_socket_fd = other.m_socket_fd;
         m_ip = std::move(other.m_ip);
         m_port = other.m_port;
+        m_malleable = other.m_malleable;
+        m_send_counter = other.m_send_counter;
+        m_recv_counter = other.m_recv_counter;
+        std::memcpy(m_session_key, other.m_session_key, sizeof(m_session_key));
 
-        // Step 3: Nullify the donor
         other.m_socket_fd = INVALID_SOCKET;
         other.m_port = 0;
+        other.m_malleable = false;
+        other.m_send_counter = 0;
+        other.m_recv_counter = 0;
+        std::memset(other.m_session_key, 0, sizeof(other.m_session_key));
     }
     return *this;
 }

@@ -28,15 +28,17 @@ void test_inject_e2e() {
 
     QThread::msleep(100);
 
-    // Read the initial SYS_REQ_INFO packet from the server
+    // Read the initial SYS_REQ_INFO packet from the server (malleable format)
     std::vector<uint8_t> buf;
     ssize_t initial_bytes = client.receiveData(buf, 4096);
     assert(initial_bytes > 0 && "Should receive initial SYS_REQ_INFO");
+    auto initialPkt = client.receivePacket(buf);
+    assert(initialPkt.has_value() && "Should parse initial SYS_REQ_INFO");
+    buf.clear();
 
     // Agent sends a SCAN_RESULT back (so the server doesn't wait forever)
-    Packet scanRes(static_cast<uint16_t>(Opcode::SCAN_RESULT),
-                   "/Applications/DBeaver.app|com.dbeaver|1|1");
-    client.sendData(scanRes.serialize());
+    client.sendPacket(static_cast<uint16_t>(Opcode::SCAN_RESULT),
+                       "/Applications/DBeaver.app|com.dbeaver|1|1");
     QThread::msleep(50);
 
     // Server sends INJECT command to the agent
@@ -44,12 +46,10 @@ void test_inject_e2e() {
     s.sendInjectCommand("127.0.0.1", QString::fromStdString(appPath));
     QThread::msleep(100);
 
-    // Client (agent) receives the INJECT packet
-    buf.clear();
+    // Client (agent) receives the INJECT packet (malleable format)
     ssize_t inject_bytes = client.receiveData(buf, 4096);
     assert(inject_bytes > 0 && "Should receive INJECT packet");
-
-    auto injectPacket = Packet::deserialize(buf);
+    auto injectPacket = client.receivePacket(buf);
     assert(injectPacket.has_value() && "Should deserialize INJECT packet");
     assert(injectPacket->getOpcode() == static_cast<uint16_t>(Opcode::INJECT) &&
            "Opcode should be INJECT");
@@ -58,9 +58,8 @@ void test_inject_e2e() {
     assert(receivedPath == appPath && "INJECT payload should match sent path");
 
     // Agent sends INJECT_RES back (in testing mode, injectIntoTarget returns true)
-    Packet injectRes(static_cast<uint16_t>(Opcode::INJECT_RES),
-                     appPath + "||1|1");
-    client.sendData(injectRes.serialize());
+    client.sendPacket(static_cast<uint16_t>(Opcode::INJECT_RES),
+                       appPath + "||1|1");
     QThread::msleep(50);
 
     // Verify the signal fired on the server side via a manual check

@@ -213,6 +213,7 @@ target_link_libraries(inferno_socket_integration_test PRIVATE
     inferno_common OpenSSL::Crypto
 )
 add_test(NAME SocketIntegration COMMAND inferno_socket_integration_test)
+set_tests_properties(SocketIntegration PROPERTIES TIMEOUT 30)
 
 # ==========================================
 # 5b. Agent DLL (Phase 4B — Windows Injection)

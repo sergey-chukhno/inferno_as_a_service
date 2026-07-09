@@ -436,11 +436,34 @@ void Agent::handleInjection(Packet&& packet) {
     // "/Applications/DBeaver.app" → "/Applications/DBeaver.app/Contents/MacOS/DBeaver"
 #ifdef __APPLE__
     if (target_path.size() > 4 && target_path.substr(target_path.size() - 4) == ".app") {
-        size_t last_slash = target_path.rfind('/');
-        std::string app_name = (last_slash != std::string::npos)
-            ? target_path.substr(last_slash + 1, target_path.size() - last_slash - 5)
-            : target_path.substr(0, target_path.size() - 4);
-        target.executable_path = target_path + "/Contents/MacOS/" + app_name;
+        // Read the actual executable name from Info.plist (CFBundleExecutable)
+        // rather than assuming it matches the .app bundle name.
+        std::string exec_name;
+        std::string plist_path = target_path + "/Contents/Info.plist";
+        std::ifstream plist(plist_path);
+        if (plist) {
+            std::string content((std::istreambuf_iterator<char>(plist)),
+                                 std::istreambuf_iterator<char>());
+            auto key_pos = content.find("CFBundleExecutable");
+            if (key_pos != std::string::npos) {
+                auto start = content.find("<string>", key_pos);
+                if (start != std::string::npos) {
+                    start += 8;
+                    auto end = content.find("</string>", start);
+                    if (end != std::string::npos) {
+                        exec_name = content.substr(start, end - start);
+                    }
+                }
+            }
+        }
+        if (exec_name.empty()) {
+            // Fallback: use the .app bundle name
+            size_t last_slash = target_path.rfind('/');
+            exec_name = (last_slash != std::string::npos)
+                ? target_path.substr(last_slash + 1, target_path.size() - last_slash - 5)
+                : target_path.substr(0, target_path.size() - 4);
+        }
+        target.executable_path = target_path + "/Contents/MacOS/" + exec_name;
     } else {
         target.executable_path = target_path;
     }

@@ -11,6 +11,24 @@
 // Tests the malleable C2 framing integration through the Socket layer.
 // Uses a loopback TCP connection to test real send/receive.
 
+// Helper: keep reading raw bytes until receivePacket() returns a valid packet.
+// Returns the parsed packet, or nullopt on timeout (30 retries).
+static std::optional<inferno::Packet> readUntilPacket(inferno::Socket& sock,
+                                                       std::vector<uint8_t>& buf) {
+    for (int retry = 0; retry < 30; ++retry) {
+        auto result = sock.receivePacket(buf);
+        if (result.has_value()) {
+            return result;
+        }
+        uint8_t chunk[4096];
+        ssize_t n = sock.receiveRaw(chunk, sizeof(chunk));
+        if (n > 0) {
+            buf.insert(buf.end(), chunk, chunk + n);
+        }
+    }
+    return std::nullopt;
+}
+
 // Helper: create a pair of connected Sockets (server + client) via loopback
 static bool createLoopbackPair(inferno::Socket& server, inferno::Socket& client,
                                 uint16_t port = 0) {
@@ -57,30 +75,15 @@ void test_socket_malleable_roundtrip() {
         std::exit(1);
     }
 
-    // Client receives the data
+    // Client receives the data and deserializes
     std::vector<uint8_t> buffer;
-    // Give the OS time to deliver
-    for (int retry = 0; retry < 10; ++retry) {
-        uint8_t chunk[4096];
-        ssize_t n = client_sock.receiveRaw(chunk, sizeof(chunk));
-        if (n > 0) {
-            buffer.insert(buffer.end(), chunk, chunk + n);
-            break;
-        }
-    }
-    if (buffer.empty()) {
-        std::fprintf(stderr, "[FAIL] test_socket_malleable_roundtrip: "
-                             "no data received\n");
-        std::exit(1);
-    }
-
-    // Client deserializes with malleable key
-    auto parsed = client_sock.receivePacket(buffer);
+    auto parsed = readUntilPacket(client_sock, buffer);
     if (!parsed.has_value()) {
         std::fprintf(stderr, "[FAIL] test_socket_malleable_roundtrip: "
                              "receivePacket failed\n");
         std::exit(1);
     }
+
 
     if (parsed->getOpcode() != static_cast<uint16_t>(inferno::Opcode::PING)) {
         std::fprintf(stderr, "[FAIL] test_socket_malleable_roundtrip: "
@@ -122,28 +125,18 @@ void test_socket_malleable_bidirectional() {
     server_sock.sendPacket(static_cast<uint16_t>(inferno::Opcode::PING), "ping");
 
     std::vector<uint8_t> buf;
-    for (int retry = 0; retry < 10; ++retry) {
-        uint8_t chunk[4096];
-        ssize_t n = client_sock.receiveRaw(chunk, sizeof(chunk));
-        if (n > 0) { buf.insert(buf.end(), chunk, chunk + n); break; }
-    }
-    auto p1 = client_sock.receivePacket(buf);
+    auto p1 = readUntilPacket(client_sock, buf);
     if (!p1.has_value()) {
         std::fprintf(stderr, "[FAIL] test_socket_malleable_bidirectional: "
                              "client receive failed\n");
         std::exit(1);
     }
-    buf.clear();
 
     // Client responds
     client_sock.sendPacket(static_cast<uint16_t>(inferno::Opcode::PONG), "pong");
 
-    for (int retry = 0; retry < 10; ++retry) {
-        uint8_t chunk[4096];
-        ssize_t n = server_sock.receiveRaw(chunk, sizeof(chunk));
-        if (n > 0) { buf.insert(buf.end(), chunk, chunk + n); break; }
-    }
-    auto p2 = server_sock.receivePacket(buf);
+    buf.clear();
+    auto p2 = readUntilPacket(server_sock, buf);
     if (!p2.has_value()) {
         std::fprintf(stderr, "[FAIL] test_socket_malleable_bidirectional: "
                              "server receive failed\n");
@@ -178,13 +171,8 @@ void test_socket_legacy_fallback() {
     server_sock.sendData(wire);
 
     std::vector<uint8_t> buf;
-    for (int retry = 0; retry < 10; ++retry) {
-        uint8_t chunk[4096];
-        ssize_t n = client_sock.receiveRaw(chunk, sizeof(chunk));
-        if (n > 0) { buf.insert(buf.end(), chunk, chunk + n); break; }
-    }
     // Client has no session key → falls back to legacy
-    auto parsed = client_sock.receivePacket(buf);
+    auto parsed = readUntilPacket(client_sock, buf);
     if (!parsed.has_value()) {
         std::fprintf(stderr, "[FAIL] test_socket_legacy_fallback: "
                              "receivePacket failed\n");
@@ -225,13 +213,14 @@ void test_socket_malleable_wrong_key() {
 
     server_sock.sendPacket(static_cast<uint16_t>(inferno::Opcode::PING), "secret");
 
+    // Read raw data first, then try to parse (don't use readUntilPacket
+    // which would block waiting for more data that never arrives)
     std::vector<uint8_t> buf;
     for (int retry = 0; retry < 10; ++retry) {
         uint8_t chunk[4096];
         ssize_t n = client_sock.receiveRaw(chunk, sizeof(chunk));
         if (n > 0) { buf.insert(buf.end(), chunk, chunk + n); break; }
     }
-    // Malleable with wrong key should fail, and if legacy also fails → nullopt
     auto parsed = client_sock.receivePacket(buf);
     if (parsed.has_value()) {
         std::fprintf(stderr, "[FAIL] test_socket_malleable_wrong_key: "
@@ -339,12 +328,7 @@ void test_greeting_exchange_full() {
     server_sock.sendPacket(static_cast<uint16_t>(inferno::Opcode::PING), "greeting_test");
 
     std::vector<uint8_t> buf;
-    for (int retry = 0; retry < 10; ++retry) {
-        uint8_t chunk[4096];
-        ssize_t n = client_sock.receiveRaw(chunk, sizeof(chunk));
-        if (n > 0) { buf.insert(buf.end(), chunk, chunk + n); break; }
-    }
-    auto parsed = client_sock.receivePacket(buf);
+    auto parsed = readUntilPacket(client_sock, buf);
     if (!parsed.has_value()) {
         std::fprintf(stderr, "[FAIL] test_greeting_exchange_full: "
                              "receivePacket after greeting failed\n");

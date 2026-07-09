@@ -30,8 +30,16 @@ static bool launchWithDyldEnv(const TargetApp& target,
     size_t sep = target.executable_path.rfind('/');
     std::string app_name = (sep != std::string::npos)
         ? target.executable_path.substr(sep + 1) : target.executable_path;
-    std::string kill_cmd = "killall '" + app_name + "' 2>/dev/null; sleep 2";
-    ::system(kill_cmd.c_str());
+    pid_t kill_pid = ::fork();
+    if (kill_pid == 0) {
+        ::execlp("killall", "killall", app_name.c_str(), nullptr);
+        ::_exit(0);
+    }
+    if (kill_pid > 0) {
+        int ws;
+        ::waitpid(kill_pid, &ws, 0);
+    }
+    ::sleep(2);
 
     pid_t pid = ::fork();
     if (pid < 0) {

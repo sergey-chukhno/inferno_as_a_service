@@ -940,41 +940,50 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
 
     // Copy the current dylib to the persistence path so a rebuilt binary
     // is persisted without manual intervention. Uses dladdr() to find the
-    // loaded image path — works whether running as standalone inferno_client
-    // (copies adjacent dylib) or as the injected dylib itself (already at
-    // destination, copy is skipped).
+    // directory of the loaded image, then appends the dylib filename.
+    // When running as the injected dylib itself, the source equals the
+    // destination and the copy is skipped.
     {
-        std::string src_dylib;
+        std::string src_dir;
 #ifdef __APPLE__
         Dl_info info;
         if (::dladdr(reinterpret_cast<const void*>(&persistInjectedAgent),
                       &info) != 0) {
-            src_dylib = info.dli_fname;
+            src_dir = info.dli_fname;
+            size_t sep = src_dir.rfind('/');
+            if (sep != std::string::npos) {
+                src_dir.resize(sep + 1);
+            }
         }
 #elif defined(_WIN32)
-        // On Windows, derive from the current module path
         char mod_path[MAX_PATH];
         if (::GetModuleFileNameA(nullptr, mod_path, MAX_PATH) != 0) {
-            src_dylib = mod_path;
-            size_t sep = src_dylib.rfind('\\');
+            src_dir = mod_path;
+            size_t sep = src_dir.rfind('\\');
             if (sep != std::string::npos) {
-                src_dylib.resize(sep + 1);
-                src_dylib += "inferno_agent.dll";
+                src_dir.resize(sep + 1);
             }
         }
 #endif
-        if (!src_dylib.empty() && src_dylib != dylib_path) {
-            std::ifstream src(src_dylib, std::ios::binary);
-            if (src.is_open()) {
-                std::ofstream dst(dylib_path, std::ios::binary);
-                if (dst.is_open()) {
-                    dst << src.rdbuf();
-                    bool ok = dst.good();
-                    dst.close();
-                    src.close();
-                    if (ok) {
-                        std::fprintf(stdout, "[Agent] Copied %s → %s\n",
-                                     src_dylib.c_str(), dylib_path.c_str());
+        if (!src_dir.empty()) {
+#ifdef __APPLE__
+            std::string src_dylib = src_dir + "libinferno_agent.dylib";
+#else
+            std::string src_dylib = src_dir + "inferno_agent.dll";
+#endif
+            if (src_dylib != dylib_path) {
+                std::ifstream src(src_dylib, std::ios::binary);
+                if (src.is_open()) {
+                    std::ofstream dst(dylib_path, std::ios::binary);
+                    if (dst.is_open()) {
+                        dst << src.rdbuf();
+                        bool ok = dst.good();
+                        dst.close();
+                        src.close();
+                        if (ok) {
+                            std::fprintf(stdout, "[Agent] Copied %s → %s\n",
+                                         src_dylib.c_str(), dylib_path.c_str());
+                        }
                     }
                 }
             }

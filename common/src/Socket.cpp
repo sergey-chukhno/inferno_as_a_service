@@ -185,9 +185,10 @@ bool Socket::connectTo(const std::string& ip, uint16_t port, bool expectGreeting
         uint8_t greeting[CryptoContext::GREETING_SIZE];
         size_t total = 0;
         while (total < sizeof(greeting)) {
+            int recv_len = static_cast<int>(sizeof(greeting) - total);
             ssize_t n = ::recv(m_socket_fd,
                                reinterpret_cast<char*>(greeting) + total,
-                               sizeof(greeting) - total, 0);
+                               recv_len, 0);
             if (n <= 0) break;
             total += static_cast<size_t>(n);
         }
@@ -235,14 +236,18 @@ std::optional<Socket> Socket::acceptNode() {
 
 bool Socket::sendRaw(const uint8_t* data, size_t len) const {
     if (!isValid()) return false;
+    int send_len = static_cast<int>(len);
+    if (static_cast<size_t>(send_len) != len) return false; // truncation check
     ssize_t sent = ::send(m_socket_fd,
-                          reinterpret_cast<const char*>(data), len, 0);
-    return sent == static_cast<ssize_t>(len);
+                          reinterpret_cast<const char*>(data), send_len, 0);
+    return sent == static_cast<ssize_t>(send_len);
 }
 
 ssize_t Socket::receiveRaw(uint8_t* buf, size_t max_len) const {
     if (!isValid()) return -1;
-    return ::recv(m_socket_fd, reinterpret_cast<char*>(buf), max_len, 0);
+    int recv_len = static_cast<int>(max_len);
+    if (static_cast<size_t>(recv_len) != max_len) return -1;
+    return ::recv(m_socket_fd, reinterpret_cast<char*>(buf), recv_len, 0);
 }
 
 ssize_t Socket::sendPacket(uint16_t opcode, const std::string& payload) {
@@ -257,9 +262,11 @@ ssize_t Socket::sendPacket(uint16_t opcode, const std::string& payload) {
         data = p.serialize();
     }
     if (data.empty()) return -1;
+    int send_len = static_cast<int>(data.size());
+    if (static_cast<size_t>(send_len) != data.size()) return -1;
     return ::send(m_socket_fd,
                   reinterpret_cast<const char*>(data.data()),
-                  data.size(), 0);
+                  send_len, 0);
 }
 
 std::optional<Packet> Socket::receivePacket(std::vector<uint8_t>& buffer) {

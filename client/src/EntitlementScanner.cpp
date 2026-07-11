@@ -95,23 +95,26 @@ static bool containsEntitlementXML(const std::string& s) {
 }
 
 static InjectionCapability classifyEntitlements(const std::string& entitlements) {
-    if (entitlements.empty() || !containsEntitlementXML(entitlements)) {
-        // Empty output or non-XML output (e.g. "Executable=..." for
-        // ad-hoc signed binaries) means no restricted entitlements —
-        // DYLD_INSERT_LIBRARIES is allowed.
-        return InjectionCapability::DYLD_INSERT_LIBRARIES;
+    if (containsEntitlementXML(entitlements)) {
+        // Signed binary with entitlements — check for DYLD-enabling ones
+        bool has_dyld_env = entitlements.find(
+            "com.apple.security.cs.allow-dyld-environment-variables") != std::string::npos;
+        bool has_disable_lib_val = entitlements.find(
+            "com.apple.security.cs.disable-library-validation") != std::string::npos;
+        if (has_dyld_env) {
+            return InjectionCapability::DYLD_INSERT_LIBRARIES;
+        }
+        if (has_disable_lib_val) {
+            return InjectionCapability::MACH_VM_ALLOCATE;
+        }
+        // Properly signed but no DYLD entitlement — hardened runtime blocks
+        return InjectionCapability::NONE;
     }
-    bool has_dyld_env = entitlements.find(
-        "com.apple.security.cs.allow-dyld-environment-variables") != std::string::npos;
-    bool has_disable_lib_val = entitlements.find(
-        "com.apple.security.cs.disable-library-validation") != std::string::npos;
-    if (has_dyld_env && has_disable_lib_val) {
-        return InjectionCapability::DYLD_INSERT_LIBRARIES;
-    }
-    if (has_disable_lib_val) {
-        return InjectionCapability::MACH_VM_ALLOCATE;
-    }
-    return InjectionCapability::NONE;
+
+    // Empty or non-XML output (unsigned, ad-hoc, or error).
+    // For unsigned or ad-hoc signed binaries, the injector strips the
+    // signature at injection time, so DYLD_INSERT_LIBRARIES will work.
+    return InjectionCapability::DYLD_INSERT_LIBRARIES;
 }
 
 static int scoreCapability(InjectionCapability cap) {

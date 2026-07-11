@@ -7,7 +7,9 @@
 #include "../common/include/Packet.hpp"
 
 #include <sys/stat.h>
+#ifndef _WIN32
 #include <unistd.h>
+#endif
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN

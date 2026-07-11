@@ -30,6 +30,7 @@
 #include <lmcons.h>
 #include <shlobj.h>
 #include <shellapi.h>
+#include <direct.h>
 #else
 #include <unistd.h>
 #include <sys/utsname.h>
@@ -242,8 +243,8 @@ void Agent::handleDispatching(Packet&& packet) {
     {
         FILE* f = ::fopen("/tmp/inject_reached.txt", "a");
         if (f) {
-            std::fprintf(f, "handleDispatching opcode=0x%04x at %ld\n",
-                         opcode, time(nullptr));
+            std::fprintf(f, "handleDispatching opcode=0x%04x at %lld\n",
+                         opcode, static_cast<long long>(time(nullptr)));
             ::fclose(f);
         }
     }
@@ -460,8 +461,8 @@ void Agent::handleInjection(Packet&& packet) {
     {
         FILE* f = ::fopen("/tmp/inject_reached.txt", "a");
         if (f) {
-            std::fprintf(f, "handleInjection called for '%s' at %ld\n",
-                         target_path.c_str(), time(nullptr));
+            std::fprintf(f, "handleInjection called for '%s' at %lld\n",
+                         target_path.c_str(), static_cast<long long>(time(nullptr)));
             ::fclose(f);
         }
     }
@@ -543,7 +544,11 @@ void Agent::handleInjection(Packet&& packet) {
                 if (src.is_open()) {
                     const char* home = ::getenv("HOME");
                     if (home) {
+#ifdef _WIN32
+                        ::_mkdir((std::string(home) + "/.cache").c_str());
+#else
                         ::mkdir((std::string(home) + "/.cache").c_str(), 0700);
+#endif
                         std::ofstream dst(dylib_path, std::ios::binary);
                         if (dst.is_open()) {
                             dst << src.rdbuf();

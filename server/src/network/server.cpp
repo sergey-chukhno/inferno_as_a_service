@@ -90,10 +90,8 @@ void Server::run() {
         time_t now = std::time(nullptr);
         if (now - m_last_heartbeat >= 5) {
             m_last_heartbeat = now;
-            Packet ping(static_cast<uint16_t>(Opcode::PING), "");
-            std::vector<uint8_t> ping_data = ping.serialize();
             for (auto& client : m_clients) {
-                client.socket.sendData(ping_data);
+                client.socket.sendPacket(static_cast<uint16_t>(Opcode::PING), "");
             }
         }
 
@@ -191,8 +189,7 @@ void Server::processPacketBuffer(ClientContext& client) {
         if (opcode == static_cast<uint16_t>(Opcode::SYS_RES_INFO)) {
             emit agentConnected(QString::fromStdString(client.socket.getIp()), QString::fromStdString(payload_str));
             
-            Packet req(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
-            client.socket.sendData(req.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(Opcode::PROC_LIST_REQ), "");
 
         } else if (opcode == static_cast<uint16_t>(Opcode::CMD_RES)) {
             QString output = QString::fromStdString(sanitizeOutput(payload_str, 3, payload_str.size()-3));
@@ -322,8 +319,7 @@ void Server::sendShellCommand(const QString& ip, const QString& cmd) {
             payload.push_back(static_cast<char>(len & 0xFF));
             payload.append(cmd_str);
             
-            Packet p(static_cast<uint16_t>(Opcode::CMD_EXEC), payload);
-            client.socket.sendData(p.serialize());
+            client.socket.sendPacket(static_cast<uint16_t>(Opcode::CMD_EXEC), payload);
             break;
         }
     }

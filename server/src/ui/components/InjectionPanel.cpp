@@ -41,12 +41,12 @@ InjectionPanel::InjectionPanel(QWidget* parent)
     });
     m_table->horizontalHeader()->setStretchLastSection(false);
     m_table->horizontalHeader()->setSectionResizeMode(COL_ACTION, QHeaderView::Fixed);
-    m_table->setColumnWidth(COL_ACTION, 160);
+    m_table->setColumnWidth(COL_ACTION, 190);
     m_table->setColumnWidth(COL_TCC, 60);
     m_table->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_table->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_table->setStyleSheet(ui::style::INTEL_TABLE);
-    m_table->verticalHeader()->setDefaultSectionSize(42);
+    m_table->verticalHeader()->setDefaultSectionSize(50);
     layout->addWidget(m_table);
 }
 
@@ -62,12 +62,12 @@ void InjectionPanel::addActionButton(int row, const QString& ip,
     if (isInjected) {
         injectBtn->setStyleSheet(
             "QPushButton { background: #333; color: #666; "
-            "border: 1px solid #444; font-size: 12px; border-radius: 4px; }");
+            "border: 1px solid #444; font-size: 12px; border-radius: 4px; padding: 2px 4px; }");
     } else {
         injectBtn->setStyleSheet(
             "QPushButton { background: #004d00; color: #00ff41; "
             "border: 2px solid #00ff41; font-size: 12px; border-radius: 4px; "
-            "font-weight: bold; }"
+            "font-weight: bold; padding: 2px 4px; }"
             "QPushButton:hover { background: #00ff41; color: #000; }");
         injectBtn->setEnabled(true);
     }
@@ -84,7 +84,7 @@ void InjectionPanel::addActionButton(int row, const QString& ip,
         tccBtn->setFixedSize(80, 30);
         tccBtn->setStyleSheet(
             "QPushButton { background: #1a1a4e; color: #4488ff; "
-            "border: 1px solid #4488ff; font-size: 11px; border-radius: 4px; }"
+            "border: 1px solid #4488ff; font-size: 11px; border-radius: 4px; padding: 2px 4px; }"
             "QPushButton:hover { background: #2a2a5e; }");
         tccBtn->setEnabled(true);
         QString bundleId = tccItem->data(Qt::UserRole).toString();

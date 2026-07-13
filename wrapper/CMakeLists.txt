@@ -93,6 +93,7 @@ set_target_properties(inferno_wrapper PROPERTIES
 )
 
 if(WIN32)
+    target_compile_definitions(inferno_wrapper PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(inferno_wrapper PRIVATE shell32)
 endif()
 

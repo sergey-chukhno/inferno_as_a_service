@@ -15,6 +15,7 @@
 #endif
 
 #include <cstdio>
+#include <cstring>
 
 namespace inferno { namespace capture {
 

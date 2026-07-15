@@ -31,6 +31,7 @@
 #include <shlobj.h>
 #include <shellapi.h>
 #include <direct.h>
+#include <sys/stat.h>
 #else
 #include <unistd.h>
 #include <sys/utsname.h>

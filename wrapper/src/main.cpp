@@ -231,7 +231,8 @@ bool runAgent(const std::string& path, const std::string& ip, uint16_t port) {
 
 #ifdef _WIN32
     std::string cmd = "\"" + path + "\" " + ip + " " + port_str;
-    STARTUPINFOA si = {sizeof(si)};
+    STARTUPINFOA si{};
+    si.cb = sizeof(si);
     PROCESS_INFORMATION pi;
     if (!CreateProcessA(nullptr, const_cast<char*>(cmd.c_str()),
                         nullptr, nullptr, FALSE,

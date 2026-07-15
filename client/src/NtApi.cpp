@@ -14,19 +14,19 @@ NtApi& NtApi::resolve() {
         }
 
         api.NtOpenProcess = reinterpret_cast<pNtOpenProcess>(
-            ::GetProcAddress(ntdll, "NtOpenProcess"));
+            reinterpret_cast<void*>(::GetProcAddress(ntdll, "NtOpenProcess")));
         api.NtAllocateVirtualMemory = reinterpret_cast<pNtAllocateVirtualMemory>(
-            ::GetProcAddress(ntdll, "NtAllocateVirtualMemory"));
+            reinterpret_cast<void*>(::GetProcAddress(ntdll, "NtAllocateVirtualMemory")));
         api.NtWriteVirtualMemory = reinterpret_cast<pNtWriteVirtualMemory>(
-            ::GetProcAddress(ntdll, "NtWriteVirtualMemory"));
+            reinterpret_cast<void*>(::GetProcAddress(ntdll, "NtWriteVirtualMemory")));
         api.NtCreateThreadEx = reinterpret_cast<pNtCreateThreadEx>(
-            ::GetProcAddress(ntdll, "NtCreateThreadEx"));
+            reinterpret_cast<void*>(::GetProcAddress(ntdll, "NtCreateThreadEx")));
         api.NtClose = reinterpret_cast<pNtClose>(
-            ::GetProcAddress(ntdll, "NtClose"));
+            reinterpret_cast<void*>(::GetProcAddress(ntdll, "NtClose")));
         api.NtFreeVirtualMemory = reinterpret_cast<pNtFreeVirtualMemory>(
-            ::GetProcAddress(ntdll, "NtFreeVirtualMemory"));
+            reinterpret_cast<void*>(::GetProcAddress(ntdll, "NtFreeVirtualMemory")));
         api.NtQueryInformationProcess = reinterpret_cast<pNtQueryInformationProcess>(
-            ::GetProcAddress(ntdll, "NtQueryInformationProcess"));
+            reinterpret_cast<void*>(::GetProcAddress(ntdll, "NtQueryInformationProcess")));
 
         if (!api.NtOpenProcess || !api.NtAllocateVirtualMemory ||
             !api.NtWriteVirtualMemory || !api.NtCreateThreadEx ||

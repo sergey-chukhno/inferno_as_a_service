@@ -68,10 +68,10 @@ static bool captureViaDxgi(std::vector<uint8_t>& pixels,
                                           UINT, ID3D11Device**,
                                           D3D_FEATURE_LEVEL*,
                                           ID3D11DeviceContext**)>(
-            ::GetProcAddress(d3d11, "D3D11CreateDevice"));
+            reinterpret_cast<void*>(::GetProcAddress(d3d11, "D3D11CreateDevice")));
     auto pCreateDXGIFactory1 =
         reinterpret_cast<HRESULT(WINAPI*)(REFIID, void**)>(
-            ::GetProcAddress(dxgi, "CreateDXGIFactory1"));
+            reinterpret_cast<void*>(::GetProcAddress(dxgi, "CreateDXGIFactory1")));
 
     if (!pD3D11CreateDevice || !pCreateDXGIFactory1) return false;
 

@@ -173,6 +173,111 @@ def make_minimal_pe64() -> bytes:
     return bytes(chunks)
 
 
+def make_minimal_pe32() -> bytes:
+    """Generate a minimal valid PE32 (x86) binary with sections.
+
+    Uses a smaller optional header (224 bytes) and PE32-specific fields
+    (4-byte ImageBase, present BaseOfData, 4-byte stack/heap sizes).
+    """
+    chunks = bytearray()
+
+    # ── DOS Header (64 bytes) ──────────────────────────────
+    dos = bytearray(64)
+    struct.pack_into("<H", dos, 0, 0x5A4D)
+    struct.pack_into("<I", dos, 0x3C, 64)
+    chunks.extend(dos)
+
+    # ── PE Signature ──────────────────────────────────────
+    chunks.extend(b'PE\x00\x00')
+
+    # ── IMAGE_FILE_HEADER (20 bytes) ──────────────────────
+    num_sections = 2
+    opt_hdr_size = 224  # PE32 standard (0xE0)
+    chunks.extend(struct.pack("<HHIIIHH",
+                              0x14C,        # Machine: I386
+                              num_sections,
+                              0, 0, 0,      # TimeDate, SymTab, NumSym
+                              opt_hdr_size,
+                              0x0102))      # EXECUTABLE_IMAGE | 32BIT_MACHINE
+
+    # ── IMAGE_OPTIONAL_HEADER32 (224 bytes) ───────────────
+    image_base = 0x00400000
+    section_align = 0x1000
+    file_align = 0x200
+    entry_rva = 0x1000
+
+    oh = bytearray(opt_hdr_size)
+    off = 0
+    # Magic(2) + LinkerVersion(2) + SizeOfCode(4) + SizeOfInitData(4) +
+    # SizeOfUninitData(4) + AddressOfEntryPoint(4) + BaseOfCode(4) = 24
+    struct.pack_into("<HBBIIIII", oh, off,
+                     0x010B,    # PE32 magic
+                     8, 0,      # linker version 8.0
+                     0x1000,    # SizeOfCode
+                     0x2000,    # SizeOfInitializedData
+                     0,         # SizeOfUninitializedData
+                     entry_rva, # AddressOfEntryPoint
+                     0x1000)    # BaseOfCode
+    off += 24
+    # BaseOfData(4) + ImageBase(4) = 8
+    struct.pack_into("<II", oh, off, 0x2000, image_base)
+    off += 8
+    # SectionAlignment(4) + FileAlignment(4) + OSVer(2+2) + ImageVer(2+2) +
+    # SubsysVer(2+2) + Win32Version(4) = 24
+    struct.pack_into("<IIHHHHHHI", oh, off,
+                     section_align, file_align,
+                     6, 0, 0, 0, 6, 0, 0)
+    off += 24
+    # SizeOfImage(4) + SizeOfHeaders(4) + CheckSum(4) + Subsystem(2) +
+    # DllCharacteristics(2) = 16
+    struct.pack_into("<IIIHH", oh, off,
+                     0x3000,    # SizeOfImage
+                     0x1000,    # SizeOfHeaders
+                     0,         # CheckSum
+                     2,         # Subsystem: WINDOWS_GUI
+                     0x0140)    # DllCharacteristics
+    off += 16
+    # StackReserve(4) + StackCommit(4) + HeapReserve(4) + HeapCommit(4) = 16
+    struct.pack_into("<IIII", oh, off,
+                     0x100000, 0x10000, 0x100000, 0x1000)
+    off += 16
+    # LoaderFlags(4) + NumberOfRvaAndSizes(4) = 8
+    struct.pack_into("<II", oh, off, 0, 16)
+    off += 8
+
+    # Data directories (16 × 8 = 128 bytes) — all zero (no imports needed)
+    # We're at the right offset since off + 128 should fill 224 bytes
+    chunks.extend(oh)
+
+    # ── Section Table (2 × 40 = 80 bytes) ─────────────────
+    sections_data = [
+        (b'.text\x00\x00\x00',   256, 0x1000, 0x200, 0x400, 0x60000020),
+        (b'.rdata\x00\x00\x00',  128, 0x2000, 0x200, 0x600, 0x40000040),
+    ]
+    for name, vs, va, srd, prd, chars in sections_data:
+        sec_hdr = bytearray(40)
+        struct.pack_into("<8sIIIIIIHHI", sec_hdr, 0,
+                         name, vs, va, srd, prd,
+                         0, 0, 0, 0, chars)
+        chunks.extend(sec_hdr)
+
+    # Pad to file_align (0x400)
+    while len(chunks) < 0x400:
+        chunks.append(0)
+
+    # ── Section data ──────────────────────────────────────
+    # .text at 0x400: RET (0xC3) × 256, padded to 0x200
+    text_data = bytearray([0xC3] * 256)
+    text_data.extend([0] * (0x200 - len(text_data)))
+    chunks.extend(text_data)
+
+    # .rdata at 0x600: 128 bytes of zeros, padded to 0x200
+    rdata = bytearray(0x200)
+    chunks.extend(rdata)
+
+    return bytes(chunks)
+
+
 # ═══════════════════════════════════════════════════════════════
 # Test Functions
 # ═══════════════════════════════════════════════════════════════
@@ -189,6 +294,33 @@ def test_pe_parse():
     assert pe.section_alignment == 0x1000
     assert pe.file_alignment == 0x200
     print("[PASS] test_pe_parse")
+
+
+def test_pe32_parse():
+    """Verify PE32 (x86) parsing — regression for format string bug."""
+    data = make_minimal_pe32()
+    pe = PEFile(data)
+    assert pe.machine == 0x14C, f"Expected I386, got 0x{pe.machine:04X}"
+    assert pe.is_pe32, "Expected PE32"
+    assert not pe.is_pe32plus, "Should not be PE32+"
+    assert pe.num_sections == 2, f"Expected 2 sections, got {pe.num_sections}"
+    assert pe.address_of_entry_point == 0x1000
+    assert pe.image_base == 0x00400000
+    assert pe.base_of_data == 0x2000
+    assert pe.section_alignment == 0x1000
+    assert pe.file_alignment == 0x200
+    assert pe.size_of_stack_reserve == 0x100000
+    assert pe.size_of_stack_commit == 0x10000
+    assert pe.size_of_heap_reserve == 0x100000
+    assert pe.size_of_heap_commit == 0x1000
+    # Verify entry point is in .text
+    entry_sec = pe.entry_section()
+    assert entry_sec is not None
+    assert entry_sec.name == '.text', f"Entry in '{entry_sec.name}'"
+    # Verify data directories parsed
+    for i in range(16):
+        pe.get_data_dir(i)  # Should not raise
+    print("[PASS] test_pe32_parse")
 
 
 def test_section_names():
@@ -509,6 +641,7 @@ IMAGE_DIRECTORY_ENTRY_BASERELOC = 5
 def main():
     tests = [
         test_pe_parse,
+        test_pe32_parse,
         test_section_names,
         test_section_raw_data,
         test_entry_point_in_text,

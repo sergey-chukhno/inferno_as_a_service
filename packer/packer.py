@@ -196,7 +196,7 @@ class PEFile:
     def _parse_opt32(self, d, off):
         self.is_pe32 = True
         self.is_pe32plus = False
-        fmt = "<HBBIIIIIIIIHHHHHHIIIIHHIIIIII"
+        fmt = "<HBBIIIIIIIIIHHHHHHIIIIHHIIIIII"
         fmt_size = struct.calcsize(fmt)
         self._check_bounds(d, off, fmt_size, "optional header (PE32)")
         vals = struct.unpack_from(fmt, d, off)

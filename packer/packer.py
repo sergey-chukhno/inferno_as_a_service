@@ -577,7 +577,17 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     TLS callback can execute. The section header is updated in-place.
 
     Returns (stub_rva, stub_size, tls_rva).
+
+    Raises ValueError if the PE already has a TLS directory — merging
+    callbacks is not yet supported and would discard existing TLS
+    initialization.
     """
+    if not quick and pe.tls_dir is not None:
+        raise ValueError(
+            "PE already has a TLS directory. Merging callbacks is not "
+            "supported. Strip the existing TLS directory first (e.g. "
+            "using 'strip --strip-tls' or manually zero the TLS data "
+            "directory entry) before packing.")
     stub_size = len(stub_blob)
     file_align = pe.file_alignment
     sec_align = pe.section_alignment

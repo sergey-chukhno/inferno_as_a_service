@@ -430,6 +430,10 @@ def make_key(hex_key: Optional[str] = None) -> bytes:
         if not k:
             print("Error: key must be non-empty", file=sys.stderr)
             sys.exit(1)
+        if len(k) > DEFAULT_KEY_SIZE:
+            print(f"Error: key too long ({len(k)} > {DEFAULT_KEY_SIZE} bytes)",
+                  file=sys.stderr)
+            sys.exit(1)
         return k
     return os.urandom(DEFAULT_KEY_SIZE)
 
@@ -532,6 +536,10 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
     compressed_sz != decompressed_sz, the stub applies LZ4
     decompression after XOR decryption.
     """
+    if not 1 <= len(key) <= DEFAULT_KEY_SIZE:
+        raise ValueError(
+            f"XOR key must be 1–{DEFAULT_KEY_SIZE} bytes "
+            f"(got {len(key)})")
     header = struct.pack("<II32sQII",
                          STUB_MAGIC,
                          len(key),

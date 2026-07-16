@@ -487,7 +487,7 @@ def test_pack_sections_no_compress():
 
 def test_build_stub():
     """Verify stub header is structurally valid."""
-    key = make_key("AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899")
+    key = make_key("AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899")  # 32 bytes
     table = [
         {'rva': 0x1000, 'compressed_sz': 256, 'decompressed_sz': 512},
         {'rva': 0x2000, 'compressed_sz': 128, 'decompressed_sz': 256},
@@ -508,6 +508,22 @@ def test_build_stub():
     num_sec = struct.unpack_from("<I", stub, 48)[0]
     assert num_sec == 2, f"Expected num_sec=2, got {num_sec}"
     print("[PASS] test_build_stub")
+
+
+def test_build_stub_rejects_long_key():
+    """Verify overlong keys (>32 bytes) raise ValueError."""
+    table = [{'rva': 0x1000, 'compressed_sz': 16, 'decompressed_sz': 32}]
+    long_key = b'A' * 33
+    try:
+        build_stub(long_key, 0x140000000, table, quick=True)
+        assert False, "Should have raised ValueError for 33-byte key"
+    except ValueError:
+        pass
+    # 32-byte key should work
+    valid_key = b'B' * 32
+    stub = build_stub(valid_key, 0x140000000, table, quick=True)
+    assert len(stub) > 0
+    print("[PASS] test_build_stub_rejects_long_key")
 
 
 def test_inject_stub():
@@ -658,6 +674,7 @@ def main():
         test_pack_sections,
         test_pack_sections_no_compress,
         test_build_stub,
+        test_build_stub_rejects_long_key,
         test_inject_stub,
         test_inject_stub_quick,
         test_full_pack_quick,

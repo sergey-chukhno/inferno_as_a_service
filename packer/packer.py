@@ -665,18 +665,24 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     # New raw size: cover everything up to end of TLS directory
     total_raw_end = tls_dir_offset + tls_dir_size
     total_raw_used = total_raw_end - last.pointer_to_raw_data
+    # Preserve the existing raw size — we grow it but never shrink.
+    # (A section may have virtual_size > size_of_raw_data, giving it
+    # a zero-filled tail in memory; we preserve that below.)
+    old_raw_size = last.size_of_raw_data
     new_raw_size = pe.align_up(total_raw_used, file_align)
-    last.size_of_raw_data = new_raw_size
+    last.size_of_raw_data = max(old_raw_size, new_raw_size)
 
     # Ensure file data covers the aligned raw size
-    min_file_len = last.pointer_to_raw_data + new_raw_size
+    min_file_len = last.pointer_to_raw_data + last.size_of_raw_data
     if len(pe.data) < min_file_len:
         pe.data.extend([0xAB] * (min_file_len - len(pe.data)))
 
-    # New virtual size: cover the stub + TLS data
+    # Preserve any pre-existing zero-filled virtual tail.
+    # We only grow virtual_size if the stub extends beyond it.
     stub_virtual_end = stub_rva + (total_raw_end - stub_offset)
+    old_virtual_size = last.virtual_size
     new_virtual_size = stub_virtual_end - last.virtual_address
-    last.virtual_size = new_virtual_size
+    last.virtual_size = max(old_virtual_size, new_virtual_size)
 
     # Add EXECUTE | READ to section characteristics so the TLS
     # callback code can run from this section.

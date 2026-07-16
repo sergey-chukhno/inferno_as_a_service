@@ -164,6 +164,12 @@ class PEFile:
         else:
             raise ValueError(f"Unknown opt hdr magic: 0x{opt_magic:04X}")
 
+        if self.file_alignment == 0 or self.section_alignment == 0:
+            raise ValueError(
+                "PE alignment values must be non-zero "
+                f"(FileAlignment=0x{self.file_alignment:X}, "
+                f"SectionAlignment=0x{self.section_alignment:X})")
+
         # Sanity-check section count
         if self.num_sections > 100:
             raise ValueError(

@@ -18,7 +18,8 @@ import tempfile
 # Add parent dir so we can import packer
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from packer.packer import (PEFile, make_key, collect_descriptors, rolling_xor,
-                            pack_sections, build_stub, inject_stub, pack)
+                            pack_sections, build_stub, inject_stub, pack,
+                            IMAGE_SCN_MEM_EXECUTE)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -527,23 +528,77 @@ def test_build_stub_rejects_long_key():
 
 
 def test_inject_stub():
-    """Verify stub injection updates TLS directory."""
+    """Verify stub injection produces a valid TLS directory structure.
+
+    Validates: VA-format addresses, callback points to code (not header),
+    AddressOfIndex is NULL, callback array is null-terminated, code is in
+    an executable section.
+    """
     data = make_minimal_pe64()
     pe = PEFile(data)
+    ib = pe.image_base
     descs = collect_descriptors(pe)
     key = make_key("AABBCCDDEEFF00112233445566778899")
     table = pack_sections(descs, key)
-    stub = build_stub(key, pe.image_base, table, quick=False)
+    stub = build_stub(key, ib, table, quick=False)
 
     # Inject using the PE's bytearray data
     stub_rva, stub_size, tls_rva = inject_stub(pe, stub, quick=False)
 
-    # Verify TLS directory was created
+    # ── Verify TLS data directory entry ──────────────────────
     tls = pe.tls_dir
     assert tls is not None, "TLS directory not created"
     assert tls.present(), "TLS directory not present"
     assert tls.virtual_address > 0, "TLS directory VA is 0"
     assert tls.size >= 40, f"TLS directory too small: {tls.size}"
+
+    # ── Decode TLS directory structure ────────────────────────
+    sec = pe.section_by_rva(tls.virtual_address)
+    assert sec is not None, "TLS directory not in any section"
+    raw_off = sec.pointer_to_raw_data + (tls.virtual_address - sec.virtual_address)
+    tls_raw = bytes(pe.data[raw_off:raw_off + tls.size])
+
+    if pe.is_pe32plus:
+        start_va, end_va, idx_va, cb_va, zf, ch = \
+            struct.unpack_from('<QQQQII', tls_raw, 0)
+    else:
+        start_va, end_va, idx_va, cb_va, zf, ch = \
+            struct.unpack_from('<IIIIII', tls_raw, 0)
+
+    # ── Validate TLS directory fields ─────────────────────────
+    # All pointer fields must be VAs (ImageBase + RVA), not bare RVAs
+    expected_start_va = ib + stub_rva
+    assert start_va == expected_start_va, \
+        f"Start VA: expected 0x{expected_start_va:X}, got 0x{start_va:X}"
+    expected_end_va = ib + stub_rva + stub_size
+    assert end_va == expected_end_va, \
+        f"End VA: expected 0x{expected_end_va:X}, got 0x{end_va:X}"
+    assert idx_va == 0, \
+        f"AddressOfIndex should be NULL, got 0x{idx_va:X}"
+    assert cb_va != 0, "AddressOfCallBacks is NULL"
+
+    # ── Decode callback array ─────────────────────────────────
+    cb_rva = cb_va - ib
+    cb_sec = pe.section_by_rva(cb_rva)
+    assert cb_sec is not None, "Callback array not in any section"
+    cb_off = cb_sec.pointer_to_raw_data + (cb_rva - cb_sec.virtual_address)
+    cb_raw = bytes(pe.data[cb_off:cb_off + 16])
+    cb_target_va, cb_null = struct.unpack_from('<QQ', cb_raw, 0)
+
+    # Callback must target code, not the PACK header
+    stub_num_sec = struct.unpack_from('<I', stub, 48)[0]
+    expected_code_va = ib + stub_rva + 56 + stub_num_sec * 16
+    assert cb_target_va == expected_code_va, \
+        f"Callback target: expected 0x{expected_code_va:X}, got 0x{cb_target_va:X}"
+    assert cb_null == 0, "Callback array not null-terminated"
+
+    # ── Verify callback is in an executable section ────────────
+    code_rva = cb_target_va - ib
+    code_sec = pe.section_by_rva(code_rva)
+    assert code_sec is not None, "Callback code not in any section"
+    assert code_sec.characteristics & IMAGE_SCN_MEM_EXECUTE, \
+        "Callback code section lacks EXECUTE characteristic"
+
     print("[PASS] test_inject_stub")
 
 

@@ -104,7 +104,7 @@ def make_minimal_pe64() -> bytes:
     # aligned up: 0x4000
     struct.pack_into("<IIIHH", oh, off,
                      0x4000,   # SizeOfImage
-                     0x1000,   # SizeOfHeaders (rounded up)
+                     0x0200,   # SizeOfHeaders (headers end at ~0x1C0, align to 0x200)
                      0,        # CheckSum
                      2,        # Subsystem: WINDOWS_GUI
                      0x0140)   # DllCharacteristics: DYNAMIC_BASE | NX_COMPAT
@@ -232,7 +232,7 @@ def make_minimal_pe32() -> bytes:
     # DllCharacteristics(2) = 16
     struct.pack_into("<IIIHH", oh, off,
                      0x3000,    # SizeOfImage
-                     0x1000,    # SizeOfHeaders
+                     0x0200,    # SizeOfHeaders (headers end at ~0x188, align to 0x200)
                      0,         # CheckSum
                      2,         # Subsystem: WINDOWS_GUI
                      0x0140)    # DllCharacteristics

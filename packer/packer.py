@@ -599,34 +599,53 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     stub_offset = new_raw_start
     pe.data[stub_offset:stub_offset + stub_size] = stub_blob
 
-    # Compute stub RVA: virtual address of the raw data gap
-    # The stub sits right after the section's raw data, which maps
-    # to virtual_address + virtual_size (the zero-fill or slack area
-    # that extends to the next page).
-    stub_rva = last.virtual_address + last.virtual_size
+    # Compute stub RVA: map the raw file offset to virtual address
+    # using the section's VA-to-raw-offset relationship.
+    stub_rva = last.virtual_address + (stub_offset - last.pointer_to_raw_data)
+
+    # ── Compute code entry point within stub ──────────────
+    # Stub layout: [header(56)][descs(N*16)][code]
+    # Parse the stub blob to find the code-start RVA
+    stub_num_sec = struct.unpack_from("<I", stub_blob, 48)[0]
+    stub_code_offset = 56 + stub_num_sec * 16  # after header + descriptors
+    code_rva = stub_rva + stub_code_offset
 
     # ── Write callback array ───────────────────────────────
+    # Each entry is a VA (ImageBase + RVA) pointing to executable code.
+    # Array is null-terminated.
+    image_base = pe.image_base
     callbacks_offset = stub_offset + stub_size
     callbacks_offset = ((callbacks_offset + 7) // 8) * 8
-    callback_list = struct.pack("<QQ", stub_rva, 0)  # [stub_rva, null]
+    code_va = image_base + code_rva
+    callback_list = struct.pack("<QQ", code_va, 0)  # [code_va, null]
     pe.data[callbacks_offset:callbacks_offset + len(callback_list)] = callback_list
     callback_rva = stub_rva + (callbacks_offset - stub_offset)
+    callback_va = image_base + callback_rva
     tls_dir_end = callbacks_offset + len(callback_list)
 
     # ── Write TLS directory ────────────────────────────────
+    # IMAGE_TLS_DIRECTORY fields are VIRTUAL ADDRESSES (ImageBase + RVA),
+    # not RVAs, per the PE specification (v8.3, §6.6.2).
+    # AddressOfIndex is set to 0 (NULL) — the loader allocates its own.
     tls_dir_offset = ((tls_dir_end + 7) // 8) * 8
     tls_dir_size = 40 if pe.is_pe32plus else 24
     tls_rva = stub_rva + (tls_dir_offset - stub_offset)
 
+    stub_va = image_base + stub_rva
+    stub_end_va = image_base + stub_rva + stub_size
+
     if pe.is_pe32plus:
         tls_dir = struct.pack("<QQQQII",
-                              stub_rva, stub_rva + stub_size,
-                              callback_rva, callback_rva,
+                              stub_va, stub_end_va,
+                              0,             # AddressOfIndex = NULL
+                              callback_va,    # AddressOfCallBacks
                               0, 0)
     else:
         tls_dir = struct.pack("<IIIIII",
-                              stub_rva, stub_rva + stub_size,
-                              callback_rva, callback_rva,
+                              stub_va & 0xFFFFFFFF,
+                              stub_end_va & 0xFFFFFFFF,
+                              0,             # AddressOfIndex = NULL
+                              callback_va & 0xFFFFFFFF,
                               0, 0)
 
     pe.data[tls_dir_offset:tls_dir_offset + tls_dir_size] = tls_dir
@@ -772,10 +791,12 @@ def pack(data: bytes, key: bytes, no_compress: bool = False,
 
     # ── In quick mode, patch entry point to stub ───────────
     if quick:
-        # Set entry point to the stub RVA (for testing without TLS)
-        struct.pack_into("<I", pe.data,
-                         pe.opt_offset + 16 if pe.is_pe32plus else pe.opt_offset + 16,
-                         stub_rva)
+        # Set entry point to the stub CODE (not header). The stub
+        # layout is [header(56)][descs(N*16)][code].
+        stub_num_sec = struct.unpack_from("<I", stub, 48)[0]
+        code_rva = stub_rva + 56 + stub_num_sec * 16
+        epoff = pe.opt_offset + 16  # AddressOfEntryPoint offset (same for PE32/PE32+)
+        struct.pack_into("<I", pe.data, epoff, code_rva)
 
     # ── Step 1.7: verify entry point ───────────────────────
     verify_entry_point(pe)

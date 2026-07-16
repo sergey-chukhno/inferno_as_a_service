@@ -243,24 +243,45 @@ class PEFile:
     # ── Accessors ──────────────────────────────────────────
 
     def get_data_dir(self, index: int) -> Optional[IMAGE_DATA_DIRECTORY]:
-        if index < 0 or index > 15:
+        if index < 0 or index >= self.number_of_rva_and_sizes:
             return None
         off = self._data_dir_offset + index * 8
-        if off + 8 > len(self.data):
+        if off + 8 > len(self.data) or off + 8 > self.section_offset:
             return None
         dd = IMAGE_DATA_DIRECTORY(bytes(self.data), off)
         if dd.present():
             return dd
         return None
 
+    DIR_ENTRY_PHYSICAL_MAX = 16
+
     def set_data_dir(self, index: int, va: int, size: int):
-        if index < 0 or index > 15:
-            raise ValueError(f"Data directory index {index} out of range [0, 15]")
+        if index < 0 or index >= self.DIR_ENTRY_PHYSICAL_MAX:
+            raise ValueError(
+                f"Data directory index {index} out of range "
+                f"[0, {self.DIR_ENTRY_PHYSICAL_MAX})")
         off = self._data_dir_offset + index * 8
-        if off + 8 > len(self.data):
+        entry_end = off + 8
+        if entry_end > len(self.data):
             raise ValueError(f"Data directory entry {index} at offset "
                              f"0x{off:X} exceeds file (0x{len(self.data):X})")
+        if entry_end > self.section_offset:
+            raise ValueError(
+                f"Data directory entry {index} at offset 0x{off:X} "
+                f"would overwrite section table at 0x{self.section_offset:X}")
         struct.pack_into("<II", self.data, off, va, size)
+        # Bump declared count if writing beyond it
+        if index >= self.number_of_rva_and_sizes:
+            self.number_of_rva_and_sizes = index + 1
+            # Also update the field in the PE header
+            if self.is_pe32plus:
+                struct.pack_into("<I", self.data,
+                                 self.opt_offset + 108,
+                                 self.number_of_rva_and_sizes)
+            else:
+                struct.pack_into("<I", self.data,
+                                 self.opt_offset + 92,
+                                 self.number_of_rva_and_sizes)
 
     @property
     def tls_dir(self) -> Optional[IMAGE_DATA_DIRECTORY]:

@@ -633,13 +633,16 @@ def test_full_pack_quick():
     pe = PEFile(result)
     assert pe.machine == 0x8664
 
-    # In quick mode, entry point is patched to stub RVA. The stub may be
-    # in header padding or alignment gap (no section covers it), so
-    # entry_section may return None. That's expected for quick mode.
-    entry_sec = pe.entry_section()
-    # Entry point should be different from original
+    # In quick mode, the entry point is patched to the stub code.
+    # inject_stub extends the last section with IMAGE_SCN_MEM_EXECUTE,
+    # so the stub is always in a mapped, executable section.
     assert pe.address_of_entry_point != 0x1000, \
         "Entry point not patched in quick mode"
+    entry_sec = pe.entry_section()
+    assert entry_sec is not None, \
+        "Entry point is not within any mapped section (invalid PE)"
+    assert entry_sec.characteristics & IMAGE_SCN_MEM_EXECUTE, \
+        "Entry point section lacks EXECUTE characteristic"
 
     # Sections should be encrypted: first 4 bytes of .text should not be
     # recognizably x86 (0xC3 repeated)

@@ -518,11 +518,12 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
 # Step 1.5 — Stub Generation
 # ═══════════════════════════════════════════════════════════════
 
-# Minimal placeholder stub: just a RET (0xC3) instruction.
-# In Step 2, this will be replaced with a full assembly stub that
-# performs PEB-walk API resolution, anti-debug, LZ4 decompression,
-# and relocation processing.
-PLACEHOLDER_STUB = b'\xC3'  # ret
+# Placeholder stubs: architecture-appropriate return instructions.
+# x64 uses 'ret' (caller cleans stack). x86 (PE32) TLS callbacks use
+# __stdcall, so the callee cleans with 'ret 12' (3 × 4-byte params).
+# In Step 2 these will be replaced with a full assembly stub.
+PLACEHOLDER_STUB_X64 = b'\xC3'           # ret
+PLACEHOLDER_STUB_X86 = b'\xC2\x0C\x00'   # ret 12
 
 STUB_HEADER_SIZE = 4 + 4 + 32 + 8 + 4 + 4  # magic+keySz+key+prefBase+numSec+rsvd
 SECTION_DESC_SIZE = 8 + 4 + 4  # rva(QWORD) + compressed_sz(DWORD) + decompressed_sz(DWORD)
@@ -530,7 +531,8 @@ SECTION_DESC_SIZE = 8 + 4 + 4  # rva(QWORD) + compressed_sz(DWORD) + decompresse
 
 def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                no_anti_debug: bool = False,
-               quick: bool = False) -> bytes:
+               quick: bool = False,
+               is_pe32plus: bool = True) -> bytes:
     """Build the stub blob: header + section descriptors + code.
 
     Compression is detected per-section by the stub: if
@@ -555,11 +557,13 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                              s['compressed_sz'],
                              s['decompressed_sz'])
 
+    # Select architecture-appropriate return for the TLS callback.
+    # PE32 uses __stdcall (ret 12), PE32+ uses caller-clean (ret).
+    placeholder = PLACEHOLDER_STUB_X64 if is_pe32plus else PLACEHOLDER_STUB_X86
     if quick:
-        # Quick mode: just XOR in-place, no anti-debug, no API resolution
-        code = PLACEHOLDER_STUB
+        code = placeholder
     else:
-        code = PLACEHOLDER_STUB
+        code = placeholder
 
     return header + descs + code
 
@@ -818,7 +822,8 @@ def pack(data: bytes, key: bytes, no_compress: bool = False,
     # ── Step 1.5: build stub ───────────────────────────────
     stub = build_stub(key, pe.image_base, table,
                       no_anti_debug=no_anti_debug,
-                      quick=quick)
+                      quick=quick,
+                      is_pe32plus=pe.is_pe32plus)
     if verbose:
         print(f"[packer] Stub: {len(stub)} bytes")
 

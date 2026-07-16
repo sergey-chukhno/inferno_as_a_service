@@ -217,7 +217,11 @@ static QWORD resolve_virtual_protect(void) {
 void __attribute__((force_align_arg_pointer))
 __attribute__((section(".text")))
 TlsCallback(void* hinstDLL, DWORD reason, void* reserved) {
-    (void)hinstDLL; (void)reason; (void)reserved;
+    (void)reserved;
+    // Only run on process attach. TLS callbacks also fire for thread
+    // attach/detach and process detach; running the decryption again
+    // would XOR-decrypt already-decrypted data back to ciphertext.
+    if (reason != 1) return;  // DLL_PROCESS_ATTACH
 
     // ── Anti-debug: PEB BeingDebugged ────────────────────────
 #ifdef _MSC_VER

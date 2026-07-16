@@ -16,6 +16,7 @@ import hashlib
 import os
 import struct
 import sys
+import tempfile
 from typing import List, Optional, Tuple
 
 import lz4.block  # type: ignore
@@ -862,10 +863,27 @@ def main():
         sys.exit(1)
 
     out_path = args.output or args.input
+    # Write to a temp file first, then atomically replace the destination.
+    # This prevents destroying the original binary on a partial write
+    # (disk full, crash, or interruption).
+    tmp_path = None
     try:
-        with open(out_path, 'wb') as f:
+        dir_path = os.path.dirname(out_path) or '.'
+        with tempfile.NamedTemporaryFile(
+                dir=dir_path, prefix='.inferno_packer_',
+                suffix='.tmp', delete=False) as f:
+            tmp_path = f.name
             f.write(result)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, out_path)
+        tmp_path = None  # successfully renamed, no need to clean
     except (IOError, OSError) as e:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
         print(f"Error writing '{out_path}': {e}", file=sys.stderr)
         sys.exit(1)
 

@@ -439,14 +439,22 @@ def rolling_xor(data: bytes, key: bytes) -> bytes:
     return bytes(data[i] ^ key[i % klen] ^ (i & 0xFF) for i in range(len(data)))
 
 
-def compress_lz4(data: bytes) -> bytes:
-    """LZ4-compress in block mode (no size prefix)."""
+def compress_lz4(data: bytes) -> Tuple[bytes, bool]:
+    """LZ4-compress in block mode (no size prefix).
+
+    Returns (compressed_data, did_shrink). If compression fails or
+    does not reduce size, returns (raw_data, False) so the caller
+    stores the original without LZ4. The stub detects this by
+    comparing compressed_sz == decompressed_sz.
+    """
     try:
-        return lz4.block.compress(data, mode='default', store_size=False)
-    except Exception as e:
-        print(f"Warning: LZ4 compression failed ({e}), storing uncompressed",
-              file=sys.stderr)
-        return data
+        compressed = lz4.block.compress(data, mode='default',
+                                        store_size=False)
+        if len(compressed) < len(data):
+            return compressed, True
+    except Exception:
+        pass
+    return data, False
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -456,26 +464,48 @@ def compress_lz4(data: bytes) -> bytes:
 
 def pack_sections(descs: List[SectionDesc], key: bytes,
                   no_compress: bool = False) -> List[dict]:
-    """Compress + encrypt each section; return descriptor table for stub."""
+    """Compress + encrypt each section; return descriptor table for stub.
+
+    If compression does not shrink the data (or fails), the raw data is
+    stored without LZ4. The stub detects this by comparing
+    compressed_sz == decompressed_sz.
+    If the packed (encrypted) data exceeds the section's raw data size
+    on disk, the section is left unpacked — the descriptor table is not
+    updated, and the stub skips it.
+    """
     table = []
+    raw_overhead: int = 0
     for d in descs:
         raw = d.raw_data
-        decompressed_size = len(raw)
+        max_storage = d.size_of_raw_data
 
         if no_compress:
-            compressed = raw
+            pre_encrypt = raw
+            was_compressed = False
         else:
-            compressed = compress_lz4(raw)
+            pre_encrypt, was_compressed = compress_lz4(raw)
 
-        encrypted = rolling_xor(compressed, key)
+        encrypted = rolling_xor(pre_encrypt, key)
+
+        # If encrypted data doesn't fit in the section's raw slot, skip
+        if len(encrypted) > max_storage:
+            raw_overhead += len(encrypted) - max_storage
+            continue
+
         d.packed_data = encrypted
-        d.decompressed_size = decompressed_size
+        d.decompressed_size = len(raw)
 
         table.append({
             'rva': d.virtual_address,
             'compressed_sz': len(encrypted),
-            'decompressed_sz': decompressed_size,
+            'decompressed_sz': len(raw),
+            'compressed': was_compressed,
         })
+
+    if raw_overhead > 0:
+        print(f"Warning: {raw_overhead} bytes of packed data exceeded "
+              f"section capacity — left unpacked", file=sys.stderr)
+
     return table
 
 
@@ -495,16 +525,20 @@ SECTION_DESC_SIZE = 8 + 4 + 4  # rva(QWORD) + compressed_sz(DWORD) + decompresse
 
 def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                no_anti_debug: bool = False,
-               no_compress: bool = False,
                quick: bool = False) -> bytes:
-    """Build the stub blob: header + section descriptors + code."""
+    """Build the stub blob: header + section descriptors + code.
+
+    Compression is detected per-section by the stub: if
+    compressed_sz != decompressed_sz, the stub applies LZ4
+    decompression after XOR decryption.
+    """
     header = struct.pack("<II32sQII",
                          STUB_MAGIC,
                          len(key),
                          key.ljust(32, b'\x00')[:32],
                          preferred_base,
                          len(section_table),
-                         1 if no_compress else 0)
+                         0)  # reserved
     descs = b''
     for s in section_table:
         descs += struct.pack("<QII",
@@ -721,7 +755,6 @@ def pack(data: bytes, key: bytes, no_compress: bool = False,
     # ── Step 1.5: build stub ───────────────────────────────
     stub = build_stub(key, pe.image_base, table,
                       no_anti_debug=no_anti_debug,
-                      no_compress=no_compress,
                       quick=quick)
     if verbose:
         print(f"[packer] Stub: {len(stub)} bytes")
@@ -736,15 +769,15 @@ def pack(data: bytes, key: bytes, no_compress: bool = False,
 
     # ── Overwrite section data with encrypted bytes ───────
     for d in descs:
+        if not d.packed_data:
+            continue  # skipped (did not fit)
         raw_offset = d.pointer_to_raw_data
         packed = d.packed_data
-        # Only overwrite if sizes match (or pad if smaller)
-        if len(packed) <= d.size_of_raw_data:
-            pe.data[raw_offset:raw_offset + len(packed)] = packed
-            # Fill remaining with random-ish bytes
-            pad_byte = (d.size_of_raw_data & 0xFF)
-            for i in range(len(packed), d.size_of_raw_data):
-                pe.data[raw_offset + i] = pad_byte ^ (i & 0xFF)
+        pe.data[raw_offset:raw_offset + len(packed)] = packed
+        # Fill remaining section slack with deterministic junk
+        pad_byte = (d.size_of_raw_data & 0xFF)
+        for i in range(len(packed), d.size_of_raw_data):
+            pe.data[raw_offset + i] = pad_byte ^ (i & 0xFF)
 
     # ── In quick mode, patch entry point to stub ───────────
     if quick:

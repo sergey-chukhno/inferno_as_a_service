@@ -120,26 +120,42 @@ class PEFile:
         self.data = bytearray(data)
         self._parse()
 
+    @staticmethod
+    def _check_bounds(d: bytes, offset: int, size: int, label: str):
+        """Validate that offset+size fits within data bounds."""
+        if offset < 0 or offset + size > len(d):
+            raise ValueError(
+                f"Truncated PE: {label} at offset 0x{offset:X} "
+                f"requires {size} bytes but file has {max(0, len(d) - offset)}")
+
     def _parse(self):
         d = self.data
+        file_len = len(d)
+
+        self._check_bounds(d, 0, 64, "DOS header")
         dos_magic = struct.unpack_from("<H", d, 0)[0]
         if dos_magic != IMAGE_DOS_MAGIC:
             raise ValueError(f"Not PE: DOS magic=0x{dos_magic:04X}")
+
         e_lfanew = struct.unpack_from("<I", d, 0x3C)[0]
+        self._check_bounds(d, e_lfanew, 4, "PE signature")
         self.e_lfanew = e_lfanew
 
         if struct.unpack_from("<I", d, e_lfanew)[0] != IMAGE_NT_SIGNATURE:
             raise ValueError("Not PE: missing PE signature")
 
         off = e_lfanew + 4
+        self._check_bounds(d, off, 20, "COFF file header")
         (self.machine, self.num_sections, _, _, _,
          self.size_of_optional_header, _) = \
             struct.unpack_from("<HHIIIHH", d, off)
         self.coff_offset = off
         off += 20
 
-        opt_magic = struct.unpack_from("<H", d, off)[0]
+        self._check_bounds(d, off, self.size_of_optional_header,
+                           "optional header")
         self.opt_offset = off
+        opt_magic = struct.unpack_from("<H", d, off)[0]
         if opt_magic == IMAGE_OPT_HDR32_MAGIC:
             self._parse_opt32(d, off)
         elif opt_magic == IMAGE_OPT_HDR64_MAGIC:
@@ -147,7 +163,19 @@ class PEFile:
         else:
             raise ValueError(f"Unknown opt hdr magic: 0x{opt_magic:04X}")
 
+        # Sanity-check section count
+        if self.num_sections > 100:
+            raise ValueError(
+                f"PE claims {self.num_sections} sections — likely corrupt")
+        if self.num_sections == 0 or self.num_sections < 0:
+            raise ValueError(
+                f"PE has {self.num_sections} sections — cannot pack empty PE")
+
         self.section_offset = off + self.size_of_optional_header
+        self._check_bounds(d, self.section_offset,
+                           self.num_sections * IMAGE_SECTION_HEADER.SIZE,
+                           "section table")
+
         self.sections: List[IMAGE_SECTION_HEADER] = []
         for i in range(self.num_sections):
             sec_off = self.section_offset + i * IMAGE_SECTION_HEADER.SIZE
@@ -157,6 +185,10 @@ class PEFile:
         for sec in self.sections:
             if sec.size_of_raw_data > 0 and sec.pointer_to_raw_data > 0:
                 end = sec.pointer_to_raw_data + sec.size_of_raw_data
+                if end > file_len:
+                    raise ValueError(
+                        f"Section '.{sec.name}' raw data at 0x{sec.pointer_to_raw_data:X}"
+                        f" size 0x{sec.size_of_raw_data:X} exceeds file (0x{file_len:X})")
                 self.section_raw.append(bytes(d[sec.pointer_to_raw_data:end]))
             else:
                 self.section_raw.append(b'')
@@ -165,6 +197,8 @@ class PEFile:
         self.is_pe32 = True
         self.is_pe32plus = False
         fmt = "<HBBIIIIIIIIHHHHHHIIIIHHIIIIII"
+        fmt_size = struct.calcsize(fmt)
+        self._check_bounds(d, off, fmt_size, "optional header (PE32)")
         vals = struct.unpack_from(fmt, d, off)
         (self.magic, self.major_linker_version, self.minor_linker_version,
          self.size_of_code, self.size_of_initialized_data,
@@ -179,12 +213,15 @@ class PEFile:
          self.size_of_stack_reserve, self.size_of_stack_commit,
          self.size_of_heap_reserve, self.size_of_heap_commit,
          self.loader_flags, self.number_of_rva_and_sizes) = vals
+        self.number_of_rva_and_sizes = min(self.number_of_rva_and_sizes, 16)
         self._data_dir_offset = off + 96
 
     def _parse_opt64(self, d, off):
         self.is_pe32 = False
         self.is_pe32plus = True
         fmt = "<HBBIIIIIQIIHHHHHHIIIIHHQQQQII"
+        fmt_size = struct.calcsize(fmt)
+        self._check_bounds(d, off, fmt_size, "optional header (PE32+)")
         vals = struct.unpack_from(fmt, d, off)
         (self.magic, self.major_linker_version, self.minor_linker_version,
          self.size_of_code, self.size_of_initialized_data,
@@ -199,12 +236,15 @@ class PEFile:
          self.size_of_stack_reserve, self.size_of_stack_commit,
          self.size_of_heap_reserve, self.size_of_heap_commit,
          self.loader_flags, self.number_of_rva_and_sizes) = vals
+        self.number_of_rva_and_sizes = min(self.number_of_rva_and_sizes, 16)
         self.base_of_data = 0
         self._data_dir_offset = off + 112
 
     # ── Accessors ──────────────────────────────────────────
 
     def get_data_dir(self, index: int) -> Optional[IMAGE_DATA_DIRECTORY]:
+        if index < 0 or index > 15:
+            return None
         off = self._data_dir_offset + index * 8
         if off + 8 > len(self.data):
             return None
@@ -214,7 +254,12 @@ class PEFile:
         return None
 
     def set_data_dir(self, index: int, va: int, size: int):
+        if index < 0 or index > 15:
+            raise ValueError(f"Data directory index {index} out of range [0, 15]")
         off = self._data_dir_offset + index * 8
+        if off + 8 > len(self.data):
+            raise ValueError(f"Data directory entry {index} at offset "
+                             f"0x{off:X} exceeds file (0x{len(self.data):X})")
         struct.pack_into("<II", self.data, off, va, size)
 
     @property

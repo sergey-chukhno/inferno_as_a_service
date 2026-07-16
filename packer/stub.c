@@ -44,45 +44,62 @@ typedef struct {
 } SectionDescriptor;
 
 // ── Portable LZ4 Block Decompressor ──────────────────────────────
-// Minimal implementation: reads an LZ4 block and decompresses it.
+// Minimal implementation with strict bounds checking.
+// Takes src_size for compressed-input bound, dst_size for output bound.
 // Returns bytes_written or 0 on error.
-static DWORD lz4_decompress(const BYTE* src, BYTE* dst, DWORD dst_size) {
+// Does NOT support overlapping src/dst buffers.
+static DWORD lz4_decompress(const BYTE* src, DWORD src_size,
+                            BYTE* dst, DWORD dst_size) {
     const BYTE* ip = src;
+    const BYTE* const iend = src + src_size;
     BYTE* op = dst;
     const BYTE* const oend = dst + dst_size;
 
     while (op < oend) {
+        // ── Token ─────────────────────────────────────────
+        if (ip >= iend) return 0;
         BYTE token = *ip++;
         DWORD lit_len = (token >> 4) & 0x0F;
         if (lit_len == 15) {
             BYTE s;
             do {
+                if (ip >= iend) return 0;
                 s = *ip++;
+                if (lit_len + s < lit_len) return 0;  // overflow
                 lit_len += s;
             } while (s == 255);
         }
-        // Copy literals
-        for (DWORD i = 0; i < lit_len && op < oend; i++) {
+        if (lit_len > 0 && ip + lit_len > iend) return 0;
+
+        // ── Copy literals ─────────────────────────────────
+        if (op + lit_len > oend) return 0;
+        for (DWORD i = 0; i < lit_len; i++) {
             *op++ = *ip++;
         }
         if (op >= oend) break;
 
-        // Match
+        // ── Match offset ──────────────────────────────────
+        if (ip + 2 > iend) return 0;
         WORD match_offset = *ip | (*(ip + 1) << 8);
         ip += 2;
-        if (match_offset == 0) return 0;
+        if (match_offset == 0 || match_offset > (DWORD)(op - dst)) return 0;
 
+        // ── Match length ──────────────────────────────────
         DWORD match_len = (token & 0x0F) + 4;
         if (match_len == 19) {
             BYTE s;
             do {
+                if (ip >= iend) return 0;
                 s = *ip++;
+                if (match_len + s < match_len) return 0;
                 match_len += s;
             } while (s == 255);
         }
+        if (op + match_len > oend) return 0;
 
+        // ── Copy match ────────────────────────────────────
         BYTE* match_src = op - match_offset;
-        for (DWORD i = 0; i < match_len && op < oend; i++) {
+        for (DWORD i = 0; i < match_len; i++) {
             *op++ = *match_src++;
         }
     }
@@ -199,6 +216,12 @@ TlsCallback(void* hinstDLL, DWORD reason, void* reserved) {
     SectionDescriptor* descs = (SectionDescriptor*)(hdr + 1);
 
     // ── Decrypt + decompress each section ────────────────────
+    // Stack buffer for LZ4 decompression (avoids heap in TLS callback).
+    // Sections larger than this will be left encrypted (safe failure).
+    // TODO: resolve VirtualAlloc for arbitrarily large sections.
+    enum { DECOMP_BUF_SIZE = 65536 };
+    BYTE decomp_buffer[DECOMP_BUF_SIZE];
+
     for (DWORD i = 0; i < hdr->num_sections; i++) {
         BYTE* section_addr = (BYTE*)(hinstDLL + descs[i].rva);
         DWORD csz = descs[i].compressed_sz;
@@ -210,28 +233,20 @@ TlsCallback(void* hinstDLL, DWORD reason, void* reserved) {
         DWORD old_prot;
         VirtualProtect(section_addr, dsz, 0x04, &old_prot);  // PAGE_READWRITE
 
-        // XOR-decrypt in-place
+        // XOR-decrypt in-place (produces plaintext LZ4 block at section_addr)
         for (DWORD j = 0; j < csz; j++) {
             section_addr[j] ^= hdr->xor_key[j % hdr->key_size] ^ (j & 0xFF);
         }
 
-        // LZ4-decompress over the same buffer
-        BYTE* decomp_buf = section_addr + csz;  // temporary space after data
-        // For sections where compressed data fits in place, decompress
-        // to a temporary buffer first, then copy back.
-        // In practice, csz < dsz (compression), so we have room.
-        if (dsz > csz) {
-            BYTE temp[4096];  // Stack buffer for decompression
-            BYTE* workspace = temp;
-            if (dsz > sizeof(temp)) {
-                // For large sections, we need a different approach
-                // Decompress to the end of the section area backwards
-                workspace = section_addr + dsz - dsz;  // same buffer
-            }
-            DWORD dec_sz = lz4_decompress(section_addr, workspace, dsz);
-            if (dec_sz > 0) {
-                for (DWORD j = 0; j < dec_sz; j++) {
-                    section_addr[j] = workspace[j];
+        // LZ4-decompress to a disjoint stack buffer, then copy back.
+        // This is safe: src and dst never overlap. If the section is
+        // too large for the stack buffer, skip (section stays encrypted).
+        if (dsz > csz && dsz <= sizeof(decomp_buffer) && csz > 0) {
+            DWORD dec_sz = lz4_decompress(section_addr, csz,
+                                          decomp_buffer, dsz);
+            if (dec_sz == dsz) {
+                for (DWORD j = 0; j < dsz; j++) {
+                    section_addr[j] = decomp_buffer[j];
                 }
             }
         }

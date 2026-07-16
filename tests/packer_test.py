@@ -401,7 +401,9 @@ def test_section_collector():
     descs = collect_descriptors(pe)
     # All 3 sections should be packable (.text, .rdata, .data)
     names = [d.name for d in descs]
-    assert names == ['.text', '.rdata', '.data'], f"Unexpected: {names}"
+    # .rdata is excluded because it contains the import directory
+    # (loader must resolve imports before TLS callbacks run)
+    assert names == ['.text', '.data'], f"Unexpected: {names}"
     for d in descs:
         assert d.should_pack()
         assert len(d.raw_data) > 0
@@ -460,7 +462,8 @@ def test_pack_sections():
     descs = collect_descriptors(pe)
     key = make_key("AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899")
     table = pack_sections(descs, key, no_compress=False)
-    assert len(table) == 3, f"Expected 3 sections, got {len(table)}"
+    # .rdata is excluded (contains import dir), so only .text + .data remain
+    assert len(table) == 2, f"Expected 2 sections (not .rdata), got {len(table)}"
     for t, d in zip(table, descs):
         assert t['decompressed_sz'] == len(d.raw_data)
         assert t['compressed_sz'] > 0

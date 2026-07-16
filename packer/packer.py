@@ -306,6 +306,24 @@ class PEFile:
     def entry_section(self) -> Optional[IMAGE_SECTION_HEADER]:
         return self.section_by_rva(self.address_of_entry_point)
 
+    def section_contains_data_dir(self, sec: IMAGE_SECTION_HEADER,
+                                   dir_index: int) -> bool:
+        """Check if a section contains the given data directory.
+
+        The loader must be able to read import and reloc directories
+        before TLS callbacks execute, so sections containing these
+        directories cannot be encrypted.
+        """
+        dd = self.get_data_dir(dir_index)
+        if dd is None:
+            return False
+        sec_start = sec.virtual_address
+        sec_end = sec_start + sec.virtual_size
+        dd_end = dd.virtual_address + dd.size
+        # Check overlap: the directory data must be fully within the section
+        return (sec_start <= dd.virtual_address < sec_end and
+                sec_start < dd_end <= sec_end)
+
     def align_up(self, val: int, align: int) -> int:
         return ((val + align - 1) // align) * align
 
@@ -368,12 +386,30 @@ class SectionDesc:
         return self.name == '.reloc'
 
 
+# Loader-critical data directory indices — these must remain readable
+# before TLS callbacks execute because the loader resolves imports
+# and applies base relocations during process startup:
+#   IMAGE_DIRECTORY_ENTRY_IMPORT = 1
+#   IMAGE_DIRECTORY_ENTRY_BASERELOC = 5
+LOADER_CRITICAL_DIRS = (1, 5)
+
+
 def collect_descriptors(pe: PEFile) -> List[SectionDesc]:
     descs: List[SectionDesc] = []
     for sec, raw in zip(pe.sections, pe.section_raw):
         d = SectionDesc(sec, raw)
-        if d.should_pack():
-            descs.append(d)
+        if not d.should_pack():
+            continue
+        # Skip sections containing loader-critical data directories.
+        # The Windows loader reads imports and applies relocations
+        # before invoking TLS callbacks — encrypting these sections
+        # would crash the process before our stub can decrypt.
+        is_loader_critical = any(
+            pe.section_contains_data_dir(sec, idx)
+            for idx in LOADER_CRITICAL_DIRS)
+        if is_loader_critical:
+            continue
+        descs.append(d)
     return descs
 
 

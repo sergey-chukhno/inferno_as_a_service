@@ -597,6 +597,37 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     tls_overhead = 64
     total_needed = stub_size + tls_overhead
 
+    # ── Check for trailing PE data (overlays, certs) ─────────
+    # The stub is written right after the last section's raw data.
+    # If the file has trailing data (Authenticode cert, overlay),
+    # writing the stub would overwrite it.
+    # The last section's raw data ends at:
+    section_raw_end = pe.last_section_end_raw()
+    # The file is aligned up to file_align, anything beyond is trailing:
+    aligned_section_end = pe.align_up(section_raw_end, file_align)
+    trailing = len(pe.data) - aligned_section_end
+    if trailing > 0:
+        # Check if trailing data is an Authenticode certificate
+        # (IMAGE_DIRECTORY_ENTRY_SECURITY = 4, uses file offsets not RVAs)
+        cert_dir = pe.get_data_dir(4)
+        is_cert = False
+        if cert_dir and cert_dir.virtual_address >= aligned_section_end:
+            cert_file_end = cert_dir.virtual_address + cert_dir.size
+            if cert_file_end <= len(pe.data):
+                is_cert = True
+        if is_cert:
+            # Strip the certificate table (signature invalid after any
+            # modification to the PE). Zero the data directory entry
+            # and truncate the file to the aligned section end.
+            pe.set_data_dir(4, 0, 0)
+            del pe.data[aligned_section_end:]
+            trailing = 0
+        else:
+            raise ValueError(
+                f"PE has {trailing} bytes of trailing data at offset "
+                f"0x{aligned_section_end:X} (not a certificate table). "
+                f"Strip it before packing.")
+
     # ── Extend the last section ─────────────────────────────
     last = pe.sections[-1]
     new_raw_start = last.pointer_to_raw_data + last.size_of_raw_data

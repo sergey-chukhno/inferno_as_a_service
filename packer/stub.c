@@ -266,9 +266,13 @@ TlsCallback(void* hinstDLL, DWORD reason, void* reserved) {
 
         if (csz == 0 || dsz == 0) continue;
 
-        // Make section writable
-        DWORD old_prot;
-        VirtualProtect(section_addr, dsz, 0x04, &old_prot);  // PAGE_READWRITE
+        // Make section writable (PAGE_READWRITE = 0x04).
+        // If this fails (e.g. section is not committed), skip the
+        // section rather than crashing on the write below.
+        DWORD old_prot = 0;
+        if (!VirtualProtect(section_addr, dsz, 0x04, &old_prot)) {
+            continue;
+        }
 
         // XOR-decrypt in-place (produces plaintext LZ4 block at section_addr)
         for (DWORD j = 0; j < csz; j++) {
@@ -288,7 +292,7 @@ TlsCallback(void* hinstDLL, DWORD reason, void* reserved) {
             }
         }
 
-        // Restore original protection
+        // Restore original protection (best-effort — section may be reused)
         VirtualProtect(section_addr, dsz, old_prot, &old_prot);
     }
 

@@ -68,18 +68,148 @@
 
 ---
 
-## Phase 3: Embedding Obfuscation (Wrapper Upgrade)
+## Phase 3: Custom PE/Mach-O Packer (Wrapper Obfuscation)
 
-*Target: wrapper/CMakeLists.txt, wrapper/bin2header.py, wrapper/src/main.cpp*
+*Target: New `packer/` directory, `wrapper/CMakeLists.txt`, `wrapper/src/main.cpp`*
 
-| Item | Detail |
-|---|---|
-| **Encrypt agent binary at build time** | XOR or RC4 the binary in `bin2header.py` before embedding into `agent_binary.h` |
-| **Decrypt stub in wrapper** | Small, handwritten C stub that decrypts at runtime — avoids static signature of known agent bytes |
-| **Custom packer** | Replace UPX (signatured) with a custom section-loader that compresses/obfuscates the wrapper PE/Mach-O |
-| **String obfuscation** | XOR-encode all strings in the wrapper (paths, IPs, API names) — prevents YARA string matching |
+**Why now**: Without packer obfuscation, the wrapper is a standard PE/Mach-O with recognizable dropper heuristics. A custom packer compresses/encrypts the original sections and replaces the entry point with a minimal decryptor stub — defeating static YARA rules, AV signature scans, import table analysis, and hash-based IOC sharing.
 
-**Dependency**: Must be done *before* Phase 4 so the injected agent bytes are not recognized.
+**Priority**: Transport evasion (HTTP/2, mTLS) is irrelevant if the binary never executes. **Custom packer + code signing must come before HTTP/2 beaconing.**
+
+### Threat Model — What the Packer Defeats
+
+| Threat | Mechanism | How Packer Defeats It |
+|--------|-----------|----------------------|
+| Static YARA rules | Byte-sequence matching on .text/.rdata | Sections are LZ4-compressed + XOR-encrypted on disk |
+| AV hash matching | SHA-1/SHA-256 of entire binary | Per-build random key → different ciphertext each build |
+| Section-based heuristics | Known section patterns (.text, .rdata) | Raw section data is ciphertext, not plain code/data |
+| Import table detection | Static analysis of kernel32.dll imports | PEB-walk + ROR-13 hash resolution — zero visible imports |
+| Entropy heuristics | High entropy (7.0+) indicates packed binary | LZ4 compression normalizes entropy before XOR encryption |
+| Entry point heuristics | Entry point outside .text section | TLS callback executes decryption; entry point stays in .text |
+| Section anomaly detection | Suspicious section names (.packer) | Stub injected into .rsrc padding or named .textbss |
+| ASLR crashes | .reloc not applied after decryption | Stub walks reloc table and applies fixups at runtime |
+| Debugger/sandbox analysis | Debugger attached or sandbox environment | Anti-debug: PEB BeingDebugged, rdtsc timing checks |
+
+### Design — Revised (Post-Review, July 2026)
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                  Build-Time Packing Pipeline                      │
+│                                                                   │
+│  1. CMake builds inferno_wrapper as a normal executable           │
+│     (all sections in plaintext, standard entry point)             │
+│                                                                   │
+│  2. packer.py post-processes the binary:                          │
+│     ┌─────────────────────────────────────────────────────────┐  │
+│     │  a. Parse PE COFF headers (DOS→NT→Optional→Section)     │  │
+│     │  b. Parse IMAGE_DIRECTORY_ENTRY_BASERELOC for ASLR       │  │
+│     │  c. Parse IMAGE_DIRECTORY_ENTRY_TLS for callback setup   │  │
+│     │  d. For each code/data section:                          │  │
+│     │     • LZ4-compress to normalize entropy                  │  │
+│     │     • XOR-encrypt with per-build random rolling key      │  │
+│     │     • Overwrite raw section data with ciphertext         │  │
+│     │  e. Generate decryptor stub with:                        │  │
+│     │     • Anti-debug: PEB BeingDebugged + rdtsc timing       │  │
+│     │     • PEB-walk → kernel32 → ROR-13 hash for VirtualProtect│  │
+│     │     • Loop: XOR-decrypt → LZ4-decompress each section    │  │
+│     │     • Walk .reloc → apply base relocations               │  │
+│     │  f. Inject stub into .rsrc padding or .textbss section   │  │
+│     │  g. Set up TLS callback array pointing to stub           │  │
+│     │     (entry point in .text remains UNCHANGED)             │  │
+│     │  h. Pad binary to random size with low-entropy filler    │  │
+│     └─────────────────────────────────────────────────────────┘  │
+│                                                                   │
+│  3. Output: packed wrapper binary (PE for Windows)               │
+│                                                                   │
+│  Runtime Flow (inside packed binary):                             │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  a. Windows loader maps PE, processes TLS callbacks          │  │
+│  │  b. Decryptor stub executes as TLS callback:                 │  │
+│  │     • Anti-debug checks (PEB, rdtsc)                        │  │
+│  │     • PEB-walk → resolve VirtualProtect via ROR-13 hash     │  │
+│  │     • VirtualProtect(.text, PAGE_READWRITE)                 │  │
+│  │     • XOR-decrypt each section in-place                     │  │
+│  │     • LZ4-decompress each section to original size          │  │
+│  │     • Walk .reloc → apply base relocations                  │  │
+│  │     • VirtualProtect(.text, PAGE_EXECUTE_READ)              │  │
+│  │     • Return (Windows continues to CRT → main())            │  │
+│  │  c. Normal wrapper execution begins with decrypted .text    │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Implementation Plan — Step-by-Step Breakdown
+
+| Step | Task | Files | Effort | Adopted Feedback |
+|------|------|-------|--------|-----------------|
+| **1** | **packer.py — PE parser + encryptor** | | **~5 days** | |
+| 1.1 | CLI argument parser (argparse): `--input`, `--output`, `--key` (optional, auto-random), `--no-compress`, `--no-anti-debug` | `packer/packer.py` | 0.25 day | — |
+| 1.2 | PE format parser: DOS→NT→Optional→Section headers, parse `IMAGE_DIRECTORY_ENTRY_BASERELOC` (index 5) and `IMAGE_DIRECTORY_ENTRY_TLS` (index 9). Handle PE32 (0x10B) and PE32+ (0x20B) | `packer/packer.py` | 1 day | Relocation + TLS parsing added |
+| 1.3 | Section metadata collector: iterate section headers, filter `.bss` (uninitialized), mark `.reloc` for post-decrypt processing, collect descriptors `{rva, compressed_sz, decompressed_sz}` | `packer/packer.py` | 0.25 day | — |
+| 1.4 | LZ4 compress + XOR-encrypt each code/data section. Generate per-build random key (32 bytes, `os.urandom`). Rolling XOR variant: `c[i] = p[i] ^ key[i%32] ^ (i&0xFF)`. Write ciphertext at original raw offset | `packer/packer.py` | 1 day | LZ4 entropy normalization |
+| 1.5 | Generate decryptor stub: position-independent shellcode with anti-debug (PEB BeingDebugged + rdtsc), PEB-walk + ROR-13 hash resolution for VirtualProtect, XOR-decrypt + LZ4-decompress loop, .reloc walker | `packer/packer.py` (stub asm bytes), `packer/stub.asm` | 1.5 days | Anti-debug + API hashing + relocations |
+| 1.6 | Inject stub into binary: find slack in `.rsrc` or `.text` alignment padding; if insufficient, create `.textbss` section. Write stub bytes. Update TLS directory (create if missing, set callback array) | `packer/packer.py` | 0.5 day | Section rename + TLS callback |
+| 1.7 | Entry point: **no changes** to `AddressOfEntryPoint` (stays in `.text`). TLS callback handles decryption before CRT/main | `packer/packer.py` | 0.1 day | TLS callback (not entry patch) |
+| 1.8 | Random low-entropy padding: pad to random size (0–4096 bytes) with repeated `0xAB` pattern (not nulls). Keeps file entropy moderate | `packer/packer.py` | 0.1 day | Low-entropy filler |
+| 1.9 | Write output binary; re-read and validate headers are structurally intact | `packer/packer.py` | 0.1 day | — |
+| 1.10 | Tests: `tests/packer_test.py` — validate PE structure, verify .text is encrypted, verify TLS directory exists, verify entry point unchanged, verify reloc directory survives, verify different key → different hash | `tests/packer_test.py` | 0.5 day | — |
+| **2** | **packer/stub.asm — Decryptor stub (x64 assembly)** | | **~2 days** | |
+| 2.1 | Write position-independent x64 assembly stub. Entry point: TLS callback signature `(void* hinstDLL, DWORD reason, LPVOID reserved)` | `packer/stub.asm` | 0.5 day | — |
+| 2.2 | Anti-debug: read PEB->BeingDebugged at `gs:[0x60]` offset 2; `rdtsc` before/after region; exit if checks fail | `packer/stub.asm` | 0.25 day | Anti-debug |
+| 2.3 | PEB-walk: `gs:[0x60]` → PEB → Ldr → InMemoryOrderModuleList → find kernel32/kernelbase → parse export directory → ROR-13 hash compare for VirtualProtect | `packer/stub.asm` | 0.5 day | API hashing |
+| 2.4 | Decryption loop: XOR-decrypt (rolling key embedded in stub header), LZ4-decompress in-place, advance to next section | `packer/stub.asm` | 0.25 day | — |
+| 2.5 | Relocation: parse .reloc directory, compute delta `(actual_base - preferred_base)`, apply fixups to absolute addresses in decrypted sections | `packer/stub.asm` | 0.5 day | ASLR fix |
+| 2.6 | Restore memory protection via VirtualProtect, return to caller | `packer/stub.asm` | 0.1 day | — |
+| **3** | **CMake integration — POST_BUILD step** | | **~0.5 day** | |
+| 3.1 | Add `find_package(Python3)` and LZ4 dependency check in `packer/CMakeLists.txt` | `packer/CMakeLists.txt` | 0.1 day | — |
+| 3.2 | Add `add_custom_command(TARGET inferno_wrapper POST_BUILD ...)` that runs `packer.py` on the compiled wrapper | `wrapper/CMakeLists.txt` | 0.2 day | — |
+| 3.3 | Handle per-build key generation: packer generates random key, no build-system involvement needed | — | 0.1 day | — |
+| 3.4 | Add CI integration: packer runs on CI build; verify packed binary is structurally valid | `.github/workflows/inferno_ci.yml` | 0.1 day | — |
+| **4** | **MacOS Mach-O support** | | **~1 day** | |
+| 4.1 | Parse Universal/Fat headers (`cafebabe`/`bebafeca`), iterate `fat_arch`, handle thin Mach-O (`feedfacf`) | `packer/packer.py` | 0.5 day | — |
+| 4.2 | Parse `LC_SEGMENT_64` load commands, locate `__text`, `__const`, `__cstring`, `__data` sections | `packer/packer.py` | 0.25 day | — |
+| 4.3 | Handle `LC_CODE_SIGNATURE` — must remove or rebuild; modify `LC_UNIXTHREAD` / `LC_MAIN` entry point (or TLS-style callback via `__DATA,__tls_*`) | `packer/packer.py` | 0.25 day | — |
+| **5** | **Code signing (Phase 3.5)** | | **~1 day** | |
+| 5.1 | Integrate `signtool` (Windows SDK) as POST_BUILD for wrapper | `wrapper/CMakeLists.txt` | 0.5 day | — |
+| 5.2 | Add CI certificate secret (`.pfx` + password), sign in CI pipeline | `.github/workflows/inferno_ci.yml` | 0.5 day | — |
+| 5.3 | Timestamp signature to remain valid after cert expiry | `wrapper/CMakeLists.txt` | 0.25 day | — |
+
+**Total effort**: ~8.5 days
+
+### Definition of Done — Phase 3
+
+The following criteria define when Phase 3 is complete and verifiable:
+
+| # | Criterion | Verification Method | Pass/Fail |
+|---|-----------|-------------------|-----------|
+| **D1** | Packer produces a valid PE binary | `python3 -c "import struct; f=open('packed.exe','rb'); assert f.read(2)==b'MZ'"` | |
+| **D2** | All code/data sections encrypted on disk | First 4 bytes of `.text` raw data are NOT recognizable x86 (`0xCC`, `push rbp`=`0x55`, `jmp`=`0xEB`) | |
+| **D3** | TLS directory exists and points to valid callback | `IMAGE_DIRECTORY_ENTRY_TLS` is populated; callback array contains non-null address | |
+| **D4** | Original entry point unchanged (still in `.text`) | `AddressOfEntryPoint` RVA falls within `.text` VirtualAddress → VirtualAddress+VirtualSize | |
+| **D5** | `.reloc` directory preserved and structurally valid | Reloc directory entry RVA/size points to valid block headers (`IMAGE_BASE_RELOCATION` with `SizeOfBlock > 0`) | |
+| **D6** | Section contents produce different binary per build | Two runs with different keys produce different SHA-256 hashes | |
+| **D7** | No `.packer` section name present | Section names are plausible: `.text`, `.rdata`, `.data`, `.rsrc`, `.reloc`, `.pdata`, `.textbss` or injected into `.rsrc` | |
+| **D8** | No static imports in stub | `IMAGE_DIRECTORY_ENTRY_IMPORT` has same entries as pre-packed binary (no added imports for VirtualProtect) | |
+| **D9** | Entropy of encrypted sections < 6.5 | Compute Shannon entropy of `.text` raw data section; must be < 6.5 (compressed + XOR avoids 7.0+ heuristic threshold) | |
+| **D10** | Binary runs without crash (smoke test) | Execute packed binary; it must not immediately crash with access violation (TLS callback runs, decrypts, jumps to OEP) | **Note**: Full execution test requires Windows VM. macOS/Linux CI can validate D1–D9. |
+| **D11** | Packer runs as CMake POST_BUILD step | `cmake --build . --target inferno_wrapper` produces a packed binary (verify D1–D9) | |
+| **D12** | Test suite passes | `tests/packer_test.py` passes all assertions | |
+
+### Phase 3 Dependencies
+
+- **Python3** with `lz4` package (compression) — required at build time
+- **Windows SDK** (for `signtool`) — only for Phase 3.5
+- **macOS** (for Mach-O packing + testing) — Step 4
+- **Windows VM** (for full runtime smoke test D10) — optional, local dev
+
+### Future Phase 3 Evolution (Post-MVP)
+
+| Item | Priority | Rationale |
+|------|----------|-----------|
+| AES-256 section encryption | Low | XOR+LZ4 sufficient for static AV; AES adds 500+ bytes to stub |
+| Multi-stage downloader | Low | Current architecture is stage-0→stage-1; adding network dependency at execution increases failure risk |
+| LLM-generated stub variants | Experimental | Defeats similarity clustering; requires LLM API at build time |
+| Polymorphic sleep encryption | Phase 6B | Already planned; in-memory encryption during sleep cycles |
 
 ---
 
@@ -340,27 +470,28 @@ On macOS 13+, direct TCC DB write is blocked (SIP-protected system database). Th
 
 ---
 
-## Dependency Graph
+## Updated Dependency Graph
 
 ```
-Phase 0 (Wrapper hardening) → Phase 1 (Client evasion)
+Phase 0 (Wrapper hardening) ──→ Phase 1 (Client evasion)
      ↓
 Phase 2 (Basic propagation)
      ↓
-Phase 3 (Obfuscation) ──────────────────→ Phase 5 (Transport evasion)
-     ↓                                         │
-Phase 4 (Injection) ──────────┬──→ Phase 6 ────┘
-     │                         │    (In-memory)
+Phase 3 (Packer — NOW) ──────────────→ blocks
+     ↓                                     ↓
+Phase 3.5 (Code signing — NOW)          Phase 5A (HTTP/2 beaconing)
+     ↓                                     ↓
+Phase 4 (Injection) ──────────┬──→ Phase 5B (mTLS 1.3)
+     │                         │
      │                    Phase 4D
-     │                 (Media Capture) ───────┐
-     │                         │              │
-     │                         ├──→ Phase 7 ──┘
-     │                         │    (Evasive propagation)
-      └───────── Phase 5 ───────┘         ↑
-                                          │
-                               Phase 4D feeds screenshots
-                               & camera into lateral movement
-Phase 4 ──────────────────────────────────┘
+     │                 (Media Capture)
+     │                         │
+     │                         ├──→ Phase 6B (Polymorphic sleep)
+     │                         │
+      └───────── Phase 6A ─────┘
+                  (Syscalls)
+                      ↓
+Phase 7 (Evasive propagation)
      ↓
 Phase 8 (Auth & persistence)
      ↓
@@ -369,4 +500,15 @@ Phase 9 (Teamserver)
 Phase 10 (AI & architecture)
 ```
 
-Phases 0–4 are **critical path** — without them the agent is trivially detected and removed. Phases 5+ build resilience on top of a hidden foundation.
+**Where we are**: Phase 3 is the current active workstream. All downstream phases (5A, 5B, 6B) are blocked until the packer is complete — transport evasion is irrelevant if the binary never executes.
+
+## Immediate Action Items (ordered)
+
+| # | Phase | Item | Effort | Impact |
+|---|-------|------|--------|--------|
+| 1 | **3** | Custom PE/Mach-O packer (Steps 1-4) | ~8.5 days | High — wrapper not signatureable by static AV |
+| 2 | **3.5** | Code signing | ~1 day | High — bypasses SmartScreen |
+| 3 | **5A** | HTTP/2 beaconing | Next | High — traffic blends with web traffic |
+| 4 | **6A** | Direct syscalls | ~3 days | Medium — bypasses EDR userland hooks |
+| 5 | **6B** | Polymorphic sleep | ~2 days | Medium — defeats memory scanners |
+| 6 | **5B** | mTLS 1.3 | ~2 days | Medium — prevents traffic inspection |

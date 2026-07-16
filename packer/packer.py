@@ -569,122 +569,105 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
 
 
 def inject_stub(pe: PEFile, stub_blob: bytes,
-                quick: bool = False) -> Tuple[int, int]:
-    """Inject the stub blob into the binary.
+                quick: bool = False) -> Tuple[int, int, int]:
+    """Inject the stub blob by extending the last section.
 
-    Places the stub into slack space (alignment padding after the last section
-    or at end of headers). Sets up TLS callback directory entry.
+    The last section is extended in both raw size (on disk) and virtual
+    size (in memory). Its characteristics gain EXECUTE | READ so the
+    TLS callback can execute. The section header is updated in-place.
 
-    Returns (stub_rva, stub_size).
+    Returns (stub_rva, stub_size, tls_rva).
     """
     stub_size = len(stub_blob)
     file_align = pe.file_alignment
     sec_align = pe.section_alignment
 
-    # Strategy: place stub + callback array in the alignment gap between
-    # the last section's raw end and the file-aligned boundary.
-    raw_end = pe.last_section_end_raw()
-    header_end = pe.end_of_headers()
+    # TLS directory + callback array overhead (after stub code)
+    tls_overhead = 64
+    total_needed = stub_size + tls_overhead
 
-    # Find a gap with enough space
-    # Option A: after the last section before end of file
-    file_end = pe.file_end_aligned()
-    gap_a = file_end - raw_end if raw_end < file_end else 0
+    # ── Extend the last section ─────────────────────────────
+    last = pe.sections[-1]
+    new_raw_start = last.pointer_to_raw_data + last.size_of_raw_data
 
-    # Option B: between header end and first section raw start
-    first_sec = pe.sections[0] if pe.sections else None
-    gap_b_raw = 0
-    if first_sec and header_end < first_sec.pointer_to_raw_data:
-        gap_b_raw = first_sec.pointer_to_raw_data - header_end
+    # Pad file data to accommodate stub + TLS structures
+    pad_needed = (new_raw_start + total_needed) - len(pe.data)
+    if pad_needed > 0:
+        pe.data.extend([0xAB] * pad_needed)
 
-    # We need stub_size + 32 bytes for TLS directory + callback array
-    total_needed = stub_size + 64
-
-    if gap_a >= total_needed:
-        # Use Option A: after last section
-        stub_offset = raw_end
-    elif gap_b_raw >= total_needed:
-        # Use Option B: after headers
-        stub_offset = header_end
-    else:
-        # Need to extend the file: Option C — extend last section
-        last = pe.sections[-1]
-        stub_offset = last.pointer_to_raw_data + last.size_of_raw_data
-        extra = (stub_offset + total_needed) - file_end
-        if extra < file_align:
-            extra = 0  # fits in existing alignment padding
-        # Pad data to accommodate the stub
-        while len(pe.data) < stub_offset + total_needed:
-            pe.data.append(0xAB)
-
-    # Ensure data is large enough
-    while len(pe.data) < stub_offset + total_needed:
-        pe.data.append(0xAB)
-
-    # Write stub blob
+    # ── Write stub blob ────────────────────────────────────
+    stub_offset = new_raw_start
     pe.data[stub_offset:stub_offset + stub_size] = stub_blob
 
-    # Compute RVA
-    last_sec = pe.sections[-1]
-    stub_rva = last_sec.virtual_address + (stub_offset - last_sec.pointer_to_raw_data)
+    # Compute stub RVA: virtual address of the raw data gap
+    # The stub sits right after the section's raw data, which maps
+    # to virtual_address + virtual_size (the zero-fill or slack area
+    # that extends to the next page).
+    stub_rva = last.virtual_address + last.virtual_size
 
-    # ── TLS Callback Setup ──────────────────────────────────
+    # ── Write callback array ───────────────────────────────
+    callbacks_offset = stub_offset + stub_size
+    callbacks_offset = ((callbacks_offset + 7) // 8) * 8
+    callback_list = struct.pack("<QQ", stub_rva, 0)  # [stub_rva, null]
+    pe.data[callbacks_offset:callbacks_offset + len(callback_list)] = callback_list
+    callback_rva = stub_rva + (callbacks_offset - stub_offset)
+    tls_dir_end = callbacks_offset + len(callback_list)
+
+    # ── Write TLS directory ────────────────────────────────
+    tls_dir_offset = ((tls_dir_end + 7) // 8) * 8
+    tls_dir_size = 40 if pe.is_pe32plus else 24
+    tls_rva = stub_rva + (tls_dir_offset - stub_offset)
+
+    if pe.is_pe32plus:
+        tls_dir = struct.pack("<QQQQII",
+                              stub_rva, stub_rva + stub_size,
+                              callback_rva, callback_rva,
+                              0, 0)
+    else:
+        tls_dir = struct.pack("<IIIIII",
+                              stub_rva, stub_rva + stub_size,
+                              callback_rva, callback_rva,
+                              0, 0)
+
+    pe.data[tls_dir_offset:tls_dir_offset + tls_dir_size] = tls_dir
+
+    # ── Update last section header ─────────────────────────
+    # New raw size: cover everything up to end of TLS directory
+    total_raw_end = tls_dir_offset + tls_dir_size
+    total_raw_used = total_raw_end - last.pointer_to_raw_data
+    new_raw_size = pe.align_up(total_raw_used, file_align)
+    last.size_of_raw_data = new_raw_size
+
+    # Ensure file data covers the aligned raw size
+    min_file_len = last.pointer_to_raw_data + new_raw_size
+    if len(pe.data) < min_file_len:
+        pe.data.extend([0xAB] * (min_file_len - len(pe.data)))
+
+    # New virtual size: cover the stub + TLS data
+    stub_virtual_end = stub_rva + (total_raw_end - stub_offset)
+    new_virtual_size = stub_virtual_end - last.virtual_address
+    last.virtual_size = new_virtual_size
+
+    # Add EXECUTE | READ to section characteristics so the TLS
+    # callback code can run from this section.
+    last.characteristics |= IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ
+
+    # Write section header back to PE data
+    sec_hdr_off = pe.section_offset + pe.sections.index(last) * IMAGE_SECTION_HEADER.SIZE
+    pe.data[sec_hdr_off:sec_hdr_off + IMAGE_SECTION_HEADER.SIZE] = last.pack()
+
+    # ── Update SizeOfImage ─────────────────────────────────
+    new_image_size = pe.align_up(last.virtual_address + last.virtual_size,
+                                 sec_align)
+    if new_image_size > pe.size_of_image:
+        pe.size_of_image = new_image_size
+        size_of_image_off = (pe.opt_offset + 56 if pe.is_pe32plus
+                             else pe.opt_offset + 52)
+        struct.pack_into("<I", pe.data, size_of_image_off, new_image_size)
+
+    # ── Update TLS data directory ──────────────────────────
     if not quick:
-        # Create TLS directory structure and callback array
-        # Place callback array right after the stub code
-        callback_array_offset = stub_offset + stub_size
-        # Align to 8 bytes
-        callback_array_offset = ((callback_array_offset + 7) // 8) * 8
-
-        # Callback array: [stub_rva, 0] (null-terminated)
-        callback_list = struct.pack("<QQ", stub_rva, 0)
-        pe.data[callback_array_offset:callback_array_offset + len(callback_list)] = callback_list
-
-        callback_rva = stub_rva + (callback_array_offset - stub_offset)
-
-        # Create TLS directory
-        tls_dir_size = 40 if pe.is_pe32plus else 24
-        tls_dir_offset = callback_array_offset + len(callback_list)
-        tls_dir_align = ((tls_dir_offset + 7) // 8) * 8
-        tls_dir_offset = tls_dir_align
-
-        # IMAGE_TLS_DIRECTORY64:
-        #   QWORD StartAddressOfRawData
-        #   QWORD EndAddressOfRawData
-        #   QWORD AddressOfIndex
-        #   QWORD AddressOfCallBacks
-        #   DWORD SizeOfZeroFill
-        #   DWORD Characteristics
-        tls_rva = stub_rva + (tls_dir_offset - stub_offset)
-
-        if pe.is_pe32plus:
-            tls_dir = struct.pack("<QQQQII",
-                                  stub_rva,                    # StartAddressOfRawData
-                                  stub_rva + stub_size,         # EndAddressOfRawData
-                                  callback_rva,                 # AddressOfIndex
-                                  callback_rva,                 # AddressOfCallBacks
-                                  0, 0)                         # SizeOfZeroFill, Chars
-        else:
-            tls_dir = struct.pack("<IIIIII",
-                                  stub_rva,
-                                  stub_rva + stub_size,
-                                  callback_rva,
-                                  callback_rva,
-                                  0, 0)
-
-        pe.data[tls_dir_offset:tls_dir_offset + len(tls_dir)] = tls_dir
-
-        # Update data directory entry for TLS
-        pe.set_data_dir(IMAGE_DIRECTORY_ENTRY_TLS, tls_rva, len(tls_dir))
-
-        # Update SizeOfImage if needed
-        total_end = tls_dir_offset + tls_dir_size
-        total_end_rva = stub_rva + (total_end - stub_offset)
-        new_size = pe.align_up(total_end_rva, sec_align)
-        if new_size > pe.size_of_image:
-            pe.size_of_image = new_size
-            struct.pack_into("<I", pe.data, pe.opt_offset + 56 if pe.is_pe32plus else pe.opt_offset + 52,
-                             new_size)
+        pe.set_data_dir(IMAGE_DIRECTORY_ENTRY_TLS, tls_rva, tls_dir_size)
 
     return stub_rva, stub_size, tls_rva if not quick else 0
 

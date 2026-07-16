@@ -690,9 +690,14 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
                                  sec_align)
     if new_image_size > pe.size_of_image:
         pe.size_of_image = new_image_size
-        size_of_image_off = (pe.opt_offset + 56 if pe.is_pe32plus
-                             else pe.opt_offset + 52)
-        struct.pack_into("<I", pe.data, size_of_image_off, new_image_size)
+        # SizeOfImage is at opt_header + 56 for both PE32 and PE32+.
+        # PE32: Magic(2)+Linker(2)+4×SizeOf(16)+AddrEntry(4)+BaseOfCode(4)
+        #       +BaseOfData(4)+ImageBase(4)+SectionAl(4)+FileAl(4)+
+        #       6×Version(12)+Win32Ver(4) = 56
+        # PE32+: same layout, but BaseOfData removed and ImageBase is 8
+        #        bytes — the additional 4 bytes shift nothing because
+        #        BaseOfData is absent. Total remains 56.
+        struct.pack_into("<I", pe.data, pe.opt_offset + 56, new_image_size)
 
     # ── Update TLS data directory ──────────────────────────
     if not quick:

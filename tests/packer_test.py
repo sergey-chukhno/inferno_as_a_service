@@ -900,25 +900,35 @@ def test_lz4_compress_decompress():
 
 
 def test_stub_fallback():
-    """Verify build_stub falls back to placeholder when stub.bin is missing."""
-    # Move stub.bin temporarily, build, then restore
+    """Verify build_stub fails closed when stub.bin is missing (non-quick).
+
+    Production mode must never silently fall back to a placeholder —
+    sections would be encrypted with no matching decryption stub.
+    Quick mode still works with the placeholder.
+    """
     stub_bin_path = os.path.join(os.path.dirname(__file__), '..', 'packer', 'stub.bin')
     stub_bak_path = stub_bin_path + '.bak'
 
     if not os.path.exists(stub_bin_path):
-        print("[SKIP] test_stub_fallback: stub.bin not found at expected path")
+        print("[SKIP] test_stub_fallback: stub.bin not found")
         return
 
     os.rename(stub_bin_path, stub_bak_path)
     try:
         key = make_key("AABB")
         table = [{'rva': 0x1000, 'compressed_sz': 16, 'decompressed_sz': 32}]
-        stub = build_stub(key, 0x140000000, table, quick=False)
 
-        # With fallback, stub should be small (just header + 1-byte RET + descs)
-        assert len(stub) < 100, f"Fallback stub too large: {len(stub)}"
-        # Code should be 0xC3 (RET)
-        assert stub[56] == 0xC3, f"Fallback code not RET: 0x{stub[56]:02X}"
+        # Non-quick mode must raise ValueError (fail closed)
+        try:
+            build_stub(key, 0x140000000, table, quick=False)
+            assert False, "Should have raised ValueError for missing stub.bin"
+        except ValueError as e:
+            assert 'stub.bin' in str(e), \
+                f"Error should mention stub.bin: {e}"
+
+        # Quick mode still works with placeholder
+        stub = build_stub(key, 0x140000000, table, quick=True)
+        assert stub[56] == 0xC3, f"Quick mode code not RET: 0x{stub[56]:02X}"
     finally:
         os.rename(stub_bak_path, stub_bin_path)
     print("[PASS] test_stub_fallback")

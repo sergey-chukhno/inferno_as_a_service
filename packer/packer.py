@@ -555,18 +555,28 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
             f"XOR key must be 1–{DEFAULT_KEY_SIZE} bytes "
             f"(got {len(key)})")
 
-    # Load the pre-assembled stub binary
-    stub_dir = os.path.dirname(os.path.abspath(__file__))
-    stub_bin_path = os.path.join(stub_dir, 'stub.bin')
-    try:
-        with open(stub_bin_path, 'rb') as f:
-            code = f.read()
-    except (IOError, OSError):
-        # Fallback to placeholder if stub.bin is missing
-        code = PLACEHOLDER_STUB_X64 if is_pe32plus else PLACEHOLDER_STUB_X86
-
     if quick:
-        code = b'\xC3'  # quick mode: just RET (placeholder)
+        # Quick/testing mode: inject a single RET (architecture-appropriate)
+        # so the pack pipeline can be validated without the real stub.
+        code = b'\xC3' if is_pe32plus else b'\xC2\x0C\x00'
+
+    else:
+        # Production mode: load the pre-assembled stub binary.
+        # stub.asm is x64 only — PE32 (x86) is not yet supported.
+        if not is_pe32plus:
+            raise ValueError(
+                "Packer stub is x64-only. PE32 (x86) is not yet supported.")
+
+        stub_dir = os.path.dirname(os.path.abspath(__file__))
+        stub_bin_path = os.path.join(stub_dir, 'stub.bin')
+        try:
+            with open(stub_bin_path, 'rb') as f:
+                code = f.read()
+        except (IOError, OSError) as e:
+            raise ValueError(
+                f"Cannot load stub.bin from '{stub_bin_path}': {e}. "
+                f"Run 'nasm -f bin -O0 -o packer/stub.bin packer/stub.asm' "
+                f"or use --quick for testing.")
 
     # Descriptors offset = sizeof(header) + sizeof(code)
     descs_offset = 56 + len(code)

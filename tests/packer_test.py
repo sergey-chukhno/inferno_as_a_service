@@ -903,42 +903,81 @@ def test_ror13_hash():
     print("[PASS] test_ror13_hash")
 
 
-def test_lz4_compress_decompress():
-    """Verify LZ4 compression roundtrip through the packer pipeline.
+def test_lz4_roundtrip():
+    """Verify the full compress-encrypt → decrypt-decompress roundtrip.
 
-    This tests the Python-side compression that produces data the stub
-    will later decompress. If compressed_sz == decompressed_sz for any
-    section, the stub skips decompression — verify this works too.
+    This simulates the stub's runtime decryption pipeline in Python:
+    1. Pack data with a known key
+    2. Read the stub header (key + section descriptors) from the packed PE
+    3. For each descriptor, read encrypted data, XOR-decrypt, LZ4-decompress
+    4. Verify recovered data matches the original section content
     """
     import lz4.block
 
     data = make_minimal_pe64()
+    pe_orig = PEFile(data)
     key = make_key("DEADBEEFCAFEBABE1234567890ABCDEF")
     result = pack(data, key, quick=False, no_compress=False)
+
+    descs = collect_descriptors(pe_orig)
+    orig_by_name = {d.name: d.raw_data for d in descs}
+
     pe = PEFile(result)
 
-    # Parse the stub to get section descriptors
-    # Find the stub: it's in the extended section
-    last_sec = pe.sections[-1]
-    # The last section has the descriptor table after the code
-    # Read the descs_offset from the header
-    # The header is at the start of the extended area
-    stub_raw_start = last_sec.pointer_to_raw_data + last_sec.size_of_raw_data - 0x400
-    # Approximate: read magic from the extended area
-    # We know the stub header starts at last_sec.pointer_to_raw_data + old_size_of_raw_data
-    # But we don't have 'old' value here. Instead, check that compression worked:
-    for sec in pe.sections:
-        if sec.name in ('.text', '.data'):
-            raw = bytes(pe.data[sec.pointer_to_raw_data:sec.pointer_to_raw_data + 16])
-            # .text was encrypted — first 4 bytes shouldn't be 0xC3C3C3C3
-            if sec.name == '.text':
-                assert raw[:4] != b'\xC3\xC3\xC3\xC3', \
-                    ".text appears unencrypted"
-            # Verify rolling XOR changes bytes (not matching original)
-            # .text was 0xC3 repeated, so after encryption it's different
-            assert raw[0] != 0xC3 or raw[1] != 0xC3, \
-                f".text byte 0 at 0x{raw[0]:02X} looks like plaintext"
-    print("[PASS] test_lz4_compress_decompress")
+    # Find the stub header in the packed binary by scanning for 'PACK' magic
+    pack_magic = struct.pack('<I', 0x4B434150)
+    stub_offset = bytes(pe.data).find(pack_magic)
+    assert stub_offset >= 0, "PACK header not found in packed binary"
+
+    # Parse stub header
+    key_size = struct.unpack_from('<I', bytes(pe.data), stub_offset + 4)[0]
+    xor_key = bytes(pe.data[stub_offset + 8:stub_offset + 8 + 32])
+    xor_key = xor_key[:key_size]
+    num_sec = struct.unpack_from('<I', bytes(pe.data), stub_offset + 48)[0]
+    descs_offset = struct.unpack_from('<I', bytes(pe.data), stub_offset + 52)[0]
+
+    # Parse section descriptors from stub
+    stub_descs = []
+    for i in range(num_sec):
+        off = stub_offset + descs_offset + i * 16
+        rva, csz, dsz = struct.unpack_from('<QII', bytes(pe.data), off)
+        stub_descs.append({'rva': rva, 'compressed_sz': csz,
+                           'decompressed_sz': dsz})
+
+    # Map section name from RVA
+    rva_to_name = {s.virtual_address: s.name for s in pe_orig.sections}
+
+    for sd in stub_descs:
+        name = rva_to_name.get(sd['rva'])
+        if name is None or name not in orig_by_name:
+            continue
+        original = orig_by_name[name]
+        csz = sd['compressed_sz']
+        dsz = sd['decompressed_sz']
+
+        # Find the section in the packed binary by RVA
+        psec = pe.section_by_rva(sd['rva'])
+        assert psec is not None, f"Section at RVA 0x{sd['rva']:X} not found"
+
+        # Read the exact compressed bytes from the section's raw data
+        raw_off = psec.pointer_to_raw_data
+        raw_encrypted = bytes(pe.data[raw_off:raw_off + csz])
+
+        # XOR-decrypt
+        decrypted = rolling_xor(raw_encrypted, xor_key)
+
+        if csz == dsz:
+            # No LZ4 compression — XOR-only section
+            assert decrypted == original, \
+                f".{name}: XOR-only roundtrip mismatch"
+        else:
+            # LZ4-compressed
+            recovered = lz4.block.decompress(decrypted,
+                                             uncompressed_size=dsz)
+            assert recovered == original, \
+                f".{name}: LZ4 roundtrip mismatch"
+
+    print("[PASS] test_lz4_roundtrip")
 
 
 def test_stub_fallback():
@@ -1145,7 +1184,7 @@ def main():
         test_code_offset_computation_tls,
         test_code_offset_computation_quick,
         test_ror13_hash,
-        test_lz4_compress_decompress,
+        test_lz4_roundtrip,
         test_stub_fallback,
         test_quick_mode_placeholder,
         # Step 2.5 — Base Relocation tests

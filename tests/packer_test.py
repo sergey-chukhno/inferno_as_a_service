@@ -726,6 +726,48 @@ def test_stub_bin_loaded():
     print("[PASS] test_stub_bin_loaded")
 
 
+def test_stub_bin_matches_asm():
+    """Verify the committed stub.bin matches a fresh assemble of stub.asm.
+
+    This ensures stub.bin is not stale — every commit of stub.asm must
+    be paired with a regenerated stub.bin.
+    """
+    import subprocess
+    packer_dir = os.path.join(os.path.dirname(__file__), '..', 'packer')
+    asm_path = os.path.join(packer_dir, 'stub.asm')
+    bin_path = os.path.join(packer_dir, 'stub.bin')
+    tmp_path = os.path.join(packer_dir, 'stub.tmp')
+
+    if not os.path.exists(asm_path):
+        print("[SKIP] test_stub_bin_matches_asm: stub.asm not found")
+        return
+
+    try:
+        ret = subprocess.run(
+            ['nasm', '-f', 'bin', '-O0', '-o', tmp_path, asm_path],
+            capture_output=True, timeout=30)
+        if ret.returncode != 0:
+            print(f"[SKIP] test_stub_bin_matches_asm: nasm not available "
+                  f"({ret.stderr.decode().strip()})")
+            return
+
+        with open(tmp_path, 'rb') as f:
+            fresh_bin = f.read()
+        with open(bin_path, 'rb') as f:
+            committed_bin = f.read()
+
+        assert fresh_bin == committed_bin, \
+            f"stub.bin is stale: {len(committed_bin)} bytes committed, " \
+            f"{len(fresh_bin)} bytes from fresh assemble. " \
+            f"Run 'nasm -f bin -O0 -o packer/stub.bin packer/stub.asm'"
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+    print(f"[PASS] test_stub_bin_matches_asm ({len(committed_bin)} bytes, matches stub.asm)")
+
+
 def test_stub_layout():
     """Verify [header][code][descs] ordering and descs_offset."""
     key = make_key("AABBCCDDEEFF00112233445566778899")
@@ -1098,6 +1140,7 @@ def main():
         test_different_keys_different_output,
         # Step 2 — Decryptor Stub tests
         test_stub_bin_loaded,
+        test_stub_bin_matches_asm,
         test_stub_layout,
         test_code_offset_computation_tls,
         test_code_offset_computation_quick,

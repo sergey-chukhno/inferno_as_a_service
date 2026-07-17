@@ -539,7 +539,12 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                no_anti_debug: bool = False,
                quick: bool = False,
                is_pe32plus: bool = True) -> bytes:
-    """Build the stub blob: header + section descriptors + code.
+    """Build the stub blob: header + code + section descriptors.
+
+    Layout: [header(56)][code(variable)][descs(N*16)]
+
+    The header.reserved field stores the descs offset (= 56 + code_size)
+    so the stub can locate the descriptor array at runtime.
 
     Compression is detected per-section by the stub: if
     compressed_sz != decompressed_sz, the stub applies LZ4
@@ -549,13 +554,30 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
         raise ValueError(
             f"XOR key must be 1–{DEFAULT_KEY_SIZE} bytes "
             f"(got {len(key)})")
+
+    # Load the pre-assembled stub binary
+    stub_dir = os.path.dirname(os.path.abspath(__file__))
+    stub_bin_path = os.path.join(stub_dir, 'stub.bin')
+    try:
+        with open(stub_bin_path, 'rb') as f:
+            code = f.read()
+    except (IOError, OSError):
+        # Fallback to placeholder if stub.bin is missing
+        code = PLACEHOLDER_STUB_X64 if is_pe32plus else PLACEHOLDER_STUB_X86
+
+    if quick:
+        code = b'\xC3'  # quick mode: just RET (placeholder)
+
+    # Descriptors offset = sizeof(header) + sizeof(code)
+    descs_offset = 56 + len(code)
+
     header = struct.pack("<II32sQII",
                          STUB_MAGIC,
                          len(key),
                          key.ljust(32, b'\x00')[:32],
                          preferred_base,
                          len(section_table),
-                         0)  # reserved
+                         descs_offset)  # reserved -> descs_offset
     descs = b''
     for s in section_table:
         descs += struct.pack("<QII",
@@ -563,15 +585,7 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                              s['compressed_sz'],
                              s['decompressed_sz'])
 
-    # Select architecture-appropriate return for the TLS callback.
-    # PE32 uses __stdcall (ret 12), PE32+ uses caller-clean (ret).
-    placeholder = PLACEHOLDER_STUB_X64 if is_pe32plus else PLACEHOLDER_STUB_X86
-    if quick:
-        code = placeholder
-    else:
-        code = placeholder
-
-    return header + descs + code
+    return header + code + descs
 
 
 # ═══════════════════════════════════════════════════════════════

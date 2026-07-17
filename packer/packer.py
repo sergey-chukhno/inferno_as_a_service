@@ -45,6 +45,11 @@ IMAGE_SCN_MEM_WRITE = 0x80000000
 # Stub magic: 'PACK' in little-endian
 STUB_MAGIC = 0x4B434150
 
+# DLL characteristics
+IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040
+# File header characteristics
+IMAGE_FILE_DLL = 0x2000
+
 # ═══════════════════════════════════════════════════════════════
 # Step 1.1 — CLI
 # ═══════════════════════════════════════════════════════════════
@@ -483,9 +488,16 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
     If the packed (encrypted) data exceeds the section's raw data size
     on disk, the section is left unpacked — the descriptor table is not
     updated, and the stub skips it.
+
+    The stub's LZ4 decompression buffer is limited to 64 KiB. Sections
+    larger than this that were actually compressed cannot be decompressed
+    and are left as encrypted garbage — the process crashes. These are
+    skipped here with a warning.
     """
+    STUB_MAX_DECOMPRESS = 0x10000  # 64 KiB stack buffer in stub
     table = []
     raw_overhead: int = 0
+    decomp_overhead: int = 0
     for d in descs:
         raw = d.raw_data
         max_storage = d.size_of_raw_data
@@ -495,6 +507,12 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
             was_compressed = False
         else:
             pre_encrypt, was_compressed = compress_lz4(raw)
+
+        # Sections that were actually compressed but exceed the stub's
+        # 64 KiB decompression buffer cannot be processed. Skip them.
+        if was_compressed and len(raw) > STUB_MAX_DECOMPRESS:
+            decomp_overhead += len(raw)
+            continue
 
         encrypted = rolling_xor(pre_encrypt, key)
 
@@ -516,6 +534,11 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
     if raw_overhead > 0:
         print(f"Warning: {raw_overhead} bytes of packed data exceeded "
               f"section capacity — left unpacked", file=sys.stderr)
+
+    if decomp_overhead > 0:
+        print(f"Warning: {decomp_overhead} bytes of sections exceeded "
+              f"stub's 64 KiB decompression buffer — left unpacked",
+              file=sys.stderr)
 
     return table
 
@@ -539,7 +562,12 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                no_anti_debug: bool = False,
                quick: bool = False,
                is_pe32plus: bool = True) -> bytes:
-    """Build the stub blob: header + section descriptors + code.
+    """Build the stub blob: header + code + section descriptors.
+
+    Layout: [header(56)][code(variable)][descs(N*16)]
+
+    The header.reserved field stores the descs offset (= 56 + code_size)
+    so the stub can locate the descriptor array at runtime.
 
     Compression is detected per-section by the stub: if
     compressed_sz != decompressed_sz, the stub applies LZ4
@@ -549,13 +577,40 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
         raise ValueError(
             f"XOR key must be 1–{DEFAULT_KEY_SIZE} bytes "
             f"(got {len(key)})")
+
+    if quick:
+        # Quick/testing mode: inject a single RET (architecture-appropriate)
+        # so the pack pipeline can be validated without the real stub.
+        code = b'\xC3' if is_pe32plus else b'\xC2\x0C\x00'
+
+    else:
+        # Production mode: load the pre-assembled stub binary.
+        # stub.asm is x64 only — PE32 (x86) is not yet supported.
+        if not is_pe32plus:
+            raise ValueError(
+                "Packer stub is x64-only. PE32 (x86) is not yet supported.")
+
+        stub_dir = os.path.dirname(os.path.abspath(__file__))
+        stub_bin_path = os.path.join(stub_dir, 'stub.bin')
+        try:
+            with open(stub_bin_path, 'rb') as f:
+                code = f.read()
+        except (IOError, OSError) as e:
+            raise ValueError(
+                f"Cannot load stub.bin from '{stub_bin_path}': {e}. "
+                f"Run 'nasm -f bin -O0 -o packer/stub.bin packer/stub.asm' "
+                f"or use --quick for testing.")
+
+    # Descriptors offset = sizeof(header) + sizeof(code)
+    descs_offset = 56 + len(code)
+
     header = struct.pack("<II32sQII",
                          STUB_MAGIC,
                          len(key),
                          key.ljust(32, b'\x00')[:32],
                          preferred_base,
                          len(section_table),
-                         0)  # reserved
+                         descs_offset)  # reserved -> descs_offset
     descs = b''
     for s in section_table:
         descs += struct.pack("<QII",
@@ -563,15 +618,7 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                              s['compressed_sz'],
                              s['decompressed_sz'])
 
-    # Select architecture-appropriate return for the TLS callback.
-    # PE32 uses __stdcall (ret 12), PE32+ uses caller-clean (ret).
-    placeholder = PLACEHOLDER_STUB_X64 if is_pe32plus else PLACEHOLDER_STUB_X86
-    if quick:
-        code = placeholder
-    else:
-        code = placeholder
-
-    return header + descs + code
+    return header + code + descs
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -656,11 +703,9 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     stub_rva = last.virtual_address + (stub_offset - last.pointer_to_raw_data)
 
     # ── Compute code entry point within stub ──────────────
-    # Stub layout: [header(56)][descs(N*16)][code]
-    # Parse the stub blob to find the code-start RVA
-    stub_num_sec = struct.unpack_from("<I", stub_blob, 48)[0]
-    stub_code_offset = 56 + stub_num_sec * 16  # after header + descriptors
-    code_rva = stub_rva + stub_code_offset
+    # Stub layout: [header(56)][code][descs(N*16)]
+    # Code always starts right after the header (offset 56).
+    code_rva = stub_rva + 56
 
     # ── Write callback array ───────────────────────────────
     # Each entry is a VA (ImageBase + RVA) pointing to executable code.
@@ -746,6 +791,41 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
         #        bytes — the additional 4 bytes shift nothing because
         #        BaseOfData is absent. Total remains 56.
         struct.pack_into("<I", pe.data, pe.opt_offset + 56, new_image_size)
+
+    # ── Reject DLLs ──────────────────────────────────────────
+    # The packer strips .reloc and disables ASLR to prevent loader
+    # relocation from corrupting encrypted sections (the loader runs
+    # before TLS callbacks). DLLs typically require relocation and
+    # would fail to load at a non-preferred base. Only EXEs are
+    # supported.
+    coff_flags = struct.unpack_from("<H", bytes(pe.data), pe.e_lfanew + 22)[0]
+    if coff_flags & IMAGE_FILE_DLL:
+        raise ValueError(
+            "Packing DLLs is not supported — relocations are stripped "
+            "to prevent loader corruption of encrypted sections. "
+            "Only EXEs are supported.")
+
+    # ── Disable ASLR + strip .reloc directory ──────────────
+    # The loader applies base relocations BEFORE TLS callbacks.
+    # If a .reloc entry points into an encrypted section, the loader
+    # adds delta to ciphertext bytes — after XOR decryption the value
+    # is corrupted (addition is not linear over XOR).
+    #
+    # Clearing DYNAMIC_BASE prevents ASLR (binary loads at ImageBase,
+    # delta = 0 → no relocation needed). Additionally, we zero the
+    # .reloc data directory to ensure the loader never processes it,
+    # even if the binary somehow maps at a different base.
+    #
+    # A proper fix would emit .reloc entries for the injection
+    # structures AND keep existing .reloc entries for unencrypted
+    # sections. For now, stripping .reloc is the safe choice.
+    dc_off = pe.opt_offset + 70  # DllCharacteristics (same for PE32/PE32+)
+    current_dc = struct.unpack_from("<H", bytes(pe.data), dc_off)[0]
+    current_dc &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
+    struct.pack_into("<H", pe.data, dc_off, current_dc)
+
+    # Zero the base relocation data directory so the loader ignores it.
+    pe.set_data_dir(IMAGE_DIRECTORY_ENTRY_BASERELOC, 0, 0)
 
     # ── Update TLS data directory ──────────────────────────
     if not quick:
@@ -856,11 +936,10 @@ def pack(data: bytes, key: bytes, no_compress: bool = False,
     # ── In quick mode, patch entry point to stub ───────────
     if quick:
         # Set entry point to the stub CODE (not header). The stub
-        # layout is [header(56)][descs(N*16)][code].
-        stub_num_sec = struct.unpack_from("<I", stub, 48)[0]
-        code_rva = stub_rva + 56 + stub_num_sec * 16
+        # layout is [header(56)][code][descs(N*16)].
+        # Code always starts right after the header (offset 56).
         epoff = pe.opt_offset + 16  # AddressOfEntryPoint offset (same for PE32/PE32+)
-        struct.pack_into("<I", pe.data, epoff, code_rva)
+        struct.pack_into("<I", pe.data, epoff, stub_rva + 56)
 
     # ── Step 1.7: verify entry point ───────────────────────
     verify_entry_point(pe)

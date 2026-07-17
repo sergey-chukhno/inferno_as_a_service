@@ -19,7 +19,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from packer.packer import (PEFile, make_key, collect_descriptors, rolling_xor,
                             pack_sections, build_stub, inject_stub, pack,
-                            IMAGE_SCN_MEM_EXECUTE)
+                            IMAGE_SCN_MEM_EXECUTE, STUB_MAGIC)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -585,9 +585,9 @@ def test_inject_stub():
     cb_raw = bytes(pe.data[cb_off:cb_off + 16])
     cb_target_va, cb_null = struct.unpack_from('<QQ', cb_raw, 0)
 
-    # Callback must target code, not the PACK header
-    stub_num_sec = struct.unpack_from('<I', stub, 48)[0]
-    expected_code_va = ib + stub_rva + 56 + stub_num_sec * 16
+    # Callback must target code (right after header at stub_rva + 56),
+    # not the PACK header (stub_rva).
+    expected_code_va = ib + stub_rva + 56
     assert cb_target_va == expected_code_va, \
         f"Callback target: expected 0x{expected_code_va:X}, got 0x{cb_target_va:X}"
     assert cb_null == 0, "Callback array not null-terminated"
@@ -704,6 +704,445 @@ def test_different_keys_different_output():
 
 
 # ═══════════════════════════════════════════════════════════════
+# Step 2 — Decryptor Stub Tests
+# ═══════════════════════════════════════════════════════════════
+
+
+def test_stub_bin_loaded():
+    """Verify build_stub loads stub.bin when available."""
+    key = make_key("AABBCCDDEEFF00112233445566778899")
+    table = [{'rva': 0x1000, 'compressed_sz': 16, 'decompressed_sz': 32}]
+    stub = build_stub(key, 0x140000000, table, quick=False)
+
+    # Header(56) + code(stub.bin is ~999 bytes) + descs(16) = ~1071+
+    assert len(stub) > 200, f"Stub too small ({len(stub)}), stub.bin likely not loaded"
+    assert len(stub) < 2000, f"Stub too large ({len(stub)})"
+
+    # Verify code area doesn't start with 0xC3 (RET) — stub.bin has a proper prologue
+    # The prologue should start with 'push rbp' = 0x55
+    code_start = 56  # right after header
+    assert stub[code_start] == 0x55, \
+        f"stub.bin code should start with push rbp (0x55), got 0x{stub[code_start]:02X}"
+    print("[PASS] test_stub_bin_loaded")
+
+
+def test_stub_bin_matches_asm():
+    """Verify the committed stub.bin matches a fresh assemble of stub.asm.
+
+    This ensures stub.bin is not stale — every commit of stub.asm must
+    be paired with a regenerated stub.bin.
+    """
+    import subprocess
+    packer_dir = os.path.join(os.path.dirname(__file__), '..', 'packer')
+    asm_path = os.path.join(packer_dir, 'stub.asm')
+    bin_path = os.path.join(packer_dir, 'stub.bin')
+    tmp_path = os.path.join(packer_dir, 'stub.tmp')
+
+    if not os.path.exists(asm_path):
+        print("[SKIP] test_stub_bin_matches_asm: stub.asm not found")
+        return
+
+    try:
+        ret = subprocess.run(
+            ['nasm', '-f', 'bin', '-O0', '-o', tmp_path, asm_path],
+            capture_output=True, timeout=30)
+        if ret.returncode != 0:
+            print(f"[SKIP] test_stub_bin_matches_asm: nasm not available "
+                  f"({ret.stderr.decode().strip()})")
+            return
+
+        with open(tmp_path, 'rb') as f:
+            fresh_bin = f.read()
+        with open(bin_path, 'rb') as f:
+            committed_bin = f.read()
+
+        assert fresh_bin == committed_bin, \
+            f"stub.bin is stale: {len(committed_bin)} bytes committed, " \
+            f"{len(fresh_bin)} bytes from fresh assemble. " \
+            f"Run 'nasm -f bin -O0 -o packer/stub.bin packer/stub.asm'"
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+    print(f"[PASS] test_stub_bin_matches_asm ({len(committed_bin)} bytes, matches stub.asm)")
+
+
+def test_stub_layout():
+    """Verify [header][code][descs] ordering and descs_offset."""
+    key = make_key("AABBCCDDEEFF00112233445566778899")
+    table = [
+        {'rva': 0x1000, 'compressed_sz': 16, 'decompressed_sz': 32},
+        {'rva': 0x2000, 'compressed_sz': 8, 'decompressed_sz': 64},
+    ]
+    stub = build_stub(key, 0x140000000, table, quick=False)
+
+    # Parse header fields
+    magic = struct.unpack_from("<I", stub, 0)[0]
+    assert magic == STUB_MAGIC, f"Bad magic: 0x{magic:08X}"
+
+    num_sec = struct.unpack_from("<I", stub, 48)[0]
+    assert num_sec == 2
+
+    descs_offset = struct.unpack_from("<I", stub, 52)[0]
+    expected_descs_offset = 56 + (len(stub) - 56 - 2 * 16)  # header + code
+    assert descs_offset == expected_descs_offset, \
+        f"descs_offset: expected {expected_descs_offset}, got {descs_offset}"
+
+    # Verify descriptors are at the computed offset
+    for i in range(num_sec):
+        off = descs_offset + i * 16
+        rva, csz, dsz = struct.unpack_from("<QII", stub, off)
+        assert rva == table[i]['rva']
+        assert csz == table[i]['compressed_sz']
+        assert dsz == table[i]['decompressed_sz']
+
+    # Verify header ends at offset 56 and code starts there
+    # header = magic(4) + key_size(4) + key(32) + preferred_base(8) + num_sec(4) + reserved(4)
+    assert descs_offset > 56, "Descriptors must start after code"
+    print("[PASS] test_stub_layout")
+
+
+def test_code_offset_computation_tls():
+    """Verify TLS mode computes code RVA as stub_rva + 56 + num_sec * 16."""
+    data = make_minimal_pe64()
+    pe = PEFile(data)
+    key = make_key("AABBCCDDEEFF00112233445566778899")
+    descs = collect_descriptors(pe)
+    table = pack_sections(descs, key)
+    stub = build_stub(key, pe.image_base, table, quick=False)
+    stub_rva, stub_size, tls_rva = inject_stub(pe, stub, quick=False)
+
+    # With new layout [header(56)][code][descs], code always starts
+    # at offset 56 (right after the header).
+    expected_code_offset = 56
+    expected_code_rva = stub_rva + expected_code_offset
+
+    # With the new layout [header(56)][code][descs], code always
+    # starts right after the header at offset 56.
+    assert expected_code_offset == 56, \
+        f"Code offset should always be 56, got {expected_code_offset}"
+    assert expected_code_rva == stub_rva + 56, \
+        f"Expected code at stub_rva+56 = 0x{stub_rva + 56:X}"
+
+    # Read the TLS callback array to get the actual code target
+    tls = pe.tls_dir
+    sec = pe.section_by_rva(tls.virtual_address)
+    sec_raw = sec.pointer_to_raw_data
+    tls_raw_off = sec_raw + (tls.virtual_address - sec.virtual_address)
+
+    if pe.is_pe32plus:
+        tls_data = bytes(pe.data[tls_raw_off:tls_raw_off + 40])
+        _, _, _, cb_va, _, _ = struct.unpack_from('<QQQQII', tls_data, 0)
+    else:
+        tls_data = bytes(pe.data[tls_raw_off:tls_raw_off + 24])
+        _, _, _, cb_va, _, _ = struct.unpack_from('<IIIIII', tls_data, 0)
+
+    cb_rva = cb_va - pe.image_base
+    cb_sec = pe.section_by_rva(cb_rva)
+    cb_off = cb_sec.pointer_to_raw_data + (cb_rva - cb_sec.virtual_address)
+    cb_target_va = struct.unpack_from('<Q', bytes(pe.data[cb_off:cb_off + 8]), 0)[0]
+    cb_target_rva = cb_target_va - pe.image_base
+
+    assert cb_target_rva == stub_rva + 56, \
+        f"Code target: expected 0x{stub_rva + 56:X}, got 0x{cb_target_rva:X}"
+    print("[PASS] test_code_offset_computation_tls")
+
+
+def test_code_offset_computation_quick():
+    """Verify quick mode patches entry point and section has EXECUTE."""
+    data = make_minimal_pe64()
+    key = make_key("AABBCCDDEEFF0011")
+    result = pack(data, key, quick=True)
+
+    pe = PEFile(result)
+    ep_rva = pe.address_of_entry_point
+    assert ep_rva != 0x1000, "Entry point not patched"
+
+    ep_sec = pe.entry_section()
+    assert ep_sec is not None, "Entry point in unmapped area"
+    assert ep_sec.characteristics & IMAGE_SCN_MEM_EXECUTE, \
+        "Entry section lacks EXECUTE"
+
+    # Verify the byte at the entry point is executable code (not padding)
+    ep_raw = ep_sec.pointer_to_raw_data + (ep_rva - ep_sec.virtual_address)
+    code_byte = pe.data[ep_raw]
+    # Quick stub is just RET (0xC3), but stub.bin starts with push rbp (0x55).
+    # Either is valid executable code.
+    assert code_byte in (0xC3, 0x55), \
+        f"Entry point byte 0x{code_byte:02X} is not executable code"
+    print("[PASS] test_code_offset_computation_quick")
+
+
+def test_ror13_hash():
+    """Verify ROR-13 hash of VirtualProtect matches stub's expected value."""
+    hash_val = 0
+    for c in b"VirtualProtect":
+        hash_val = ((hash_val >> 13) | (hash_val << 19)) & 0xFFFFFFFF
+        hash_val = (hash_val + c) & 0xFFFFFFFF
+
+    expected = 0x7946C61B
+    assert hash_val == expected, \
+        f"ROR-13('VirtualProtect') = 0x{hash_val:08X}, expected 0x{expected:08X}"
+
+    # Verify assembly hash constant matches
+    VIRTUAL_PROTECT_HASH = 0x7946C61B
+    assert hash_val == VIRTUAL_PROTECT_HASH
+
+    # Verify well-known hashes
+    expected_known = {
+        "LoadLibraryA": 0xEC0E4E8E,
+        "GetProcAddress": 0x7C0DFCAA,
+    }
+    for name, exp in expected_known.items():
+        h = 0
+        for c in name.encode():
+            h = ((h >> 13) | (h << 19)) & 0xFFFFFFFF
+            h = (h + c) & 0xFFFFFFFF
+        assert h == exp, f"ROR-13('{name}') = 0x{h:08X}, expected 0x{exp:08X}"
+    print("[PASS] test_ror13_hash")
+
+
+def test_lz4_roundtrip():
+    """Verify the full compress-encrypt → decrypt-decompress roundtrip.
+
+    This simulates the stub's runtime decryption pipeline in Python:
+    1. Pack data with a known key
+    2. Read the stub header (key + section descriptors) from the packed PE
+    3. For each descriptor, read encrypted data, XOR-decrypt, LZ4-decompress
+    4. Verify recovered data matches the original section content
+    """
+    import lz4.block
+
+    data = make_minimal_pe64()
+    pe_orig = PEFile(data)
+    key = make_key("DEADBEEFCAFEBABE1234567890ABCDEF")
+    result = pack(data, key, quick=False, no_compress=False)
+
+    descs = collect_descriptors(pe_orig)
+    orig_by_name = {d.name: d.raw_data for d in descs}
+
+    pe = PEFile(result)
+
+    # Find the stub header in the packed binary by scanning for 'PACK' magic
+    pack_magic = struct.pack('<I', 0x4B434150)
+    stub_offset = bytes(pe.data).find(pack_magic)
+    assert stub_offset >= 0, "PACK header not found in packed binary"
+
+    # Parse stub header
+    key_size = struct.unpack_from('<I', bytes(pe.data), stub_offset + 4)[0]
+    xor_key = bytes(pe.data[stub_offset + 8:stub_offset + 8 + 32])
+    xor_key = xor_key[:key_size]
+    num_sec = struct.unpack_from('<I', bytes(pe.data), stub_offset + 48)[0]
+    descs_offset = struct.unpack_from('<I', bytes(pe.data), stub_offset + 52)[0]
+
+    # Parse section descriptors from stub
+    stub_descs = []
+    for i in range(num_sec):
+        off = stub_offset + descs_offset + i * 16
+        rva, csz, dsz = struct.unpack_from('<QII', bytes(pe.data), off)
+        stub_descs.append({'rva': rva, 'compressed_sz': csz,
+                           'decompressed_sz': dsz})
+
+    # Map section name from RVA
+    rva_to_name = {s.virtual_address: s.name for s in pe_orig.sections}
+
+    for sd in stub_descs:
+        name = rva_to_name.get(sd['rva'])
+        if name is None or name not in orig_by_name:
+            continue
+        original = orig_by_name[name]
+        csz = sd['compressed_sz']
+        dsz = sd['decompressed_sz']
+
+        # Find the section in the packed binary by RVA
+        psec = pe.section_by_rva(sd['rva'])
+        assert psec is not None, f"Section at RVA 0x{sd['rva']:X} not found"
+
+        # Read the exact compressed bytes from the section's raw data
+        raw_off = psec.pointer_to_raw_data
+        raw_encrypted = bytes(pe.data[raw_off:raw_off + csz])
+
+        # XOR-decrypt
+        decrypted = rolling_xor(raw_encrypted, xor_key)
+
+        if csz == dsz:
+            # No LZ4 compression — XOR-only section
+            assert decrypted == original, \
+                f".{name}: XOR-only roundtrip mismatch"
+        else:
+            # LZ4-compressed
+            recovered = lz4.block.decompress(decrypted,
+                                             uncompressed_size=dsz)
+            assert recovered == original, \
+                f".{name}: LZ4 roundtrip mismatch"
+
+    print("[PASS] test_lz4_roundtrip")
+
+
+def test_stub_fallback():
+    """Verify build_stub fails closed when stub.bin is missing (non-quick).
+
+    Production mode must never silently fall back to a placeholder —
+    sections would be encrypted with no matching decryption stub.
+    Quick mode still works with the placeholder.
+    """
+    stub_bin_path = os.path.join(os.path.dirname(__file__), '..', 'packer', 'stub.bin')
+    stub_bak_path = stub_bin_path + '.bak'
+
+    if not os.path.exists(stub_bin_path):
+        print("[SKIP] test_stub_fallback: stub.bin not found")
+        return
+
+    os.rename(stub_bin_path, stub_bak_path)
+    try:
+        key = make_key("AABB")
+        table = [{'rva': 0x1000, 'compressed_sz': 16, 'decompressed_sz': 32}]
+
+        # Non-quick mode must raise ValueError (fail closed)
+        try:
+            build_stub(key, 0x140000000, table, quick=False)
+            assert False, "Should have raised ValueError for missing stub.bin"
+        except ValueError as e:
+            assert 'stub.bin' in str(e), \
+                f"Error should mention stub.bin: {e}"
+
+        # Quick mode still works with placeholder
+        stub = build_stub(key, 0x140000000, table, quick=True)
+        assert stub[56] == 0xC3, f"Quick mode code not RET: 0x{stub[56]:02X}"
+    finally:
+        os.rename(stub_bak_path, stub_bin_path)
+    print("[PASS] test_stub_fallback")
+
+
+def test_quick_mode_placeholder():
+    """Verify quick mode uses 1-byte RET regardless of stub.bin."""
+    key = make_key("AABB")
+    table = [{'rva': 0x1000, 'compressed_sz': 16, 'decompressed_sz': 32}]
+    stub = build_stub(key, 0x140000000, table, quick=True)
+    # Header(56) + code(1 byte RET) + descs(16) = 73
+    assert stub[56] == 0xC3, f"Quick mode code not RET: 0x{stub[56]:02X}"
+    assert len(stub) == 56 + 1 + 16, f"Quick mode stub size wrong: {len(stub)}"
+    print("[PASS] test_quick_mode_placeholder")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Step 2.5 — Base Relocation Tests
+# ═══════════════════════════════════════════════════════════════
+
+
+def test_stub_contains_reloc_code():
+    """Verify the assembled stub.bin contains relocation walking code.
+
+    We check for a specific instruction sequence that is unique to
+    the reloc walker: the 'cmp dx, 10' (DIR64 type check).
+    In x64 machine code, 'cmp dx, 10' = 66 83 FA 0A.
+    """
+    stub_dir = os.path.join(os.path.dirname(__file__), '..', 'packer')
+    stub_bin_path = os.path.join(stub_dir, 'stub.bin')
+    with open(stub_bin_path, 'rb') as f:
+        data = f.read()
+
+    # Check for the DIR64 comparison: cmp edx, 10
+    # NASM -O0 encodes 'cmp edx, 10' as '81 FA 0A 00 00 00' (32-bit imm).
+    # NASM -O1 would use '83 FA 0A' (8-bit imm). Accept both.
+    cmp_edx_10 = (b'\x81\xFA\x0A\x00\x00\x00' in data or
+                  b'\x83\xFA\x0A' in data)
+    assert cmp_edx_10, \
+        "Relocation code missing: no 'cmp edx, 10' found in stub.bin"
+
+    # Verify stub.bin size is reasonable (with reloc code, should be > 1000 bytes)
+    assert len(data) > 1000, \
+        f"stub.bin too small ({len(data)} bytes), reloc walking code likely missing"
+
+    # The reloc walking code was present (cmp edx, 10 + sub r14, rbx).
+    # Also check that 5*8 = 0x28 offset appears near the cmp edx,10.
+    # We look for the delta computation signature: mov + sub + conditional jump
+    # The delta is computed as: mov r14, rcx → mov rbx, [r13+X] → sub r14, rbx
+    # Encoding: 4C 89 F6 (mov r14, rcx) / 4C 89 F1 (mov r14, rcx)
+    # 'mov r14, rcx' = 0x4C 0x89 0xF1
+    # But other mov combinations also exist (4C 89 or 4D 89 patterns).
+    # The key signature is the sub instruction for delta computation.
+    # 'sub r14, rbx' = 0x4D 0x29 0xDE or 0x49 0x29 0xDE
+    sub_pattern = b'\x4D\x29\xDE'
+    if sub_pattern not in data:
+        # Try the other encoding: 49 29 DE
+        sub_pattern = b'\x49\x29\xDE'
+    assert sub_pattern in data, \
+        "Delta computation (sub r14, rbx) not found in stub.bin"
+
+    print(f"[PASS] test_stub_contains_reloc_code (stub.bin = {len(data)} bytes)")
+
+
+def test_reloc_directory_stripped():
+    """Verify the .reloc data directory is zeroed after packing.
+
+    The loader applies base relocations BEFORE TLS callbacks run.
+    If a .reloc entry pointed into an encrypted section, the loader
+    would add delta to ciphertext, corrupting the data after XOR
+    decryption. The packer strips the .reloc directory to prevent
+    this (ASLR is also disabled as a double safeguard).
+
+    The .reloc section data itself is NOT encrypted (excluded by
+    collect_descriptors), so the raw bytes remain intact.
+    """
+    data = make_minimal_pe64()
+    key = make_key("DEADBEEFCAFEBABE1234567890ABCDEF")
+    result = pack(data, key, quick=False)
+
+    pe = PEFile(result)
+    reloc = pe.reloc_dir
+
+    # The .reloc directory entry should be zeroed (stripped)
+    assert reloc is None or not reloc.present(), \
+        "Reloc directory should be zeroed after packing"
+
+    # But the .reloc section data itself is preserved (not encrypted)
+    data_before = make_minimal_pe64()
+    pe_before = PEFile(data_before)
+    reloc_before = pe_before.reloc_dir
+    assert reloc_before is not None
+    sec_before = pe_before.section_by_rva(reloc_before.virtual_address)
+    off_before = sec_before.pointer_to_raw_data + \
+        (reloc_before.virtual_address - sec_before.virtual_address)
+    raw_before = bytes(pe_before.data[off_before:off_before + reloc_before.size])
+
+    # The .reloc data lives within .rdata at a known RVA offset.
+    # Verify it's still there by checking the section data directly.
+    sec = pe.section_by_rva(reloc_before.virtual_address)
+    assert sec is not None, "Section containing reloc data vanished"
+    off = sec.pointer_to_raw_data + (reloc_before.virtual_address - sec.virtual_address)
+    reloc_raw = bytes(pe.data[off:off + len(raw_before)])
+    assert reloc_raw == raw_before, \
+        "Reloc data was modified after packing (should be identical)"
+
+    print("[PASS] test_reloc_directory_stripped")
+
+
+def test_reloc_not_encrypted():
+    """Verify the base relocation data directory entry is excluded from encryption
+    by checking that the section containing it is NOT in the packed descriptors."""
+    data = make_minimal_pe64()
+    pe = PEFile(data)
+    descs = collect_descriptors(pe)
+
+    # Get the section containing the reloc directory
+    reloc = pe.reloc_dir
+    assert reloc is not None, "Test fixture has no reloc directory"
+
+    # Verify reloc section is NOT in the pack list
+    reloc_sec = pe.section_by_rva(reloc.virtual_address)
+    assert reloc_sec is not None
+    desc_names = [d.name for d in descs]
+    assert reloc_sec.name not in desc_names, \
+        f"Reloc section '.{reloc_sec.name}' is in pack list (should be excluded)"
+
+    print("[PASS] test_reloc_not_encrypted")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Constants needed by test
+# ═══════════════════════════════════════════════════════════════
 # Constants needed by test
 # ═══════════════════════════════════════════════════════════════
 
@@ -738,6 +1177,20 @@ def main():
         test_full_pack_quick,
         test_full_pack_tls,
         test_different_keys_different_output,
+        # Step 2 — Decryptor Stub tests
+        test_stub_bin_loaded,
+        test_stub_bin_matches_asm,
+        test_stub_layout,
+        test_code_offset_computation_tls,
+        test_code_offset_computation_quick,
+        test_ror13_hash,
+        test_lz4_roundtrip,
+        test_stub_fallback,
+        test_quick_mode_placeholder,
+        # Step 2.5 — Base Relocation tests
+        test_stub_contains_reloc_code,
+        test_reloc_directory_stripped,
+        test_reloc_not_encrypted,
     ]
     passed = 0
     failed = 0

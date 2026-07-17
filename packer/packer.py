@@ -486,9 +486,16 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
     If the packed (encrypted) data exceeds the section's raw data size
     on disk, the section is left unpacked — the descriptor table is not
     updated, and the stub skips it.
+
+    The stub's LZ4 decompression buffer is limited to 64 KiB. Sections
+    larger than this that were actually compressed cannot be decompressed
+    and are left as encrypted garbage — the process crashes. These are
+    skipped here with a warning.
     """
+    STUB_MAX_DECOMPRESS = 0x10000  # 64 KiB stack buffer in stub
     table = []
     raw_overhead: int = 0
+    decomp_overhead: int = 0
     for d in descs:
         raw = d.raw_data
         max_storage = d.size_of_raw_data
@@ -498,6 +505,12 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
             was_compressed = False
         else:
             pre_encrypt, was_compressed = compress_lz4(raw)
+
+        # Sections that were actually compressed but exceed the stub's
+        # 64 KiB decompression buffer cannot be processed. Skip them.
+        if was_compressed and len(raw) > STUB_MAX_DECOMPRESS:
+            decomp_overhead += len(raw)
+            continue
 
         encrypted = rolling_xor(pre_encrypt, key)
 
@@ -519,6 +532,11 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
     if raw_overhead > 0:
         print(f"Warning: {raw_overhead} bytes of packed data exceeded "
               f"section capacity — left unpacked", file=sys.stderr)
+
+    if decomp_overhead > 0:
+        print(f"Warning: {decomp_overhead} bytes of sections exceeded "
+              f"stub's 64 KiB decompression buffer — left unpacked",
+              file=sys.stderr)
 
     return table
 

@@ -790,19 +790,28 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
         #        BaseOfData is absent. Total remains 56.
         struct.pack_into("<I", pe.data, pe.opt_offset + 56, new_image_size)
 
-    # ── Disable ASLR (DllCharacteristics & ~DYNAMIC_BASE) ──
-    # The injected TLS directory and callback array contain absolute VAs
-    # (image_base + rva) but live outside the original .reloc section.
-    # Without .reloc entries, ASLR would load at a different base and the
-    # TLS VAs would point to wrong memory, crashing the TLS callback.
+    # ── Disable ASLR + strip .reloc directory ──────────────
+    # The loader applies base relocations BEFORE TLS callbacks.
+    # If a .reloc entry points into an encrypted section, the loader
+    # adds delta to ciphertext bytes — after XOR decryption the value
+    # is corrupted (addition is not linear over XOR).
     #
-    # A proper fix would emit .reloc entries for the injected structures.
-    # For now, we disable ASLR to ensure the binary loads at ImageBase.
-    # TODO: generate .reloc entries for TLS directory + callback array.
+    # Clearing DYNAMIC_BASE prevents ASLR (binary loads at ImageBase,
+    # delta = 0 → no relocation needed). Additionally, we zero the
+    # .reloc data directory to ensure the loader never processes it,
+    # even if the binary somehow maps at a different base.
+    #
+    # A proper fix would defer the stub's own relocation walk until
+    # after decryption (already done in .apply_relocs), and exclude
+    # relocation target ranges from encryption. For now, stripping
+    # .reloc is the safe choice.
     dc_off = pe.opt_offset + 70  # DllCharacteristics (same for PE32/PE32+)
     current_dc = struct.unpack_from("<H", bytes(pe.data), dc_off)[0]
     current_dc &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
     struct.pack_into("<H", pe.data, dc_off, current_dc)
+
+    # Zero the base relocation data directory so the loader ignores it.
+    pe.set_data_dir(IMAGE_DIRECTORY_ENTRY_BASERELOC, 0, 0)
 
     # ── Update TLS data directory ──────────────────────────
     if not quick:

@@ -993,14 +993,17 @@ def test_stub_contains_reloc_code():
     print(f"[PASS] test_stub_contains_reloc_code (stub.bin = {len(data)} bytes)")
 
 
-def test_reloc_section_preserved():
-    """Verify the .reloc table remains readable after packing.
+def test_reloc_directory_stripped():
+    """Verify the .reloc data directory is zeroed after packing.
 
-    The .reloc section should NOT be encrypted (it's a loader-critical
-    directory that the loader needs before TLS callbacks run).
-    We verify the reloc block structure is intact, not just
-    checking for non-zero bytes (reloc blocks legitimately contain
-    many zero bytes in RVAs, sizes, and alignment padding).
+    The loader applies base relocations BEFORE TLS callbacks run.
+    If a .reloc entry pointed into an encrypted section, the loader
+    would add delta to ciphertext, corrupting the data after XOR
+    decryption. The packer strips the .reloc directory to prevent
+    this (ASLR is also disabled as a double safeguard).
+
+    The .reloc section data itself is NOT encrypted (excluded by
+    collect_descriptors), so the raw bytes remain intact.
     """
     data = make_minimal_pe64()
     key = make_key("DEADBEEFCAFEBABE1234567890ABCDEF")
@@ -1008,53 +1011,31 @@ def test_reloc_section_preserved():
 
     pe = PEFile(result)
     reloc = pe.reloc_dir
-    assert reloc is not None, "Reloc directory missing after packing"
-    assert reloc.present(), "Reloc directory not present"
-    assert reloc.virtual_address > 0, "Reloc directory VA is 0"
-    assert reloc.size > 0, "Reloc directory size is 0"
 
-    # Read the reloc data to verify it's valid (not encrypted garbage)
-    sec = pe.section_by_rva(reloc.virtual_address)
-    assert sec is not None, "Reloc directory not in any section"
-    raw_off = sec.pointer_to_raw_data + (reloc.virtual_address - sec.virtual_address)
-    reloc_raw = bytes(pe.data[raw_off:raw_off + min(reloc.size, 32)])
+    # The .reloc directory entry should be zeroed (stripped)
+    assert reloc is None or not reloc.present(), \
+        "Reloc directory should be zeroed after packing"
 
-    # A valid reloc block has:
-    #   DWORD PageRVA  — must be > 0 and a valid section-aligned RVA
-    #   DWORD SizeOfBlock — must be >= 8 (header) and even
-    #   WORD entries following
-    assert len(reloc_raw) >= 8, f"Reloc data too short: {len(reloc_raw)} bytes"
-    page_rva = struct.unpack_from('<I', reloc_raw, 0)[0]
-    size_of_block = struct.unpack_from('<I', reloc_raw, 4)[0]
-
-    # Match the test fixture values
-    assert page_rva == 0x1000, \
-        f"Reloc PageRVA: expected 0x1000, got 0x{page_rva:X}"
-    assert size_of_block == 12, \
-        f"Reloc SizeOfBlock: expected 12, got {size_of_block}"
-
-    # Verify the entry has type DIR64 (0xA000 = type 10, offset 0x000)
-    entry = struct.unpack_from('<H', reloc_raw, 8)[0]
-    entry_type = entry >> 12
-    entry_offset = entry & 0x0FFF
-    assert entry_type == 10, \
-        f"Reloc entry type: expected 10 (DIR64), got {entry_type}"
-    assert entry_offset == 0, \
-        f"Reloc entry offset: expected 0, got {entry_offset}"
-
-    # Verify the data matches before-and-after (side-by-side comparison)
+    # But the .reloc section data itself is preserved (not encrypted)
     data_before = make_minimal_pe64()
     pe_before = PEFile(data_before)
     reloc_before = pe_before.reloc_dir
+    assert reloc_before is not None
     sec_before = pe_before.section_by_rva(reloc_before.virtual_address)
     off_before = sec_before.pointer_to_raw_data + \
         (reloc_before.virtual_address - sec_before.virtual_address)
     raw_before = bytes(pe_before.data[off_before:off_before + reloc_before.size])
 
-    assert reloc_raw[:reloc.size] == raw_before, \
-        "Reloc data changed after packing (should be identical)"
+    # The .reloc data lives within .rdata at a known RVA offset.
+    # Verify it's still there by checking the section data directly.
+    sec = pe.section_by_rva(reloc_before.virtual_address)
+    assert sec is not None, "Section containing reloc data vanished"
+    off = sec.pointer_to_raw_data + (reloc_before.virtual_address - sec.virtual_address)
+    reloc_raw = bytes(pe.data[off:off + len(raw_before)])
+    assert reloc_raw == raw_before, \
+        "Reloc data was modified after packing (should be identical)"
 
-    print("[PASS] test_reloc_section_preserved")
+    print("[PASS] test_reloc_directory_stripped")
 
 
 def test_reloc_not_encrypted():
@@ -1126,7 +1107,7 @@ def main():
         test_quick_mode_placeholder,
         # Step 2.5 — Base Relocation tests
         test_stub_contains_reloc_code,
-        test_reloc_section_preserved,
+        test_reloc_directory_stripped,
         test_reloc_not_encrypted,
     ]
     passed = 0

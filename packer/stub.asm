@@ -63,8 +63,10 @@ TlsCallback:
     push    r13
     push    r14
     push    r15
-    sub     rsp, 0x10010  ; 64KB decomp buffer at [rsp] + 16 for alignment
-    ; rsp is now 16-byte aligned (guaranteed by Windows x64 ABI)
+    sub     rsp, 0x10018  ; 64KB decomp buffer + 8-byte alignment pad
+    ; rsp is now 16-byte aligned (8 pushes × 8 = 64 = 0 mod 16,
+    ; 0x10018 = 0 mod 16, total = 0 mod 16). Required by Windows x64
+    ; ABI before any CALL instruction.
     ; Save DllHandle (rcx) immediately — it will be clobbered by the
     ; PEB-walk resolver and subsequent section/reloc processing.
     mov     [rbp - 0x40], rcx    ; DllHandle saved below r15, above buffer

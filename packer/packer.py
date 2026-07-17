@@ -45,6 +45,9 @@ IMAGE_SCN_MEM_WRITE = 0x80000000
 # Stub magic: 'PACK' in little-endian
 STUB_MAGIC = 0x4B434150
 
+# DLL characteristics
+IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040
+
 # ═══════════════════════════════════════════════════════════════
 # Step 1.1 — CLI
 # ═══════════════════════════════════════════════════════════════
@@ -768,6 +771,20 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
         #        bytes — the additional 4 bytes shift nothing because
         #        BaseOfData is absent. Total remains 56.
         struct.pack_into("<I", pe.data, pe.opt_offset + 56, new_image_size)
+
+    # ── Disable ASLR (DllCharacteristics & ~DYNAMIC_BASE) ──
+    # The injected TLS directory and callback array contain absolute VAs
+    # (image_base + rva) but live outside the original .reloc section.
+    # Without .reloc entries, ASLR would load at a different base and the
+    # TLS VAs would point to wrong memory, crashing the TLS callback.
+    #
+    # A proper fix would emit .reloc entries for the injected structures.
+    # For now, we disable ASLR to ensure the binary loads at ImageBase.
+    # TODO: generate .reloc entries for TLS directory + callback array.
+    dc_off = pe.opt_offset + 70  # DllCharacteristics (same for PE32/PE32+)
+    current_dc = struct.unpack_from("<H", bytes(pe.data), dc_off)[0]
+    current_dc &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
+    struct.pack_into("<H", pe.data, dc_off, current_dc)
 
     # ── Update TLS data directory ──────────────────────────
     if not quick:

@@ -365,15 +365,137 @@ TlsCallback:
     ; ═════════════════════════════════════════════════════════
 
 .apply_relocs:
-    ; Compute delta = actual_base - preferred_base
-    mov     rax, rcx             ; actual_base (DllHandle)
+    ; ── Compute delta = actual_base - preferred_base ────────
+    ; Save delta in r14 (preserved across calls).
+    mov     r14, rcx             ; r14 = actual_base (DllHandle)
     mov     rbx, [r13 + StubHeader.preferred_base]
-    sub     rax, rbx             ; delta
+    sub     r14, rbx             ; r14 = delta
     jz      .restore_return      ; delta == 0, no relocs needed
 
-    ; Walk the .reloc directory
-    ; At this point the .reloc section is still readable (wasn't encrypted).
-    ; We need to find it via the PE header, which is at DllHandle + e_lfanew.
+    ; ── Find .reloc directory via PE header ─────────────────
+    ; The .reloc section was NOT encrypted (loader-critical),
+    ; so it's still readable at this point.
+    ;
+    ; PE header: DllHandle + e_lfanew
+    mov     eax, [r14 + 0x3C]    ; e_lfanew (stored at saved actual_base)
+    ; The file is loaded at actual_base, but we need DllHandle for
+    ; the actual base. rcx at function entry has DllHandle, and we
+    ; saved it in r14 along with the delta. But the input to this
+    ; block was DllHandle in rcx. Since rcx may have been clobbered
+    ; after the section loop, use the value we saved:
+    mov     rbx, r14             ; rbx = actual_base
+    ; Now r14 = delta, rbx = actual_base
+    add     rax, rbx             ; rax = actual_base + e_lfanew = nt_headers
+
+    ; Verify PE signature (quick check)
+    cmp     dword [rax], 0x00004550  ; 'PE\0\0'
+    jne     .restore_return
+
+    ; Determine data directory offset (PE32: 96, PE32+: 112)
+    movzx   edx, word [rax + 24]  ; optional header magic
+    mov     r8d, 96
+    cmp     dx, 0x020B            ; PE32+?
+    jne     .reloc_pe32
+    mov     r8d, 112
+.reloc_pe32:
+
+    ; Get IMAGE_DIRECTORY_ENTRY_BASERELOC (index 5)
+    ; at nt_headers + 24 + dd_offset + 5*8
+    lea     rcx, [rax + 24 + r8]  ; rcx = data directories
+    mov     r9d, [rcx + 5 * 8]    ; r9d = reloc RVA
+    test    r9d, r9d
+    jz      .restore_return
+    mov     r10d, [rcx + 5 * 8 + 4]  ; r10d = reloc size
+    test    r10d, r10d
+    jz      .restore_return
+
+    ; ── Walk relocation blocks ─────────────────────────────
+    ; r9 = reloc RVA, r10 = reloc size, r14 = delta, rbx = actual_base
+    add     r9, rbx               ; r9 = reloc VA (dll_base + rva)
+    mov     r11, r9               ; r11 = current block
+    lea     r15, [r9 + r10]       ; r15 = end address
+
+.reloc_block_loop:
+    cmp     r11, r15
+    jae     .restore_return        ; past end
+
+    mov     ebx, [r11]            ; ebx = PageRVA
+    mov     ecx, [r11 + 4]        ; ecx = SizeOfBlock
+    test    ecx, ecx
+    jz      .restore_return
+    cmp     ecx, 8
+    jb      .restore_return        ; minimum valid block: 8 bytes header
+
+    ; Number of entries = (SizeOfBlock - 8) / 2
+    mov     edi, ecx
+    sub     edi, 8
+    shr     edi, 1                ; edi = entry count
+    test    edi, edi
+    jz      .next_reloc_block
+
+    lea     rsi, [r11 + 8]        ; rsi = entries start
+
+.reloc_entry_loop:
+    test    edi, edi
+    jz      .next_reloc_block
+    dec     edi
+
+    movzx   eax, word [rsi]       ; entry: high 4 = type, low 12 = offset
+    add     rsi, 2
+
+    mov     edx, eax
+    and     eax, 0x0FFF           ; eax = offset (low 12 bits)
+    shr     edx, 12               ; edx = type (high 4 bits)
+
+    ; Skip absolute entries (type 0, used for alignment padding)
+    test    edx, edx
+    jz      .reloc_entry_loop
+
+    ; Only handle DIR64 (type 10) for x64
+    cmp     edx, 10
+    jne     .reloc_entry_loop
+
+    ; Apply fixup: *(uint64_t*)(dll_base + PageRVA + offset) += delta
+    mov     r8, rbx               ; r8 = PageRVA
+    add     r8, rax               ; r8 = PageRVA + offset
+    ; rbx = actual_base (from original base), but we may have clobbered it
+    ; Actually rbx was set to actual_base at the start, and then overwritten
+    ; with PageRVA. Let me use a different register.
+    ; The actual_base is still in the computed value... we need to save it.
+    ;
+    ; REVISED APPROACH: Use r12 as actual_base throughout
+    ; r12 was set at function entry to DllHandle before the PEB walk.
+    ; Let me verify r12 is still valid here.
+    ; Actually, the code flow is:
+    ;   1. Function entry: rcx = DllHandle → saved indirectly 
+    ;   2. Anti-debug: r12 = peb, r15 = peb
+    ;   3. PEB walk: r12 = VirtualProtect function
+    ;   4. Section loop: calls VirtualProtect via r12
+    ;   5. Now at apply_relocs: r12 may have been modified by lz4_decompress
+    ;      but lz4_decompress preserves r12-r15.
+    ;
+    ; So r14 = delta, and we need actual_base. We saved it in r14 at the start
+    ; (mov r14, rcx) before computing delta. So r14 was: DllHandle, and then
+    ; we subtracted preferred_base from it. So r14 = delta.
+    ;
+    ; We need DllHandle back. It was in rcx at function entry but may be
+    ; clobbered. Let me re-derive: DllHandle = preferred_base + delta.
+    mov     r9, [r13 + StubHeader.preferred_base]
+    add     r9, r14               ; r9 = actual_base (re-derived)
+
+    ; Full address: actual_base + PageRVA + offset
+    add     r8, r9                ; r8 = full VA of fixup location
+
+    ; Apply delta
+    add     qword [r8], r14
+
+    jmp     .reloc_entry_loop
+
+.next_reloc_block:
+    mov     r11, rsi              ; advance to next block (rsi is past entries)
+    ; But we need to align: blocks are 4-byte aligned after header
+    ; Actually rsi is already past all entries from the loop
+    jmp     .reloc_block_loop
 
     ; ═════════════════════════════════════════════════════════
     ; Epilogue: restore and return

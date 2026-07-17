@@ -63,8 +63,11 @@ TlsCallback:
     push    r13
     push    r14
     push    r15
-    sub     rsp, 0x10000 + 0x30  ; 64KB decomp buffer + shadow + alignment
+    sub     rsp, 0x10000 + 0x40  ; 64KB decomp buffer + shadow + DllHandle save
     ; rsp is now 16-byte aligned (guaranteed by Windows x64 ABI)
+    ; Save DllHandle (rcx) immediately — it will be clobbered by the
+    ; PEB-walk resolver and subsequent section/reloc processing.
+    mov     [rbp - 0x40], rcx    ; DllHandle saved at [rbp - 64]
 
     ; ── Only run on DLL_PROCESS_ATTACH (reason == 1) ──────────
     cmp     edx, 1
@@ -252,8 +255,8 @@ TlsCallback:
     mov     r11d, [r13 + StubHeader.reserved]
     add     r11, r13
 
-    ; r10 = actual base address (from TLS callback parameter)
-    mov     r10, rcx              ; DllHandle passed in RCX
+    ; r10 = actual base address (saved from TLS callback parameter)
+    mov     r10, [rbp - 0x40]     ; DllHandle
 
 .section_loop:
     test    r15d, r15d
@@ -366,26 +369,20 @@ TlsCallback:
 
 .apply_relocs:
     ; ── Compute delta = actual_base - preferred_base ────────
-    ; Save delta in r14 (preserved across calls).
-    mov     r14, rcx             ; r14 = actual_base (DllHandle)
-    mov     rbx, [r13 + StubHeader.preferred_base]
-    sub     r14, rbx             ; r14 = delta
-    jz      .restore_return      ; delta == 0, no relocs needed
+    ; DllHandle was saved at [rbp - 0x40] in the prologue.
+    mov     rbx, [rbp - 0x40]     ; rbx = actual_base (DllHandle)
+    mov     r14, [r13 + StubHeader.preferred_base]
+    sub     r14, rbx              ; r14 = delta (actual - preferred)
+    neg     r14                   ; delta = preferred - actual
+    jz      .restore_return       ; delta == 0, no relocs needed
 
     ; ── Find .reloc directory via PE header ─────────────────
     ; The .reloc section was NOT encrypted (loader-critical),
     ; so it's still readable at this point.
     ;
-    ; PE header: DllHandle + e_lfanew
-    mov     eax, [r14 + 0x3C]    ; e_lfanew (stored at saved actual_base)
-    ; The file is loaded at actual_base, but we need DllHandle for
-    ; the actual base. rcx at function entry has DllHandle, and we
-    ; saved it in r14 along with the delta. But the input to this
-    ; block was DllHandle in rcx. Since rcx may have been clobbered
-    ; after the section loop, use the value we saved:
-    mov     rbx, r14             ; rbx = actual_base
-    ; Now r14 = delta, rbx = actual_base
-    add     rax, rbx             ; rax = actual_base + e_lfanew = nt_headers
+    ; PE header: actual_base + e_lfanew
+    mov     eax, [rbx + 0x3C]     ; e_lfanew
+    add     rax, rbx              ; rax = nt_headers
 
     ; Verify PE signature (quick check)
     cmp     dword [rax], 0x00004550  ; 'PE\0\0'
@@ -410,7 +407,8 @@ TlsCallback:
     jz      .restore_return
 
     ; ── Walk relocation blocks ─────────────────────────────
-    ; r9 = reloc RVA, r10 = reloc size, r14 = delta, rbx = actual_base
+    ; r9 = reloc RVA, r10 = reloc size, r14 = delta
+    ; rbx = actual_base
     add     r9, rbx               ; r9 = reloc VA (dll_base + rva)
     mov     r11, r9               ; r11 = current block
     lea     r15, [r9 + r10]       ; r15 = end address

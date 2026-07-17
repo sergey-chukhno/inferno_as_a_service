@@ -570,7 +570,18 @@ lz4_decompress:
     cmp     r11, rdi             ; ip + lit_len > iend?
     ja      .lz4_error
 
-    rep     movsb                ; copy literals
+    ; Manual literal copy (rep movsb would write to [rdi] = iend
+    ; instead of [rbx] = op, and use ecx = token instead of edx)
+    mov     ecx, edx             ; ecx = lit_len
+.lit_copy:
+    test    ecx, ecx
+    jz      .literals_done
+    mov     al, [rsi]
+    mov     [rbx], al
+    inc     rsi
+    inc     rbx
+    dec     ecx
+    jmp     .lit_copy
 
 .literals_done:
     cmp     rbx, r10             ; op >= oend?
@@ -585,9 +596,9 @@ lz4_decompress:
     jz      .lz4_error           ; match_offset == 0 is invalid
 
     ; Check match_src >= dst (no back-reference before buffer start)
-    mov     rax, rbx
-    sub     rax, r11
-    cmp     rax, r8
+    mov     r9, rbx              ; r9 = match_src (save before clobbering)
+    sub     r9, r11
+    cmp     r9, r8
     jb      .lz4_error           ; match_src < dst
 
     ; ── Match length ──────────────────────────────────────
@@ -613,14 +624,14 @@ lz4_decompress:
     ja      .lz4_error
 
     ; ── Copy match ────────────────────────────────────────
-    mov     rcx, rax             ; match_src
-    mov     edi, edx
+    ; r9 = match_src (saved above), edx = match_len
+    mov     edi, edx             ; edi = match_len (counter)
 .lz4_match_copy:
     test    edi, edi
     jz      .lz4_match_done
-    mov     al, [rcx]
+    mov     al, [r9]
     mov     [rbx], al
-    inc     rcx
+    inc     r9
     inc     rbx
     dec     edi
     jmp     .lz4_match_copy

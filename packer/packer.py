@@ -670,11 +670,9 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     stub_rva = last.virtual_address + (stub_offset - last.pointer_to_raw_data)
 
     # ── Compute code entry point within stub ──────────────
-    # Stub layout: [header(56)][descs(N*16)][code]
-    # Parse the stub blob to find the code-start RVA
-    stub_num_sec = struct.unpack_from("<I", stub_blob, 48)[0]
-    stub_code_offset = 56 + stub_num_sec * 16  # after header + descriptors
-    code_rva = stub_rva + stub_code_offset
+    # Stub layout: [header(56)][code][descs(N*16)]
+    # Code always starts right after the header (offset 56).
+    code_rva = stub_rva + 56
 
     # ── Write callback array ───────────────────────────────
     # Each entry is a VA (ImageBase + RVA) pointing to executable code.
@@ -870,11 +868,10 @@ def pack(data: bytes, key: bytes, no_compress: bool = False,
     # ── In quick mode, patch entry point to stub ───────────
     if quick:
         # Set entry point to the stub CODE (not header). The stub
-        # layout is [header(56)][descs(N*16)][code].
-        stub_num_sec = struct.unpack_from("<I", stub, 48)[0]
-        code_rva = stub_rva + 56 + stub_num_sec * 16
+        # layout is [header(56)][code][descs(N*16)].
+        # Code always starts right after the header (offset 56).
         epoff = pe.opt_offset + 16  # AddressOfEntryPoint offset (same for PE32/PE32+)
-        struct.pack_into("<I", pe.data, epoff, code_rva)
+        struct.pack_into("<I", pe.data, epoff, stub_rva + 56)
 
     # ── Step 1.7: verify entry point ───────────────────────
     verify_entry_point(pe)

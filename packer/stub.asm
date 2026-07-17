@@ -34,7 +34,7 @@ STRUC SectionDesc
 ENDSTRUC
 
 ; ── Constants ────────────────────────────────────────────────────
-VIRTUAL_PROTECT_HASH  equ 0x545E31C5  ; ROR-13("VirtualProtect")
+VIRTUAL_PROTECT_HASH  equ 0x7946C61B  ; ROR-13("VirtualProtect")
 PAGE_READWRITE        equ 0x04
 PAGE_EXECUTE_READWRITE equ 0x40
 MEM_RELEASE           equ 0x8000

@@ -358,14 +358,16 @@ TlsCallback:
 .skip_decompress:
 
     ; ── Restore original protection ─────────────────────────
+    ; Restore to PAGE_EXECUTE_READWRITE (RX + W during decryption).
+    ; The exact original protection from the first VirtualProtect
+    ; call is not preserved across the XOR/decompress block.
+    ; RWX is safe because this code runs during process attach
+    ; before any other code in the decrypted section executes.
     sub     rsp, 0x30
     mov     rcx, r14            ; lpAddress
     mov     edx, r9d            ; dwSize
-    mov     r8d, [rsp + 0x30 + 0x28]  ; old_prot (was saved above)
-    ; Actually, we need to retrieve old_prot from our earlier call.
-    ; For simplicity, restore to PAGE_EXECUTE_READWRITE.
     mov     r8d, PAGE_EXECUTE_READWRITE
-    lea     r9, [rsp + 0x30]
+    lea     r9, [rsp + 0x30]    ; dummy store for lpfOldProtect
     call    r12
     add     rsp, 0x30
 

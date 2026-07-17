@@ -426,30 +426,34 @@ TlsCallback:
     lea     r15, [r9 + r10]       ; r15 = end address
 
 .reloc_block_loop:
-    cmp     r11, r15
-    jae     .restore_return        ; past end
+    ; Guard: need at least 8 bytes for header (PageRVA + SizeOfBlock)
+    lea     r8, [r11 + 8]
+    cmp     r8, r15
+    ja      .restore_return
 
     mov     ebx, [r11]            ; ebx = PageRVA
-    mov     ecx, [r11 + 4]        ; ecx = SizeOfBlock
-    test    ecx, ecx
+    mov     r8d, [r11 + 4]        ; r8d = SizeOfBlock (save for later)
+    test    r8d, r8d
     jz      .restore_return
-    cmp     ecx, 8
+    cmp     r8d, 8
     jb      .restore_return        ; minimum valid block: 8 bytes header
 
+    ; Guard: SizeOfBlock must not extend past the reloc table end
+    mov     eax, r8d
+    add     rax, r11
+    cmp     rax, r15
+    ja      .restore_return
+
     ; Number of entries = (SizeOfBlock - 8) / 2
-    mov     edi, ecx
-    sub     edi, 8
-    shr     edi, 1                ; edi = entry count
-    test    edi, edi
+    mov     ecx, r8d
+    sub     ecx, 8
+    shr     ecx, 1                ; ecx = entry count
+    test    ecx, ecx
     jz      .next_reloc_block
 
     lea     rsi, [r11 + 8]        ; rsi = entries start
 
 .reloc_entry_loop:
-    test    edi, edi
-    jz      .next_reloc_block
-    dec     edi
-
     movzx   eax, word [rsi]       ; entry: high 4 = type, low 12 = offset
     add     rsi, 2
 
@@ -459,52 +463,32 @@ TlsCallback:
 
     ; Skip absolute entries (type 0, used for alignment padding)
     test    edx, edx
-    jz      .reloc_entry_loop
+    jz      .reloc_entry_check_cnt
 
     ; Only handle DIR64 (type 10) for x64
     cmp     edx, 10
-    jne     .reloc_entry_loop
+    jne     .reloc_entry_check_cnt
 
     ; Apply fixup: *(uint64_t*)(dll_base + PageRVA + offset) += delta
-    mov     r8, rbx               ; r8 = PageRVA
-    add     r8, rax               ; r8 = PageRVA + offset
-    ; rbx = actual_base (from original base), but we may have clobbered it
-    ; Actually rbx was set to actual_base at the start, and then overwritten
-    ; with PageRVA. Let me use a different register.
-    ; The actual_base is still in the computed value... we need to save it.
-    ;
-    ; REVISED APPROACH: Use r12 as actual_base throughout
-    ; r12 was set at function entry to DllHandle before the PEB walk.
-    ; Let me verify r12 is still valid here.
-    ; Actually, the code flow is:
-    ;   1. Function entry: rcx = DllHandle → saved indirectly 
-    ;   2. Anti-debug: r12 = peb, r15 = peb
-    ;   3. PEB walk: r12 = VirtualProtect function
-    ;   4. Section loop: calls VirtualProtect via r12
-    ;   5. Now at apply_relocs: r12 may have been modified by lz4_decompress
-    ;      but lz4_decompress preserves r12-r15.
-    ;
-    ; So r14 = delta, and we need actual_base. We saved it in r14 at the start
-    ; (mov r14, rcx) before computing delta. So r14 was: DllHandle, and then
-    ; we subtracted preferred_base from it. So r14 = delta.
-    ;
-    ; We need DllHandle back. It was in rcx at function entry but may be
-    ; clobbered. Let me re-derive: DllHandle = preferred_base + delta.
+    ; Compute full VA: actual_base + PageRVA + offset
     mov     r9, [r13 + StubHeader.preferred_base]
-    add     r9, r14               ; r9 = actual_base (re-derived)
+    add     r9, r14               ; r9 = actual_base = preferred + delta
+    mov     rdi, rbx              ; rdi = PageRVA
+    add     rdi, rax              ; rdi = PageRVA + offset (within page)
+    add     rdi, r9               ; rdi = full VA of fixup location
 
-    ; Full address: actual_base + PageRVA + offset
-    add     r8, r9                ; r8 = full VA of fixup location
+    ; Reject obviously invalid addresses (< 64KB or null page)
+    cmp     rdi, 0x10000
+    jb      .reloc_entry_check_cnt
 
-    ; Apply delta
-    add     qword [r8], r14
+    add     qword [rdi], r14
 
-    jmp     .reloc_entry_loop
+.reloc_entry_check_cnt:
+    dec     ecx
+    jnz     .reloc_entry_loop
 
 .next_reloc_block:
-    mov     r11, rsi              ; advance to next block (rsi is past entries)
-    ; But we need to align: blocks are 4-byte aligned after header
-    ; Actually rsi is already past all entries from the loop
+    add     r11, r8               ; advance past this entire block
     jmp     .reloc_block_loop
 
     ; ═════════════════════════════════════════════════════════

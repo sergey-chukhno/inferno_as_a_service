@@ -164,6 +164,7 @@ TlsCallback:
     cmp     dx, 0x020B           ; PE32+?
     jne     .check_opt32
     mov     r10d, 112            ; PE32+ DD offset
+    jmp     .parse_export        ; PE32+ → don't fall through to 0x010B check
 .check_opt32:
     cmp     dx, 0x010B
     je      .parse_export

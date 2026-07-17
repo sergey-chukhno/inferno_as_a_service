@@ -275,6 +275,13 @@ TlsCallback:
     add     rbx, r10             ; section VA
     mov     r14, rbx             ; save section VA
 
+    ; ── Spill section metadata to stack before call ─────────
+    ; VirtualProtect uses r8 (flNewProtect), r9 (oldProtect) as
+    ; parameters, and r11 is volatile — all three are clobbered.
+    mov     [rbp - 0x48], r11    ; save descriptor pointer
+    mov     [rbp - 0x50], r8d    ; save compressed_sz
+    mov     [rbp - 0x54], r9d    ; save decompressed_sz
+
     ; ── Make section writable ──────────────────────────────
     sub     rsp, 0x30           ; shadow space for VirtualProtect
     mov     rcx, rbx            ; lpAddress
@@ -284,6 +291,11 @@ TlsCallback:
     mov     [r9], r9d           ; init old_prot
     call    r12                 ; VirtualProtect
     add     rsp, 0x30
+
+    ; ── Restore section metadata from stack ─────────────────
+    mov     r11, [rbp - 0x48]    ; restore descriptor pointer
+    mov     r8d, [rbp - 0x50]    ; restore compressed_sz
+    mov     r9d, [rbp - 0x54]    ; restore decompressed_sz
 
     ; ── XOR-decrypt in-place ──────────────────────────────
     mov     ecx, [r13 + StubHeader.key_size]

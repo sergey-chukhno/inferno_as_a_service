@@ -47,6 +47,8 @@ STUB_MAGIC = 0x4B434150
 
 # DLL characteristics
 IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040
+# File header characteristics
+IMAGE_FILE_DLL = 0x2000
 
 # ═══════════════════════════════════════════════════════════════
 # Step 1.1 — CLI
@@ -790,6 +792,19 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
         #        BaseOfData is absent. Total remains 56.
         struct.pack_into("<I", pe.data, pe.opt_offset + 56, new_image_size)
 
+    # ── Reject DLLs ──────────────────────────────────────────
+    # The packer strips .reloc and disables ASLR to prevent loader
+    # relocation from corrupting encrypted sections (the loader runs
+    # before TLS callbacks). DLLs typically require relocation and
+    # would fail to load at a non-preferred base. Only EXEs are
+    # supported.
+    coff_flags = struct.unpack_from("<H", bytes(pe.data), pe.e_lfanew + 22)[0]
+    if coff_flags & IMAGE_FILE_DLL:
+        raise ValueError(
+            "Packing DLLs is not supported — relocations are stripped "
+            "to prevent loader corruption of encrypted sections. "
+            "Only EXEs are supported.")
+
     # ── Disable ASLR + strip .reloc directory ──────────────
     # The loader applies base relocations BEFORE TLS callbacks.
     # If a .reloc entry points into an encrypted section, the loader
@@ -801,10 +816,9 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     # .reloc data directory to ensure the loader never processes it,
     # even if the binary somehow maps at a different base.
     #
-    # A proper fix would defer the stub's own relocation walk until
-    # after decryption (already done in .apply_relocs), and exclude
-    # relocation target ranges from encryption. For now, stripping
-    # .reloc is the safe choice.
+    # A proper fix would emit .reloc entries for the injection
+    # structures AND keep existing .reloc entries for unencrypted
+    # sections. For now, stripping .reloc is the safe choice.
     dc_off = pe.opt_offset + 70  # DllCharacteristics (same for PE32/PE32+)
     current_dc = struct.unpack_from("<H", bytes(pe.data), dc_off)[0]
     current_dc &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE

@@ -63,11 +63,11 @@ TlsCallback:
     push    r13
     push    r14
     push    r15
-    sub     rsp, 0x10000 + 0x40  ; 64KB decomp buffer + shadow + DllHandle save
+    sub     rsp, 0x10010  ; 64KB decomp buffer at [rsp] + 16 for alignment
     ; rsp is now 16-byte aligned (guaranteed by Windows x64 ABI)
     ; Save DllHandle (rcx) immediately — it will be clobbered by the
     ; PEB-walk resolver and subsequent section/reloc processing.
-    mov     [rbp - 0x40], rcx    ; DllHandle saved at [rbp - 64]
+    mov     [rbp - 0x40], rcx    ; DllHandle saved below r15, above buffer
 
     ; ── Only run on DLL_PROCESS_ATTACH (reason == 1) ──────────
     cmp     edx, 1
@@ -319,8 +319,8 @@ TlsCallback:
     cmp     r9d, 0x10000
     ja      .skip_decompress     ; too large, skip (stays encrypted)
 
-    ; Decompress from section_addr (r14) to stack buffer (rsp + 0x100)
-    lea     rbx, [rsp + 0x100]  ; decompression buffer
+    ; Decompress from section_addr (r14) to stack buffer (rsp)
+    lea     rbx, [rsp]          ; decompression buffer (64KB at [rsp])
     mov     rcx, r14            ; src = section_addr
     mov     edx, r8d            ; src_size = compressed_sz
     mov     r8, rbx             ; dst = stack buffer
@@ -501,7 +501,7 @@ TlsCallback:
 
 .restore_return:
 .early_return:
-    lea     rsp, [rbp - 8*8]    ; restore stack (8 pushes × 8 bytes)
+    lea     rsp, [rbp - 56]     ; restore stack (rbp + 7 regs = 56 bytes)
     pop     r15
     pop     r14
     pop     r13

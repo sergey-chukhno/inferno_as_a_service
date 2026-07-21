@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""Inferno — Custom PE Packer (Phase 3)
+"""Inferno — Custom PE Packer (Phase 3, ASLR-safe)
 
 Post-processes a compiled PE (Windows) binary:
   - LZ4-compresses + XOR-encrypts sections to defeat static AV/YARA
   - Injects a decryptor stub via TLS callback (entry point stays in .text)
-  - Applies anti-debug, PEB-walk API resolution, .reloc fixups
+  - Preserves ASLR: splits .reloc into minimal table (loader) + saved
+    entries (stub applies post-decode) to avoid XOR/addition commutativity
+  - Applies anti-debug (PEB BeingDebugged, NtGlobalFlag, rdtsc),
+    PEB-walk API resolution, embedded relocation fixups
   - Randomizes binary hash via per-build key + low-entropy padding
 
 Usage: packer.py --input <binary> [--output <binary>] [--key <hex>]
@@ -49,6 +52,13 @@ STUB_MAGIC = 0x4B434150
 IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE = 0x0040
 # File header characteristics
 IMAGE_FILE_DLL = 0x2000
+
+# Relocation entry type constants
+IMAGE_REL_BASED_ABSOLUTE = 0
+IMAGE_REL_BASED_DIR64 = 10
+
+HEADER_SIZE = 64
+SECTION_DESC_SIZE = 16
 
 # ═══════════════════════════════════════════════════════════════
 # Step 1.1 — CLI
@@ -544,6 +554,98 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
 
 
 # ═══════════════════════════════════════════════════════════════
+# Step 1.4-bis — .reloc Processing (ASLR-safe)
+# ═══════════════════════════════════════════════════════════════
+
+
+def process_relocs(
+    pe: PEFile, encrypted_rvas: List[Tuple[int, int]]
+) -> Tuple[Optional[bytes], bytes]:
+    """Split the PE's .reloc table into two parts:
+
+    1. **Minimal table** — entries for NON-encrypted sections only.
+       Written to the PE header so the loader applies fixups to unencrypted
+       regions (stub section, imports) at load time. The encrypted sections
+       have NO entries here — the loader never touches their ciphertext.
+
+    2. **Saved reloc data** — entries for ENCRYPTED sections only.
+       Embedded in the stub blob as a flat array. The stub applies these
+       AFTER XOR decryption, producing correct (plaintext + delta) fixups.
+
+    Returns (minimal_reloc_bytes, saved_reloc_bytes) where the latter is
+    in flat [DWORD count][{ DWORD rva, WORD type_ofs }×N] format.
+    """
+    reloc_dir = pe.get_data_dir(IMAGE_DIRECTORY_ENTRY_BASERELOC)
+    if reloc_dir is None:
+        return None, b''
+
+    # Read the full .reloc table
+    reloc_file_off = pe.rva_to_offset(reloc_dir.virtual_address)
+    reloc_data = bytes(pe.data[reloc_file_off:reloc_file_off + reloc_dir.size])
+
+    # Build a set of (rva_start, rva_end) intervals for encrypted sections
+    encrypted_intervals = [
+        (rva, rva + size) for rva, size in encrypted_rvas
+    ]
+
+    def _rva_is_encrypted(rva: int) -> bool:
+        return any(start <= rva < end for start, end in encrypted_intervals)
+
+    # Parse all .reloc blocks, classify each entry
+    encrypted_entries: List[Tuple[int, int, int]] = []  # (page_rva, type, offset)
+    non_encrypted_entries: List[Tuple[int, int, int]] = []
+
+    offset = 0
+    while offset + 8 <= len(reloc_data):
+        page_rva, block_size = struct.unpack_from("<II", reloc_data, offset)
+        if block_size < 8:
+            break
+        entry_count = (block_size - 8) // 2
+        for i in range(entry_count):
+            entry_off = offset + 8 + i * 2
+            if entry_off + 2 > len(reloc_data):
+                break
+            raw = struct.unpack_from("<H", reloc_data, entry_off)[0]
+            reloc_type = raw >> 12
+            reloc_ofs = raw & 0x0FFF
+            full_rva = page_rva + reloc_ofs
+
+            dst = encrypted_entries if _rva_is_encrypted(full_rva) \
+                  else non_encrypted_entries
+            dst.append((page_rva, reloc_type, reloc_ofs))
+        offset += block_size
+
+    # ── Build minimal .reloc table (non-encrypted entries only) ──────
+    minimal_reloc = b''
+    if non_encrypted_entries:
+        # Group by page (block)
+        pages: dict = {}
+        for page_rva, rtype, rofs in non_encrypted_entries:
+            pages.setdefault(page_rva, []).append((rtype, rofs))
+        for page_rva in sorted(pages):
+            entries = pages[page_rva]
+            block_size = 8 + len(entries) * 2
+            block = struct.pack("<II", page_rva, block_size)
+            for rtype, rofs in entries:
+                block += struct.pack("<H", (rtype << 12) | rofs)
+            minimal_reloc += block
+        # Align to 4 bytes
+        if len(minimal_reloc) % 4:
+            minimal_reloc += b'\x00' * (4 - len(minimal_reloc) % 4)
+
+    # ── Pack encrypted entries for stub (flat format) ────────────────
+    saved_reloc = b''
+    if encrypted_entries:
+        saved_reloc += struct.pack("<I", len(encrypted_entries))
+        for page_rva, rtype, rofs in encrypted_entries:
+            full_rva = page_rva + rofs
+            saved_reloc += struct.pack("<IH", full_rva,
+                                       (rtype << 12) | rofs)
+
+    return minimal_reloc if minimal_reloc else None, saved_reloc
+
+
+# ═══════════════════════════════════════════════════════════════
 # Step 1.5 — Stub Generation
 # ═══════════════════════════════════════════════════════════════
 
@@ -554,24 +656,19 @@ def pack_sections(descs: List[SectionDesc], key: bytes,
 PLACEHOLDER_STUB_X64 = b'\xC3'           # ret
 PLACEHOLDER_STUB_X86 = b'\xC2\x0C\x00'   # ret 12
 
-STUB_HEADER_SIZE = 4 + 4 + 32 + 8 + 4 + 4  # magic+keySz+key+prefBase+numSec+rsvd
-SECTION_DESC_SIZE = 8 + 4 + 4  # rva(QWORD) + compressed_sz(DWORD) + decompressed_sz(DWORD)
-
 
 def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
-               no_anti_debug: bool = False,
+               saved_reloc_data: bytes = b'',
                quick: bool = False,
                is_pe32plus: bool = True) -> bytes:
-    """Build the stub blob: header + code + section descriptors.
+    """Build the stub blob: header + code + section descriptors + saved relocs.
 
-    Layout: [header(56)][code(variable)][descs(N*16)]
+    Layout: [header(64)][code(variable)][descs(N*16)][saved_reloc(variable)]
 
-    The header.reserved field stores the descs offset (= 56 + code_size)
-    so the stub can locate the descriptor array at runtime.
-
-    Compression is detected per-section by the stub: if
-    compressed_sz != decompressed_sz, the stub applies LZ4
-    decompression after XOR decryption.
+    Header fields:
+      .descs_offset  = 64 + code_size      (offset to desc array)
+      .reloc_offset  = descs_offset + N*16  (offset to saved reloc data)
+      .reloc_size    = len(saved_reloc_data)
     """
     if not 1 <= len(key) <= DEFAULT_KEY_SIZE:
         raise ValueError(
@@ -579,13 +676,8 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
             f"(got {len(key)})")
 
     if quick:
-        # Quick/testing mode: inject a single RET (architecture-appropriate)
-        # so the pack pipeline can be validated without the real stub.
         code = b'\xC3' if is_pe32plus else b'\xC2\x0C\x00'
-
     else:
-        # Production mode: load the pre-assembled stub binary.
-        # stub.asm is x64 only — PE32 (x86) is not yet supported.
         if not is_pe32plus:
             raise ValueError(
                 "Packer stub is x64-only. PE32 (x86) is not yet supported.")
@@ -601,16 +693,18 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                 f"Run 'nasm -f bin -O0 -o packer/stub.bin packer/stub.asm' "
                 f"or use --quick for testing.")
 
-    # Descriptors offset = sizeof(header) + sizeof(code)
-    descs_offset = 56 + len(code)
+    descs_offset = HEADER_SIZE + len(code)
+    reloc_offset = descs_offset + len(section_table) * SECTION_DESC_SIZE
 
-    header = struct.pack("<II32sQII",
+    header = struct.pack("<II32sQIIII",
                          STUB_MAGIC,
                          len(key),
                          key.ljust(32, b'\x00')[:32],
                          preferred_base,
                          len(section_table),
-                         descs_offset)  # reserved -> descs_offset
+                         descs_offset,
+                         reloc_offset,
+                         len(saved_reloc_data))
     descs = b''
     for s in section_table:
         descs += struct.pack("<QII",
@@ -618,7 +712,7 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
                              s['compressed_sz'],
                              s['decompressed_sz'])
 
-    return header + code + descs
+    return header + code + descs + saved_reloc_data
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -627,12 +721,18 @@ def build_stub(key: bytes, preferred_base: int, section_table: List[dict],
 
 
 def inject_stub(pe: PEFile, stub_blob: bytes,
+                minimal_reloc_data: Optional[bytes] = None,
                 quick: bool = False) -> Tuple[int, int, int]:
     """Inject the stub blob by extending the last section.
 
     The last section is extended in both raw size (on disk) and virtual
     size (in memory). Its characteristics gain EXECUTE | READ so the
     TLS callback can execute. The section header is updated in-place.
+
+    ASLR is preserved (DYNAMIC_BASE kept). The original .reloc table is
+    replaced with a minimal one covering only non-encrypted sections, so
+    the loader never touches encrypted ciphertext. The stub applies the
+    full original relocations post-decryption from embedded data.
 
     Returns (stub_rva, stub_size, tls_rva).
 
@@ -650,22 +750,14 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     file_align = pe.file_alignment
     sec_align = pe.section_alignment
 
-    # TLS directory + callback array overhead (after stub code)
     tls_overhead = 64
     total_needed = stub_size + tls_overhead
 
     # ── Check for trailing PE data (overlays, certs) ─────────
-    # The stub is written right after the last section's raw data.
-    # If the file has trailing data (Authenticode cert, overlay),
-    # writing the stub would overwrite it.
-    # The last section's raw data ends at:
     section_raw_end = pe.last_section_end_raw()
-    # The file is aligned up to file_align, anything beyond is trailing:
     aligned_section_end = pe.align_up(section_raw_end, file_align)
     trailing = len(pe.data) - aligned_section_end
     if trailing > 0:
-        # Check if trailing data is an Authenticode certificate
-        # (IMAGE_DIRECTORY_ENTRY_SECURITY = 4, uses file offsets not RVAs)
         cert_dir = pe.get_data_dir(4)
         is_cert = False
         if cert_dir and cert_dir.virtual_address >= aligned_section_end:
@@ -673,9 +765,6 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
             if cert_file_end <= len(pe.data):
                 is_cert = True
         if is_cert:
-            # Strip the certificate table (signature invalid after any
-            # modification to the PE). Zero the data directory entry
-            # and truncate the file to the aligned section end.
             pe.set_data_dir(4, 0, 0)
             del pe.data[aligned_section_end:]
             trailing = 0
@@ -689,7 +778,6 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     last = pe.sections[-1]
     new_raw_start = last.pointer_to_raw_data + last.size_of_raw_data
 
-    # Pad file data to accommodate stub + TLS structures
     pad_needed = (new_raw_start + total_needed) - len(pe.data)
     if pad_needed > 0:
         pe.data.extend([0xAB] * pad_needed)
@@ -698,32 +786,25 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     stub_offset = new_raw_start
     pe.data[stub_offset:stub_offset + stub_size] = stub_blob
 
-    # Compute stub RVA: map the raw file offset to virtual address
-    # using the section's VA-to-raw-offset relationship.
     stub_rva = last.virtual_address + (stub_offset - last.pointer_to_raw_data)
 
     # ── Compute code entry point within stub ──────────────
-    # Stub layout: [header(56)][code][descs(N*16)]
-    # Code always starts right after the header (offset 56).
-    code_rva = stub_rva + 56
+    # Stub layout: [header(64)][code][descs(N*16)][saved_reloc]
+    # Code starts right after the header (offset HEADER_SIZE).
+    code_rva = stub_rva + HEADER_SIZE
 
     # ── Write callback array ───────────────────────────────
-    # Each entry is a VA (ImageBase + RVA) pointing to executable code.
-    # Array is null-terminated.
     image_base = pe.image_base
     callbacks_offset = stub_offset + stub_size
     callbacks_offset = ((callbacks_offset + 7) // 8) * 8
     code_va = image_base + code_rva
-    callback_list = struct.pack("<QQ", code_va, 0)  # [code_va, null]
+    callback_list = struct.pack("<QQ", code_va, 0)
     pe.data[callbacks_offset:callbacks_offset + len(callback_list)] = callback_list
     callback_rva = stub_rva + (callbacks_offset - stub_offset)
     callback_va = image_base + callback_rva
     tls_dir_end = callbacks_offset + len(callback_list)
 
     # ── Write TLS directory ────────────────────────────────
-    # IMAGE_TLS_DIRECTORY fields are VIRTUAL ADDRESSES (ImageBase + RVA),
-    # not RVAs, per the PE specification (v8.3, §6.6.2).
-    # AddressOfIndex is set to 0 (NULL) — the loader allocates its own.
     tls_dir_offset = ((tls_dir_end + 7) // 8) * 8
     tls_dir_size = 40 if pe.is_pe32plus else 24
     tls_rva = stub_rva + (tls_dir_offset - stub_offset)
@@ -734,47 +815,37 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
     if pe.is_pe32plus:
         tls_dir = struct.pack("<QQQQII",
                               stub_va, stub_end_va,
-                              0,             # AddressOfIndex = NULL
-                              callback_va,    # AddressOfCallBacks
+                              0,
+                              callback_va,
                               0, 0)
     else:
         tls_dir = struct.pack("<IIIIII",
                               stub_va & 0xFFFFFFFF,
                               stub_end_va & 0xFFFFFFFF,
-                              0,             # AddressOfIndex = NULL
+                              0,
                               callback_va & 0xFFFFFFFF,
                               0, 0)
 
     pe.data[tls_dir_offset:tls_dir_offset + tls_dir_size] = tls_dir
 
     # ── Update last section header ─────────────────────────
-    # New raw size: cover everything up to end of TLS directory
     total_raw_end = tls_dir_offset + tls_dir_size
     total_raw_used = total_raw_end - last.pointer_to_raw_data
-    # Preserve the existing raw size — we grow it but never shrink.
-    # (A section may have virtual_size > size_of_raw_data, giving it
-    # a zero-filled tail in memory; we preserve that below.)
     old_raw_size = last.size_of_raw_data
     new_raw_size = pe.align_up(total_raw_used, file_align)
     last.size_of_raw_data = max(old_raw_size, new_raw_size)
 
-    # Ensure file data covers the aligned raw size
     min_file_len = last.pointer_to_raw_data + last.size_of_raw_data
     if len(pe.data) < min_file_len:
         pe.data.extend([0xAB] * (min_file_len - len(pe.data)))
 
-    # Preserve any pre-existing zero-filled virtual tail.
-    # We only grow virtual_size if the stub extends beyond it.
     stub_virtual_end = stub_rva + (total_raw_end - stub_offset)
     old_virtual_size = last.virtual_size
     new_virtual_size = stub_virtual_end - last.virtual_address
     last.virtual_size = max(old_virtual_size, new_virtual_size)
 
-    # Add EXECUTE | READ to section characteristics so the TLS
-    # callback code can run from this section.
     last.characteristics |= IMAGE_SCN_MEM_EXECUTE | IMAGE_SCN_MEM_READ
 
-    # Write section header back to PE data
     sec_hdr_off = pe.section_offset + pe.sections.index(last) * IMAGE_SECTION_HEADER.SIZE
     pe.data[sec_hdr_off:sec_hdr_off + IMAGE_SECTION_HEADER.SIZE] = last.pack()
 
@@ -783,49 +854,50 @@ def inject_stub(pe: PEFile, stub_blob: bytes,
                                  sec_align)
     if new_image_size > pe.size_of_image:
         pe.size_of_image = new_image_size
-        # SizeOfImage is at opt_header + 56 for both PE32 and PE32+.
-        # PE32: Magic(2)+Linker(2)+4×SizeOf(16)+AddrEntry(4)+BaseOfCode(4)
-        #       +BaseOfData(4)+ImageBase(4)+SectionAl(4)+FileAl(4)+
-        #       6×Version(12)+Win32Ver(4) = 56
-        # PE32+: same layout, but BaseOfData removed and ImageBase is 8
-        #        bytes — the additional 4 bytes shift nothing because
-        #        BaseOfData is absent. Total remains 56.
         struct.pack_into("<I", pe.data, pe.opt_offset + 56, new_image_size)
 
     # ── Reject DLLs ──────────────────────────────────────────
-    # The packer strips .reloc and disables ASLR to prevent loader
-    # relocation from corrupting encrypted sections (the loader runs
-    # before TLS callbacks). DLLs typically require relocation and
-    # would fail to load at a non-preferred base. Only EXEs are
-    # supported.
+    # DLLs are rejected because they require relocation entries
+    # for global variables that the image loader must fix up before
+    # TLS callbacks fire. With the minimal .reloc approach, non-encrypted
+    # DLL imports/etc. are still relocated, but a DLL's global data
+    # (.data section) would typically be encrypted. The saved-reloc
+    # post-decode approach works for EXEs; DLL support is future work.
     coff_flags = struct.unpack_from("<H", bytes(pe.data), pe.e_lfanew + 22)[0]
     if coff_flags & IMAGE_FILE_DLL:
         raise ValueError(
-            "Packing DLLs is not supported — relocations are stripped "
-            "to prevent loader corruption of encrypted sections. "
-            "Only EXEs are supported.")
+            "Packing DLLs is not supported. Only EXEs are supported.")
 
-    # ── Disable ASLR + strip .reloc directory ──────────────
-    # The loader applies base relocations BEFORE TLS callbacks.
-    # If a .reloc entry points into an encrypted section, the loader
-    # adds delta to ciphertext bytes — after XOR decryption the value
-    # is corrupted (addition is not linear over XOR).
+    # ── Write minimal .reloc table (ASLR handling) ──────────
+    # ASLR is PRESERVED (DYNAMIC_BASE not cleared). The original .reloc
+    # table is replaced with a minimal one covering only non-encrypted
+    # sections. The loader applies fixups to those sections at load time
+    # (safe — they are not encrypted). Encrypted sections have NO entries
+    # here, so the loader never corrupts their ciphertext.
     #
-    # Clearing DYNAMIC_BASE prevents ASLR (binary loads at ImageBase,
-    # delta = 0 → no relocation needed). Additionally, we zero the
-    # .reloc data directory to ensure the loader never processes it,
-    # even if the binary somehow maps at a different base.
-    #
-    # A proper fix would emit .reloc entries for the injection
-    # structures AND keep existing .reloc entries for unencrypted
-    # sections. For now, stripping .reloc is the safe choice.
-    dc_off = pe.opt_offset + 70  # DllCharacteristics (same for PE32/PE32+)
-    current_dc = struct.unpack_from("<H", bytes(pe.data), dc_off)[0]
-    current_dc &= ~IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE
-    struct.pack_into("<H", pe.data, dc_off, current_dc)
-
-    # Zero the base relocation data directory so the loader ignores it.
-    pe.set_data_dir(IMAGE_DIRECTORY_ENTRY_BASERELOC, 0, 0)
+    # The stub applies the saved original relocations post-decryption.
+    if minimal_reloc_data:
+        # Write the minimal table over the original .reloc location
+        reloc_dir = pe.get_data_dir(IMAGE_DIRECTORY_ENTRY_BASERELOC)
+        reloc_file_off = pe.rva_to_offset(reloc_dir.virtual_address)
+        reloc_size = len(minimal_reloc_data)
+        end = reloc_file_off + reloc_size
+        if end > len(pe.data):
+            pe.data.extend(b'\x00' * (end - len(pe.data)))
+        pe.data[reloc_file_off:reloc_file_off + reloc_size] = minimal_reloc_data
+        # Zero remaining bytes in the .reloc section to prevent stale data
+        original_end = reloc_file_off + reloc_dir.size
+        if original_end > end:
+            pe.data[end:original_end] = b'\x00' * (original_end - end)
+        pe.set_data_dir(IMAGE_DIRECTORY_ENTRY_BASERELOC,
+                        reloc_dir.virtual_address,
+                        reloc_size)
+    else:
+        # No non-encrypted reloc entries — zero the directory.
+        # ASLR is still enabled; the loader will load at a random base
+        # but won't apply fixups. Works because the stub is PIC and the
+        # original sections are encrypted (they'll be fixed up by stub).
+        pe.set_data_dir(IMAGE_DIRECTORY_ENTRY_BASERELOC, 0, 0)
 
     # ── Update TLS data directory ──────────────────────────
     if not quick:
@@ -905,16 +977,36 @@ def pack(data: bytes, key: bytes, no_compress: bool = False,
             print(f"  {d.name}: {t['decompressed_sz']} -> "
                   f"{t['compressed_sz']} bytes ({ratio}%)")
 
+    # ── Step 1.4-bis: process relocations (ASLR-safe) ─────
+    # Collect RVAs of sections that will be encrypted
+    encrypted_rvas: List[Tuple[int, int]] = []
+    for d in descs:
+        if d.packed_data:
+            encrypted_rvas.append((d.virtual_address, d.decompressed_size))
+
+    minimal_reloc_data, saved_reloc_data = process_relocs(pe, encrypted_rvas)
+
+    if verbose:
+        saved_count = 0
+        if saved_reloc_data:
+            saved_count = struct.unpack_from("<I", saved_reloc_data, 0)[0]
+        print(f"[packer] Relocs: {saved_count} saved for stub, "
+              f"{'minimal table' if minimal_reloc_data else 'no'} non-encrypted entries")
+
     # ── Step 1.5: build stub ───────────────────────────────
     stub = build_stub(key, pe.image_base, table,
-                      no_anti_debug=no_anti_debug,
+                      saved_reloc_data=saved_reloc_data,
                       quick=quick,
                       is_pe32plus=pe.is_pe32plus)
     if verbose:
-        print(f"[packer] Stub: {len(stub)} bytes")
+        print(f"[packer] Stub: {len(stub)} bytes "
+              f"(header={HEADER_SIZE} code={len(stub)-HEADER_SIZE-len(table)*SECTION_DESC_SIZE-len(saved_reloc_data)} "
+              f"descs={len(table)*SECTION_DESC_SIZE} reloc={len(saved_reloc_data)})")
 
     # ── Step 1.6: inject stub + TLS ────────────────────────
-    stub_rva, stub_size, tls_rva = inject_stub(pe, stub, quick)
+    stub_rva, stub_size, tls_rva = inject_stub(pe, stub,
+                                                minimal_reloc_data=minimal_reloc_data,
+                                                quick=quick)
     if not quick:
         tls = pe.tls_dir
         if verbose:
@@ -935,11 +1027,10 @@ def pack(data: bytes, key: bytes, no_compress: bool = False,
 
     # ── In quick mode, patch entry point to stub ───────────
     if quick:
-        # Set entry point to the stub CODE (not header). The stub
-        # layout is [header(56)][code][descs(N*16)].
-        # Code always starts right after the header (offset 56).
-        epoff = pe.opt_offset + 16  # AddressOfEntryPoint offset (same for PE32/PE32+)
-        struct.pack_into("<I", pe.data, epoff, stub_rva + 56)
+        # Set entry point to the stub CODE (not header).
+        # Code always starts right after the header (offset HEADER_SIZE).
+        epoff = pe.opt_offset + 16
+        struct.pack_into("<I", pe.data, epoff, stub_rva + HEADER_SIZE)
 
     # ── Step 1.7: verify entry point ───────────────────────
     verify_entry_point(pe)

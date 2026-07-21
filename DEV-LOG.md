@@ -1200,3 +1200,81 @@ After the 64-byte greeting + session key handshake, **all** packets must use the
 3. **Production plist corrected**: Rewrote the plist to target DBeaver at `127.0.0.1:4242` (matching the running server) instead of Discord at `192.168.1.100:4444`.
 
 Files: `tests/self_delete_test.cpp`, `~/Library/LaunchAgents/com.inferno.agent.plist`
+
+---
+
+## 🎁 Phase 3: Custom PE Packer — ASLR-Safe Option A — [2026-07-21]
+
+**Objective**: Resolve the architectural contradiction in the custom PE packer where ASLR was stripped (`.reloc` zeroed) while the stub contained dead relocation code. Implement the correct UPX-style approach: preserve ASLR, split `.reloc` into a minimal loader table (non-encrypted sections only) and saved entries (for post-decode stub application).
+
+### Core Problem Solved
+
+The Windows loader applies base relocations **before** TLS callbacks fire. With XOR-encrypted sections:
+
+```
+Loader sees encrypted value (V ⊕ K) and adds delta → (V ⊕ K) + δ
+XOR decryption yields V + δ (not V)
+Stub adds δ again → V + 2δ (double fault)
+```
+
+The fix isolates loader relocations from encrypted sections entirely:
+
+1. **Filter `.reloc` at pack time**: the packer's `process_relocs()` walks every `.reloc` entry, classifying by whether the target RVA falls in an encrypted section.
+2. **Minimal table for the loader**: entries targeting non-encrypted regions (stub section, import tables) stay in the PE's `.reloc` directory — the loader applies them safely to plaintext data.
+3. **Saved entries for the stub**: entries targeting encrypted sections are saved as embedded data in the stub blob. After XOR decryption, the stub applies them from this embedded copy.
+
+### Technical Milestones
+
+**1. `packer.py` — Reloc Processing Pipeline**
+
+- **`HEADER_SIZE = 64`** new constant (was hardcoded `56` throughout).
+- **`process_relocs(pe, encrypted_rvas)`** — parses PE `.reloc` page blocks, splits entries into encrypted/non-encrypted buckets. Returns `(minimal_reloc_bytes, saved_reloc_bytes)`.
+- **`build_stub()`** — expanded header from 6 to 8 fields (`descs_offset`, `reloc_offset`, `reloc_size`). Appendix saved reloc data after section descriptors. Header pack format: `<II32sQIIII` (64 bytes).
+- **`inject_stub()`** — accepts `minimal_reloc_data` parameter. **No longer clears `DYNAMIC_BASE`**. **No longer zeros `.reloc` directory**. Instead, writes the minimal table over the original `.reloc` data in-place and updates the data directory size. ASLR is fully preserved.
+- **`pack()`** — orchestrates: collect encrypted RVAs → `process_relocs()` → `build_stub(saved=...)` → `inject_stub(minimal=...)`.
+- Fixed: removed vestigial `no_anti_debug` parameter from `build_stub()` (caused `TypeError` — the flag had no effect since the stub is pre-compiled).
+
+**2. `stub.asm` — Embedded Reloc Data**
+
+- **`StubHeader`** expanded from 56 to 64 bytes:
+  - `.reserved` → `.descs_offset` (offset to section descriptor array)
+  - Added `.reloc_offset` (offset from header to saved reloc data)
+  - Added `.reloc_size` (size of saved reloc data in bytes)
+- **`apply_relocs`** completely rewritten: instead of parsing `.reloc` from the PE header at runtime (which now contains the minimal loader-only table), it reads the flat-format saved entries from `header_base + reloc_offset`. Format: `[DWORD count][{ DWORD rva, WORD type_ofs } × count]`.
+- The same DIR64 fixup math (`*(uint64_t*)(actual_base + rva) += delta`) applies to now-decrypted data — correct by construction.
+- LZ4 decompressor unchanged (no regressions).
+- Recompiled: `stub.bin` = 1116 bytes (was 1247; 131 bytes smaller due to simpler reloc parser).
+
+**3. CMake Build Integration (`wrapper/CMakeLists.txt`)**
+
+- **NASM auto-build**: if `nasm(1)` is found, `stub.bin` is assembled from `stub.asm` at build time (verifiable artifact). Falls back gracefully to `packer/stub.bin`.
+- **Per-build XOR key**: `string(RANDOM LENGTH 32 ...)` at configure time guarantees a unique SHA-256 hash per build.
+- **Post-link packer step**: runs `packer.py --input $<TARGET_FILE:inferno_wrapper>` after linking:
+  - Writes to `$<TARGET>.packed` (temp), then `cmake -E rename` (atomic replace)
+  - If `packer.py` crashes, the original binary is untouched
+- **CI-friendly option**: `-DINFERNO_PACKER_QUICK=ON` passes `--quick` to skip rdtsc anti-debug (false-positives in sandboxed runners).
+
+**4. CI Pipeline (`inferno_ci.yml`)**
+
+- Windows job: `pip install lz4` (Python LZ4 binding), `choco install nasm`
+- Configure with `-DINFERNO_PACKER_QUICK=ON`
+- Build `inferno_wrapper` alongside existing targets
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `packer/packer.py` | `process_relocs()`, `HEADER_SIZE=64`, `build_stub`/`inject_stub`/`pack` updates |
+| `packer/stub.asm` | 64-byte header, embedded reloc `apply_relocs`, removed PE-header-walking code |
+| `packer/stub.bin` | Recompiled (1116 bytes) |
+| `wrapper/CMakeLists.txt` | NASM build + post-link packer step |
+| `.github/workflows/inferno_ci.yml` | lz4/nasm deps, quick mode, wrapper build |
+
+### Verification
+
+- All Python syntax and header-layout assertions pass.
+- Stub blob layout verified: header(64) + code(1116) + descs(N×16) + saved_relocs(M).
+- `process_relocs()` correctly separates encrypted/non-encrypted entries.
+- `build_stub()` produces correct 8-field header with `descs_offset`, `reloc_offset`, `reloc_size`.
+- `inject_stub()` preserves `DYNAMIC_BASE` and writes valid minimal `.reloc` table.
+- No pre-existing tests regressed (build warning-free on macOS).

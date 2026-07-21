@@ -11,20 +11,23 @@
 ; Build: nasm -f bin -o stub.bin stub.asm
 ;
 ; Stub layout at runtime:
-;   [PACK header (56 bytes)] [section descs (N*16)] [code (this)]
+;   [PACK header (64 bytes)] [code (this)] [section descs (N*16)] [saved relocs]
 ;   ^-- packer.py patches header fields at build time
 ; ═════════════════════════════════════════════════════════════════════
 
 BITS 64
 
 ; ── Stub Header offsets (patched by packer.py) ──────────────────
+; Total header size: 64 bytes
 STRUC StubHeader
     .magic:          resd 1      ; 'PACK'
     .key_size:       resd 1      ; 32
     .xor_key:        resb 32     ; 256-bit XOR key
     .preferred_base: resq 1      ; Original ImageBase
     .num_sections:   resd 1      ; section count
-    .reserved:       resd 1
+    .descs_offset:   resd 1      ; offset from header to section descriptors
+    .reloc_offset:   resd 1      ; offset from header to saved reloc data
+    .reloc_size:     resd 1      ; size of saved reloc data in bytes
 ENDSTRUC
 
 STRUC SectionDesc
@@ -32,6 +35,12 @@ STRUC SectionDesc
     .compressed_sz:  resd 1      ; size after LZ4 + XOR
     .decompressed_sz: resd 1     ; original section size
 ENDSTRUC
+
+; Flat saved reloc entry format:
+;   [DWORD count]
+;   Followed by 'count' entries:
+;     DWORD rva      ; full RVA of fixup location
+;     WORD type_ofs  ; type<<12 | offset_within_page  (same as PE .reloc entry)
 
 ; ── Constants ────────────────────────────────────────────────────
 VIRTUAL_PROTECT_HASH  equ 0x7946C61B  ; ROR-13("VirtualProtect")
@@ -241,22 +250,26 @@ TlsCallback:
     jz      .early_return
 
     ; ═════════════════════════════════════════════════════════
-    ; Decrypt and decompress each section
+    ; Read section descriptors
     ; ═════════════════════════════════════════════════════════
 
     ; r13 = StubHeader (patched by packer.py)
     ; r12 = VirtualProtect function
-    mov     r15d, [r13 + StubHeader.num_sections]
-    test    r15d, r15d
-    jz      .apply_relocs
 
-    ; r11 = section descriptor array (stored in header.reserved as
-    ; offset from header start: 56 + code_size)
-    mov     r11d, [r13 + StubHeader.reserved]
+    ; r11 = section descriptor array from header.descs_offset
+    mov     r11d, [r13 + StubHeader.descs_offset]
     add     r11, r13
 
     ; r10 = actual base address (saved from TLS callback parameter)
     mov     r10, [rbp - 0x40]     ; DllHandle
+
+    ; ═════════════════════════════════════════════════════════
+    ; Decrypt and decompress each section
+    ; ═════════════════════════════════════════════════════════
+
+    mov     r15d, [r13 + StubHeader.num_sections]
+    test    r15d, r15d
+    jz      .apply_relocs
 
 .section_loop:
     test    r15d, r15d
@@ -378,120 +391,75 @@ TlsCallback:
     jmp     .section_loop
 
     ; ═════════════════════════════════════════════════════════
-    ; Apply base relocations (for ASLR)
+    ; Apply base relocations from embedded saved data (ASLR)
+    ;
+    ; The loader applied NO relocations to encrypted sections
+    ; (the PE's .reloc directory was rebuilt as a minimal table
+    ; covering only non-encrypted regions at load time).
+    ; The full original .reloc entries were saved by packer.py
+    ; and embedded in the stub blob after the section descriptors.
+    ; We apply them here, after decryption.
+    ;
+    ; Flat saved format:
+    ;   [DWORD count][{ DWORD rva, WORD type_ofs } × count]
     ; ═════════════════════════════════════════════════════════
 
 .apply_relocs:
-    ; ── Compute delta = actual_base - preferred_base ────────
-    ; DllHandle was saved at [rbp - 0x40] in the prologue.
+    ; ── Compute delta = preferred_base - actual_base ────────
     mov     rbx, [rbp - 0x40]     ; rbx = actual_base (DllHandle)
     mov     r14, [r13 + StubHeader.preferred_base]
-    sub     r14, rbx              ; r14 = delta (actual - preferred)
-    neg     r14                   ; delta = preferred - actual
+    sub     r14, rbx              ; r14 = delta (preferred - actual)
     jz      .restore_return       ; delta == 0, no relocs needed
 
-    ; ── Find .reloc directory via PE header ─────────────────
-    ; The .reloc section was NOT encrypted (loader-critical),
-    ; so it's still readable at this point.
-    ;
-    ; PE header: actual_base + e_lfanew
-    mov     eax, [rbx + 0x3C]     ; e_lfanew
-    add     rax, rbx              ; rax = nt_headers
+    ; ── Locate embedded saved reloc data ────────────────────
+    mov     r11d, [r13 + StubHeader.reloc_size]
+    test    r11d, r11d
+    jz      .restore_return
 
-    ; Verify PE signature (quick check)
-    cmp     dword [rax], 0x00004550  ; 'PE\0\0'
-    jne     .restore_return
+    mov     rsi, r13
+    add     rsi, [r13 + StubHeader.reloc_offset]
+    ; rsi = pointer to saved reloc data
+    ; rbx = actual_base
+    ; r14 = delta (preferred - actual)
 
-    ; Determine data directory offset (PE32: 96, PE32+: 112)
-    movzx   edx, word [rax + 24]  ; optional header magic
-    mov     r8d, 96
-    cmp     dx, 0x020B            ; PE32+?
-    jne     .reloc_pe32
-    mov     r8d, 112
-.reloc_pe32:
+    ; ── Parse flat format ─────────────────────────────────
+    mov     r9d, [rsi]            ; r9d = entry count
+    add     rsi, 4                ; rsi = first entry
 
-    ; Get IMAGE_DIRECTORY_ENTRY_BASERELOC (index 5)
-    ; at nt_headers + 24 + dd_offset + 5*8
-    lea     rcx, [rax + 24 + r8]  ; rcx = data directories
-    mov     r9d, [rcx + 5 * 8]    ; r9d = reloc RVA
     test    r9d, r9d
     jz      .restore_return
-    mov     r10d, [rcx + 5 * 8 + 4]  ; r10d = reloc size
-    test    r10d, r10d
-    jz      .restore_return
 
-    ; ── Walk relocation blocks ─────────────────────────────
-    ; r9 = reloc RVA, r10 = reloc size, r14 = delta
-    ; rbx = actual_base
-    add     r9, rbx               ; r9 = reloc VA (dll_base + rva)
-    mov     r11, r9               ; r11 = current block
-    lea     r15, [r9 + r10]       ; r15 = end address
+.reloc_loop:
+    mov     r8d, [rsi]            ; r8d = fixup RVA
+    movzx   ecx, word [rsi + 4]   ; ecx = type_ofs (type<<12 | offset)
 
-.reloc_block_loop:
-    ; Guard: need at least 8 bytes for header (PageRVA + SizeOfBlock)
-    lea     r8, [r11 + 8]
-    cmp     r8, r15
-    ja      .restore_return
+    mov     eax, ecx
+    and     eax, 0x0FFF           ; eax = offset_within_page (unused, flat)
+    shr     ecx, 12               ; ecx = reloc type
 
-    mov     ebx, [r11]            ; ebx = PageRVA
-    mov     r8d, [r11 + 4]        ; r8d = SizeOfBlock (save for later)
-    test    r8d, r8d
-    jz      .restore_return
-    cmp     r8d, 8
-    jb      .restore_return        ; minimum valid block: 8 bytes header
-
-    ; Guard: SizeOfBlock must not extend past the reloc table end
-    mov     eax, r8d
-    add     rax, r11
-    cmp     rax, r15
-    ja      .restore_return
-
-    ; Number of entries = (SizeOfBlock - 8) / 2
-    mov     ecx, r8d
-    sub     ecx, 8
-    shr     ecx, 1                ; ecx = entry count
+    ; Skip absolute entries (type 0, alignment padding)
     test    ecx, ecx
-    jz      .next_reloc_block
-
-    lea     rsi, [r11 + 8]        ; rsi = entries start
-
-.reloc_entry_loop:
-    movzx   eax, word [rsi]       ; entry: high 4 = type, low 12 = offset
-    add     rsi, 2
-
-    mov     edx, eax
-    and     eax, 0x0FFF           ; eax = offset (low 12 bits)
-    shr     edx, 12               ; edx = type (high 4 bits)
-
-    ; Skip absolute entries (type 0, used for alignment padding)
-    test    edx, edx
-    jz      .reloc_entry_check_cnt
+    jz      .reloc_next
 
     ; Only handle DIR64 (type 10) for x64
-    cmp     edx, 10
-    jne     .reloc_entry_check_cnt
+    cmp     ecx, 10
+    jne     .reloc_next
 
-    ; Apply fixup: *(uint64_t*)(dll_base + PageRVA + offset) += delta
-    ; Compute full VA: actual_base + PageRVA + offset
-    mov     r9, [r13 + StubHeader.preferred_base]
-    add     r9, r14               ; r9 = actual_base = preferred + delta
-    mov     rdi, rbx              ; rdi = PageRVA
-    add     rdi, rax              ; rdi = PageRVA + offset (within page)
-    add     rdi, r9               ; rdi = full VA of fixup location
+    ; Compute target VA = actual_base + fixup_rva
+    mov     rdi, rbx              ; rdi = actual_base
+    add     rdi, r8               ; rdi = actual_base + rva
 
-    ; Reject obviously invalid addresses (< 64KB or null page)
+    ; Reject null-page addresses
     cmp     rdi, 0x10000
-    jb      .reloc_entry_check_cnt
+    jb      .reloc_next
 
+    ; Apply fixup: *(uint64_t*)target += delta
     add     qword [rdi], r14
 
-.reloc_entry_check_cnt:
-    dec     ecx
-    jnz     .reloc_entry_loop
-
-.next_reloc_block:
-    add     r11, r8               ; advance past this entire block
-    jmp     .reloc_block_loop
+.reloc_next:
+    add     rsi, 6                ; advance to next entry (4 + 2 bytes)
+    dec     r9d
+    jnz     .reloc_loop
 
     ; ═════════════════════════════════════════════════════════
     ; Epilogue: restore and return

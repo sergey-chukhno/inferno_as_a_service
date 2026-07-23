@@ -194,16 +194,20 @@ if(WIN32)
                 "signtool not found — install Windows SDK or set -DINFERNO_CODE_SIGN=OFF")
         endif()
 
-        # ── 3. Certificate path ────────────────────────────
+        # ── 3. Certificate path + subject ───────────────────
         # Default: self-signed dev cert at project root (created by
         # scripts/gen_test_cert.sh). Override with -DINFERNO_CERT_PFX=<path>
         # for production EV certificates.
         set(INFERNO_CERT_PFX "${CMAKE_SOURCE_DIR}/secrets/cert.pfx"
             CACHE PATH "Path to code signing PFX certificate")
+        set(INFERNO_CERT_SUBJECT "Inferno Development Self-Signed"
+            CACHE STRING "Subject CN of the code signing certificate for store selection")
 
         # ── 4. Password from environment ONLY ──────────────
         # Never pass -DINFERNO_CERT_PASSWORD=... — it would appear in
-        # CMake cache and build logs. Always use the env var.
+        # CMake cache and build logs. Only used once to install the PFX
+        # into the certificate store; the signtool sign command itself
+        # does NOT receive the password.
         set(CERT_PASSWORD "$ENV{INFERNO_CERT_PASSWORD}")
         if(NOT CERT_PASSWORD)
             message(FATAL_ERROR
@@ -211,15 +215,33 @@ if(WIN32)
                 "Export it before building: export INFERNO_CERT_PASSWORD=<password>")
         endif()
 
-        # ── 5. POST_BUILD signing step ─────────────────────
-        # Signs after packing: SHA256 digest, RFC 3161 timestamp,
-        # automatic cert selection from the PFX (/a).
+        # ── 5. Helper: detect PowerShell for cert import ──
+        find_program(POWERSHELL powershell)
+        if(NOT POWERSHELL)
+            message(FATAL_ERROR "PowerShell not found — required for secure cert import")
+        endif()
+
+        # ── 6. POST_BUILD signing pipeline ────────────────
+        # The password is used ONCE to install the PFX into the current
+        # user's Personal certificate store via PowerShell. Then signtool
+        # selects the cert by subject name (/n) — no /p flag on the
+        # signtool command line, so the password never appears in build
+        # logs, process listings, or CI runner metadata.
         add_custom_command(TARGET inferno_wrapper POST_BUILD
+            # Step 6a: Import PFX into CurrentUser\My store
+            # The password is passed via env var, not on the PowerShell
+            # command line, to avoid process-list leaks.
+            COMMAND ${CMAKE_COMMAND} -E env
+                    INFERNO_CERT_PASSWORD="${CERT_PASSWORD}"
+                    ${POWERSHELL} -Command
+                    "Import-PfxCertificate -FilePath '${INFERNO_CERT_PFX}' -CertStoreLocation Cert:\\CurrentUser\\My -Password (ConvertTo-SecureString -String \$env:INFERNO_CERT_PASSWORD -Force -AsPlainText) | Out-Null"
+            # Step 6b: Sign using certificate from store (by subject, no password)
             COMMAND ${SIGNTOOL} sign /fd SHA256 /a
-                    /f "${INFERNO_CERT_PFX}" /p "${CERT_PASSWORD}"
+                    /s My /n "${INFERNO_CERT_SUBJECT}"
                     /tr "http://timestamp.digicert.com"
                     /td SHA256
                     "$<TARGET_FILE:inferno_wrapper>"
+            # Step 6c: Verify the signature
             COMMAND ${SIGNTOOL} verify /v /pa
                     "$<TARGET_FILE:inferno_wrapper>"
             COMMENT "Signing + verifying packed wrapper (SHA256 + RFC 3161 timestamp)"

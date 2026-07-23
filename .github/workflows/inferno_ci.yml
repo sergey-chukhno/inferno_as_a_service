@@ -177,14 +177,22 @@ jobs:
       run: |
         echo "$env:PFX_B64" | base64 -d > "${{ runner.temp }}\cert.pfx"
 
-    - name: Configure CMake (with code signing)
+    - name: Import Certificate into Store (password-free signtool)
+      # Install PFX into CurrentUser\My once. The signtool sign command
+      # then selects by subject name (/n) — no /p flag, so the password
+      # never appears in process listings or build logs.
       env:
         INFERNO_CERT_PASSWORD: ${{ secrets.INFERNO_CERT_PASSWORD }}
+      run: |
+        $pwd = ConvertTo-SecureString -String "$env:INFERNO_CERT_PASSWORD" -Force -AsPlainText
+        Import-PfxCertificate -FilePath "${{ runner.temp }}\cert.pfx" -CertStoreLocation Cert:\CurrentUser\My -Password $pwd | Out-Null
+
+    - name: Configure CMake (with code signing)
       run: |
         cmake -B build -S . -T v142 `
               -DINFERNO_PACKER_QUICK=ON `
               -DINFERNO_CODE_SIGN=ON `
-              -DINFERNO_CERT_PFX="${{ runner.temp }}\cert.pfx"
+              -DINFERNO_CERT_SUBJECT="Inferno Development Self-Signed"
 
     - name: Build + Sign Wrapper
       run: cmake --build build --target inferno_wrapper --config Release
@@ -195,8 +203,8 @@ jobs:
 
     - name: Verify Code Signing Pipeline (standalone)
       env:
-        INFERNO_CERT_PFX: ${{ runner.temp }}\cert.pfx
-        INFERNO_CERT_PASSWORD: ${{ secrets.INFERNO_CERT_PASSWORD }}
+        INFERNO_CERT_SUBJECT: "Inferno Development Self-Signed"
+      # Password not needed here — cert is already in store
       run: |
         cmake -P tests/verify_code_signing.cmake
 

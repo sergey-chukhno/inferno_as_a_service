@@ -3,17 +3,23 @@
 # ═══════════════════════════════════════════════════════════════════════
 #
 # Validates that the code signing pipeline is operational: signtool is
-# present, the PFX certificate is readable, and sign+verify succeeds on
-# a known-valid minimal PE binary.
+# present, the signing certificate is accessible (via cert store or PFX),
+# and sign+verify succeeds on a known-valid minimal PE binary.
+#
+# Password-free design: the certificate is imported into CurrentUser\My
+# store first (by CI or by this script). signtool selects it by subject
+# name (/n) — no /p password flag on the signtool command line.
 #
 # Usage (on Windows with signtool in PATH):
 #   cmake -P tests/verify_code_signing.cmake
 #
 # Environment variables:
-#   INFERNO_CERT_PFX       — path to the PFX certificate (required)
-#   INFERNO_CERT_PASSWORD  — PFX password (required)
+#   INFERNO_CERT_SUBJECT   — certificate subject CN for store selection
+#                           (default: "Inferno Development Self-Signed")
+#   INFERNO_CERT_PFX       — path to PFX (only needed if cert not in store)
+#   INFERNO_CERT_PASSWORD  — PFX password (only needed if cert not in store)
 #   INFERNO_PE_BINARY      — optional: path to a real PE to sign. If not
-#                             set, a synthetic minimal PE is used.
+#                             set, a synthetic minimal PE is generated.
 #
 # Returns exit code 0 on success, non-zero on failure.
 # ═══════════════════════════════════════════════════════════════════════
@@ -33,23 +39,76 @@ if(NOT SIGNTOOL)
 endif()
 message(STATUS "PASS: signtool found at ${SIGNTOOL}")
 
-# ── 3. Verify certificate exists ──────────────────────────────────
-set(CERT_PFX "$ENV{INFERNO_CERT_PFX}")
-if(NOT CERT_PFX)
-    set(CERT_PFX "${CMAKE_SOURCE_DIR}/secrets/cert.pfx")
+# ── 3. Determine certificate source (store or PFX) ──────────────
+# The cert may already be in the CurrentUser\My store (pre-imported
+# by CI) or we may need to import it from a PFX file (standalone).
+set(CERT_SUBJECT "$ENV{INFERNO_CERT_SUBJECT}")
+if(NOT CERT_SUBJECT)
+    set(CERT_SUBJECT "Inferno Development Self-Signed")
+endif()
+message(STATUS "Using certificate subject: ${CERT_SUBJECT}")
+
+# Check if the cert is already in the store
+set(CERT_STORE_PATH "Cert:\\CurrentUser\\My")
+message(STATUS "Checking cert store: ${CERT_STORE_PATH}")
+
+find_program(POWERSHELL powershell)
+if(NOT POWERSHELL)
+    message(FATAL_ERROR "FAIL: PowerShell not found — required for cert management")
 endif()
 
-if(NOT EXISTS "${CERT_PFX}")
-    message(FATAL_ERROR "FAIL: certificate not found at ${CERT_PFX}")
-endif()
-message(STATUS "PASS: certificate found at ${CERT_PFX}")
+execute_process(
+    COMMAND ${POWERSHELL} -Command
+            "Get-ChildItem -Path '${CERT_STORE_PATH}' | Where-Object { \$_.Subject -match '${CERT_SUBJECT}' } | Select-Object -First 1"
+    RESULT_VARIABLE STORE_CHECK_RESULT
+    OUTPUT_VARIABLE STORE_CHECK_OUTPUT
+    ERROR_VARIABLE STORE_CHECK_ERROR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
 
-# ── 4. Verify password is set ─────────────────────────────────────
-set(CERT_PASSWORD "$ENV{INFERNO_CERT_PASSWORD}")
-if(NOT CERT_PASSWORD)
-    message(FATAL_ERROR "FAIL: INFERNO_CERT_PASSWORD environment variable not set")
+set(CERT_IN_STORE FALSE)
+if(STORE_CHECK_RESULT EQUAL 0 AND STORE_CHECK_OUTPUT)
+    set(CERT_IN_STORE TRUE)
+    message(STATUS "PASS: certificate found in store (${CERT_STORE_PATH})")
+else()
+    message(STATUS "Certificate not in store — will import from PFX")
 endif()
-message(STATUS "PASS: INFERNO_CERT_PASSWORD is set")
+
+# If not in store, import from PFX
+if(NOT CERT_IN_STORE)
+    set(CERT_PFX "$ENV{INFERNO_CERT_PFX}")
+    if(NOT CERT_PFX)
+        set(CERT_PFX "${CMAKE_SOURCE_DIR}/secrets/cert.pfx")
+    endif()
+    if(NOT EXISTS "${CERT_PFX}")
+        message(FATAL_ERROR
+            "FAIL: certificate not in store and PFX not found at ${CERT_PFX}. "
+            "Either pre-import the cert or set INFERNO_CERT_PFX / run scripts/gen_test_cert.sh")
+    endif()
+    message(STATUS "PASS: PFX found at ${CERT_PFX}")
+
+    set(CERT_PASSWORD "$ENV{INFERNO_CERT_PASSWORD}")
+    if(NOT CERT_PASSWORD)
+        message(FATAL_ERROR
+            "FAIL: INFERNO_CERT_PASSWORD not set — needed to import PFX to store")
+    endif()
+    message(STATUS "PASS: INFERNO_CERT_PASSWORD is set")
+
+    message(STATUS "Importing PFX into certificate store...")
+    execute_process(
+        COMMAND ${CMAKE_COMMAND} -E env
+                INFERNO_CERT_PASSWORD="${CERT_PASSWORD}"
+                ${POWERSHELL} -Command
+                "Import-PfxCertificate -FilePath '${CERT_PFX}' -CertStoreLocation '${CERT_STORE_PATH}' -Password (ConvertTo-SecureString -String \$env:INFERNO_CERT_PASSWORD -Force -AsPlainText) | Out-Null"
+        RESULT_VARIABLE IMPORT_RESULT
+        OUTPUT_VARIABLE IMPORT_OUTPUT
+        ERROR_VARIABLE IMPORT_ERROR
+    )
+    if(NOT IMPORT_RESULT EQUAL 0)
+        message(FATAL_ERROR "FAIL: PFX import failed: ${IMPORT_OUTPUT} ${IMPORT_ERROR}")
+    endif()
+    message(STATUS "PASS: PFX imported to ${CERT_STORE_PATH}")
+endif()
 
 # ── 5. Generate or locate a valid PE binary ───────────────────────
 set(PE_BINARY "$ENV{INFERNO_PE_BINARY}")
@@ -150,11 +209,15 @@ else()
     message(STATUS "PASS: using existing PE binary at ${PE_BINARY}")
 endif()
 
-# ── 6. Sign the PE binary ─────────────────────────────────────────
-message(STATUS "Signing PE binary...")
+# ── 6. Sign the PE binary (password-free via cert store) ─────────
+# The certificate must already be in CurrentUser\My (either pre-imported
+# by CI or imported by step 4 above). signtool selects it by subject
+# name (/n) — no /p flag, so the password never appears on the command
+# line or in build logs.
+message(STATUS "Signing PE binary (password-free, cert from store)...")
 execute_process(
     COMMAND ${SIGNTOOL} sign /fd SHA256 /a
-            /f "${CERT_PFX}" /p "${CERT_PASSWORD}"
+            /s My /n "${CERT_SUBJECT}"
             /tr "http://timestamp.digicert.com"
             /td SHA256
             "${PE_BINARY}"

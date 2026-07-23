@@ -201,7 +201,7 @@ jobs:
         cmake -P tests/verify_code_signing.cmake
 
     - name: Upload Signed Binary
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.0
       with:
         name: invoice.pdf-signed
         path: build/Release/invoice.pdf.exe

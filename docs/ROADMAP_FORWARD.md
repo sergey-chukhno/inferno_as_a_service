@@ -400,6 +400,95 @@ On macOS 13+, direct TCC DB write is blocked (SIP-protected system database). Th
 
 ---
 
+### Phase 5A — HTTP/2 Beaconing (Current)
+
+*Target: common/include/TlsTransport.hpp, common/src/TlsTransport.cpp, client/include/Http2Client.hpp, client/src/Http2Client.cpp, server/include/network/Http2Server.hpp, server/src/network/Http2Server.cpp, common/include/Transport.hpp, tests/http2_transport_test.cpp*
+
+**Objective**: Replace raw TCP transport with HTTP/2 POST requests over TLS, making agent traffic indistinguishable from standard HTTPS web traffic. Malleable C2 packets are carried inside HTTP/2 DATA frames.
+
+**Architecture**:
+```
+Agent: [malleable packet] → [HTTP/2 DATA frame] → [TLS 1.3] → [TCP :443]
+                                                                ↓
+Server: [TCP :443] → [TLS 1.3] → [HTTP/2 frame parser] → [processPacketBuffer]
+```
+
+**TLS Fingerprint (Chrome 120+ match)**:
+- Force TLS 1.3 only (`SSL_CTX_set_min_proto_version` + `SSL_CTX_set_max_proto_version`)
+- Cipher suites: `TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256` (Chrome order)
+- Supported groups: `X25519:P-256:P-384` (Chrome order)
+- Signature algorithms: `ECDSA+SHA256:RSA-PSS+SHA256:...` (Chrome order)
+- ALPN: `h2` primary, `http/1.1` fallback
+- **Note**: OpenSSL vs BoringSSL differences mean JA3 fingerprint won't be *identical* to Chrome, but close enough to bypass most JA3-based EDR heuristics. JA4 bypass requires BoringSSL/utls — deferred.
+
+**HTTP/2 Frame Realism (Chrome 120+ match)**:
+- SETTINGS values captured from Wireshark: HEADER_TABLE_SIZE=65536, ENABLE_PUSH=1, MAX_CONCURRENT_STREAMS=1000, INITIAL_WINDOW_SIZE=6291456, MAX_FRAME_SIZE=16384, MAX_HEADER_LIST_SIZE=262144
+- Frame sequence handled by nghttp2 internally (SETTINGS → WINDOW_UPDATE → HEADERS → DATA)
+- SETTINGS ACK handling in `on_frame_recv` callback
+
+**Transport Abstraction**:
+- `ITransport` interface with `connect/recv/send/disconnect`
+- `TcpTransport` (existing Socket, refactored)
+- `Http2Transport` (new: TLS + HTTP/2)
+- Agent FSM uses `ITransport*` — transport selected at connect time
+
+**Deferred** (out of scope for MVP):
+- gRPC over HTTP/2 (protobuf complexity too high)
+- PRIORITY frame steganography (over-engineered for dropper C2)
+- BoringSSL/utls swap (infrastructure-level decision)
+- JA4 bypass (requires BoringSSL)
+
+**Files**:
+| File | Change |
+|------|--------|
+| `common/include/Transport.hpp` | New: `ITransport` interface |
+| `common/include/TlsTransport.hpp` | New: OpenSSL TLS wrapper |
+| `common/src/TlsTransport.cpp` | New: TLS connect/handshake/read/write with Chrome fingerprint |
+| `client/include/Http2Client.hpp` | New: HTTP/2 client |
+| `client/src/Http2Client.cpp` | New: nghttp2-based client with Chrome SETTINGS |
+| `client/src/Agent.cpp` | Refactor: use `ITransport*` instead of `Socket` |
+| `server/include/network/Http2Server.hpp` | New: HTTP/2 server |
+| `server/src/network/Http2Server.cpp` | New: nghttp2 event loop server |
+| `server/src/network/server.cpp` | Refactor: add `Http2Server` alongside TCP |
+| `CMakeLists.txt` | Add nghttp2 dep, new source files |
+| `.github/workflows/inferno_ci.yml` | Install libnghttp2-dev / nghttp2 |
+| `tests/http2_transport_test.cpp` | New: full test suite |
+
+**Definition of Done**:
+| # | Criterion | Verification |
+|---|-----------|-------------|
+| **H1** | Agent connects via TLS 1.3 + HTTP/2 | Wireshark shows TLS 1.3 handshake + ALPN `h2` |
+| **H2** | TLS Client Hello matches Chrome cipher/groups order | JA3 hash within acceptable variance of Chrome 120 |
+| **H3** | HTTP/2 SETTINGS values match Chrome 120+ | Compare SETTINGS against Wireshark capture |
+| **H4** | Malleable C2 packet fits inside HTTP/2 DATA frame | Same encrypt → frame → send flow; server extracts correctly |
+| **H5** | Server handles multiple simultaneous HTTP/2 agents | 10 concurrent agents → all receive commands |
+| **H6** | Certificate validation rejects bad hostname | Agent refuses connection on wrong domain |
+| **H7** | ALPN negotiates h2; rejects non-h2 servers | Connection fails when server doesn't support h2 |
+| **H8** | Legacy TCP transport still works | All existing 36 tests pass with zero regression |
+| **H9** | Realistic HTTP/2 headers | `User-Agent`, `Content-Type` match browser POST requests |
+| **H10** | SETTINGS ACK handled correctly | `on_frame_recv` receives SETTINGS ACK, proceeds to HEADERS |
+
+**Test Suite** (`tests/http2_transport_test.cpp`):
+| Test | What it verifies |
+|------|-----------------|
+| `test_tcp_transport_connect` | `TcpTransport` connects to a TCP server (existing Socket behavior) |
+| `test_tls_handshake` | TLS 1.3 handshake completes with ALPN `h2` negotiation |
+| `test_tls_fingerprint_ciphers` | TLS Client Hello advertises Chrome-ordered cipher suites |
+| `test_tls_fingerprint_groups` | TLS Client Hello advertises Chrome-ordered supported groups |
+| `test_tls_fingerprint_sigalgs` | TLS Client Hello advertises Chrome-ordered signature algorithms |
+| `test_tls_certificate_validation` | Agent rejects wrong-hostname, accepts valid self-signed |
+| `test_tls_alpn_rejection` | Agent fails gracefully when server doesn't support h2 |
+| `test_http2_preface` | Client sends valid `PRI * HTTP/2.0` connection preface |
+| `test_http2_settings_values` | SETTINGS frame values match Chrome 120+ capture |
+| `test_http2_settings_ack` | Client handles SETTINGS ACK from server |
+| `test_http2_frame_sequence` | Frame order matches Chrome (SETTINGS → WINDOW_UPDATE → HEADERS → DATA) |
+| `test_http2_post_roundtrip` | POST request → server response echoes payload back |
+| `test_http2_concurrent_streams` | Server handles 10 simultaneous streams |
+| `test_malleable_over_http2` | Full path: malleable packet → HTTP/2 → server extracts → response |
+| `test_transport_switch_legacy` | `TcpTransport` behavior unchanged (regression guard) |
+
+---
+
 ## Phase 6: In-Memory Execution & Syscall Evasion
 
 *Target: Client execution engine*

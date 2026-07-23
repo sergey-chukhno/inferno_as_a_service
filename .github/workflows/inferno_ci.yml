@@ -134,3 +134,83 @@ jobs:
         INFERNO_TESTING: 1
       run: .\build\Debug\inferno_tests.exe
 
+  # ═════════════════════════════════════════════════════════════════
+  # Release Signing Job (Windows, release events only)
+  # ═════════════════════════════════════════════════════════════════
+  # Signs the packed wrapper with an EV code signing certificate to
+  # bypass SmartScreen. Only runs on GitHub Releases.
+  #
+  # Prerequisites (set in repo Secrets):
+  #   INFERNO_CERT_PFX_B64     — base64-encoded PFX certificate
+  #   INFERNO_CERT_PASSWORD    — PFX password
+  # ═════════════════════════════════════════════════════════════════
+  release-sign:
+    name: sign-release (windows-latest)
+    if: github.event_name == 'release'
+    runs-on: windows-latest
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      with:
+        persist-credentials: false
+
+    - name: Install Windows SDK (signtool)
+      run: choco install windows-sdk -y
+
+    - name: Install Packer Dependencies
+      run: |
+        python -m pip install lz4
+        choco install nasm -y
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@b3ea5275e37b734d027040e2c7fe7a10ea2ef946 # v3.3.0
+      with:
+        aqtversion: '==3.1.*'
+        version: '6.7.3'
+        host: 'windows'
+        target: 'desktop'
+        arch: 'win64_msvc2019_64'
+
+    - name: Decode Signing Certificate
+      env:
+        PFX_B64: ${{ secrets.INFERNO_CERT_PFX_B64 }}
+      run: |
+        echo "$env:PFX_B64" | base64 -d > "${{ runner.temp }}\cert.pfx"
+
+    - name: Import Certificate into Store (password-free signtool)
+      # Install PFX into CurrentUser\My once. The signtool sign command
+      # then selects by subject name (/n) — no /p flag, so the password
+      # never appears in process listings or build logs.
+      env:
+        INFERNO_CERT_PASSWORD: ${{ secrets.INFERNO_CERT_PASSWORD }}
+      run: |
+        $pwd = ConvertTo-SecureString -String "$env:INFERNO_CERT_PASSWORD" -Force -AsPlainText
+        Import-PfxCertificate -FilePath "${{ runner.temp }}\cert.pfx" -CertStoreLocation Cert:\CurrentUser\My -Password $pwd | Out-Null
+
+    - name: Configure CMake (with code signing)
+      run: |
+        cmake -B build -S . -T v142 `
+              -DINFERNO_PACKER_QUICK=ON `
+              -DINFERNO_CODE_SIGN=ON `
+              -DINFERNO_CERT_SUBJECT="Inferno Development Self-Signed"
+
+    - name: Build + Sign Wrapper
+      run: cmake --build build --target inferno_wrapper --config Release
+
+    - name: Verify Signature
+      run: |
+        signtool verify /v /pa build\Release\invoice.pdf.exe
+
+    - name: Verify Code Signing Pipeline (standalone)
+      env:
+        INFERNO_CERT_SUBJECT: "Inferno Development Self-Signed"
+      # Password not needed here — cert is already in store
+      run: |
+        cmake -P tests/verify_code_signing.cmake
+
+    - name: Upload Signed Binary
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.0
+      with:
+        name: invoice.pdf-signed
+        path: build/Release/invoice.pdf.exe
+

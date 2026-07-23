@@ -6,6 +6,8 @@
 #include <cstring>
 #include <optional>
 
+#include "Transport.hpp"
+
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -30,7 +32,7 @@ namespace inferno {
 
 class Packet;
 
-class Socket {
+class Socket : public ITransport {
 private:
     socket_t    m_socket_fd;
     std::string m_ip;
@@ -51,6 +53,14 @@ public:
     Socket& operator=(const Socket& other) = delete;
     Socket(Socket&& other) noexcept;
     Socket& operator=(Socket&& other) noexcept;
+
+    // ITransport interface
+    bool        connect(const std::string& host, uint16_t port) override;
+    void        disconnect() override;
+    bool        isConnected() const override;
+    int         recv(uint8_t* buf, size_t len) override;
+    int         send(const uint8_t* buf, size_t len) override;
+    TransportType type() const override { return TransportType::TCP; }
 
     // Core networking
     bool                  bindNode(const std::string& ip, uint16_t port);

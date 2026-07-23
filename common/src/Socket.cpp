@@ -387,4 +387,26 @@ uint16_t Socket::getPort() const {
     return m_port;
 }
 
+// ── ITransport interface ──────────────────────────────────────────
+
+bool Socket::connect(const std::string& host, uint16_t port) {
+    return connectTo(host, port, true);
+}
+
+void Socket::disconnect() {
+    close();
+}
+
+bool Socket::isConnected() const {
+    return isValid();
+}
+
+int Socket::recv(uint8_t* buf, size_t len) {
+    return static_cast<int>(receiveRaw(buf, len));
+}
+
+int Socket::send(const uint8_t* buf, size_t len) {
+    return sendRaw(buf, len) ? static_cast<int>(len) : -1;
+}
+
 } // namespace inferno

@@ -1278,3 +1278,190 @@ The fix isolates loader relocations from encrypted sections entirely:
 - `build_stub()` produces correct 8-field header with `descs_offset`, `reloc_offset`, `reloc_size`.
 - `inject_stub()` preserves `DYNAMIC_BASE` and writes valid minimal `.reloc` table.
 - No pre-existing tests regressed (build warning-free on macOS).
+
+---
+
+## 🔏 Phase 3.5: Code Signing — Defeat SmartScreen — [2026-07-21]
+
+**Objective**: Sign the packed wrapper binary with an EV code signing certificate to bypass Windows SmartScreen on first execution. The packer defeats static AV/YARA, but an unsigned binary still triggers "Windows protected your PC" — code signing closes the trust gap.
+
+### Certificate Strategy
+
+| Type | SmartScreen | Cost | Use |
+|------|-------------|------|-----|
+| **Self-signed** | ❌ Blocked immediately (Unknown Publisher) | Free | Local dev pipeline testing |
+| **OV (Organization Validation)** | ⚠️ Blocked until reputation builds (~weeks/months) | ~$200/yr | Not suitable for ephemeral dropper |
+| **EV (Extended Validation)** | ✅ Trusted immediately | ~$300/yr | **Production** — required for SmartScreen bypass |
+| **Microsoft Trusted Signing** | ✅ Trusted (cloud-signed) | Pay-per-signature | Alternative to EV, short-lived certs |
+
+Self-signed certificates are provided for **development only** — they exercise the `signtool` pipeline but do NOT bypass SmartScreen. Only EV certificates provide instant trust on first execution.
+
+### Technical Milestones
+
+**1. CMake Integration (`wrapper/CMakeLists.txt`)**
+
+- **`INFERNO_CODE_SIGN`** option (default OFF): enables the signing post-build step.
+- **`find_program(signtool)`** — fails with a clear error if missing.
+- **`INFERNO_CERT_PFX`** cache variable: defaults to `secrets/cert.pfx`, overridable for CI or production certs.
+- **Password via environment**: `$ENV{INFERNO_CERT_PASSWORD}` — never stored in CMake cache or visible in build logs.
+- **Signing command**: `signtool sign /fd SHA256 /a /f <pfx> /p <password> /tr http://timestamp.digicert.com /td SHA256 <binary>`
+  - `/fd SHA256` — SHA256 file digest
+  - `/a` — auto-select best certificate from the PFX
+  - `/tr` + `/td SHA256` — RFC 3161 timestamp (remains valid after cert expiry)
+- **Verification**: `signtool verify /v /pa <binary>` runs after signing to catch failures immediately.
+- Positioned **after** the packer step — signatures cover the final packed binary, not the intermediate linker output.
+
+**2. Self-Signed Dev Cert (`scripts/gen_test_cert.sh`)**
+
+- Uses `openssl` to generate a self-signed RSA-4096 certificate with `codeSigning` EKU.
+- Outputs PFX to `secrets/cert.pfx` with a configurable password (default: `inferno_dev`).
+- Documents the export commands for the build environment.
+
+**3. CI Release Signing (`inferno_ci.yml`)**
+
+- New **`sign-release`** job: runs only on `github.event_name == 'release'` (not on every push/PR).
+- Installs Windows SDK (`choco install windows-sdk`) for `signtool`.
+- Decodes the certificate from `secrets.INFERNO_CERT_PFX_B64` (stored as a GitHub Actions secret — the PFX is never in the repo).
+- Configures with `-DINFERNO_CODE_SIGN=ON` and the decoded PFX path.
+- Builds the wrapper (which triggers packer → signing → verification).
+- Runs `tests/verify_code_signing.cmake` as an independent pipeline validation.
+- Uploads the signed binary as a build artifact.
+
+**4. Signing Verification Script (`tests/verify_code_signing.cmake`)**
+
+Cross-platform CMake script that validates:
+- `signtool` is in PATH
+- PFX certificate file exists and is readable
+- `INFERNO_CERT_PASSWORD` environment variable is set
+- `signtool` can sign a minimal test binary
+- `signtool verify /v /pa` confirms the signature (SHA256, timestamp presence)
+
+### Security Architecture
+
+- **No secrets in repo**: the PFX is stored as a GitHub Actions secret (base64-encoded), never committed.
+- **Password via env var only**: CMake's `$ENV{}` syntax reads from the environment — never from a `-D` flag that could appear in logs.
+- **Release-gated**: the signing job only runs on `release` events, preventing accidental signing of every PR build.
+- **Per-build hash randomization**: the packer's random XOR key + padding already changes the binary hash every build, preventing hash-based SmartScreen blacklisting across builds.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `wrapper/CMakeLists.txt` | `INFERNO_CODE_SIGN` option, signtool POST_BUILD with env var password |
+| `.github/workflows/inferno_ci.yml` | New `sign-release` job (release events only) |
+| `.gitignore` | Added `secrets/cert.pfx` and `secrets/*.pem` |
+| `scripts/gen_test_cert.sh` | Self-signed PFX generator for local dev |
+| `tests/verify_code_signing.cmake` | Standalone signing pipeline validation |
+
+### Verification
+
+- CMake option `INFERNO_CODE_SIGN=OFF` (default): wrapper builds normally without signing — no regression.
+- CMake option `INFERNO_CODE_SIGN=ON` with missing `signtool`: clear `FATAL_ERROR` message.
+- CMake option `INFERNO_CODE_SIGN=ON` with missing password: clear `FATAL_ERROR` message.
+- `scripts/gen_test_cert.sh` produces a valid PFX on macOS/Linux with `openssl`.
+- `tests/verify_code_signing.cmake` validates the full signtool pipeline on Windows.
+- All 36 unit tests pass across macOS/Linux/Windows.
+- Release CI job is gated on `release` events — does not run on push/PR.
+
+---
+
+## 🌐 Phase 5A: HTTP/2 Beaconing — Covert Transport — [2026-07-23]
+
+**Objective**: Replace raw TCP transport with HTTP/2 POST requests over TLS 1.3, making agent traffic indistinguishable from standard HTTPS web traffic. Malleable C2 packets are carried inside HTTP/2 DATA frames. The TLS handshake is configured to match Chrome 120+ fingerprint (cipher suites, supported groups, signature algorithms, ALPN order).
+
+### Architecture
+
+```
+Agent: [malleable packet] → [HTTP/2 DATA frame] → [TLS 1.3] → [TCP :443]
+                                                                ↓
+Server: [TCP :443] → [TLS 1.3] → [HTTP/2 frame parser] → [processPacketBuffer]
+```
+
+### Technical Milestones
+
+**1. ITransport Abstraction (`common/include/Transport.hpp`)**
+
+- Pure virtual interface: `connect`, `disconnect`, `isConnected`, `recv`, `send`, `type`
+- `TransportType` enum: `TCP` (0), `HTTP2` (1)
+- `Socket` now inherits from `ITransport` (backward-compatible)
+
+**2. TLS Transport with Chrome Fingerprint (`common/src/TlsTransport.cpp`)**
+
+- **TLS 1.3 only**: `SSL_CTX_set_min/max_proto_version(ctx, TLS1_3_VERSION)`
+- **Cipher suites** (Chrome 120+ order): `TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256`
+- **Supported groups** (Chrome order): `X25519:P-256:P-384`
+- **Signature algorithms** (Chrome order): `ECDSA+SHA256:RSA-PSS+SHA256:...:ECDSA+SHA384`
+- **ALPN**: `h2` primary, `http/1.1` fallback
+- **Certificate validation**: hostname match via `X509_check_host` + OS trust store
+- **ALPN verification**: `SSL_get0_alpn_selected` confirms `h2` after handshake
+
+**3. HTTP/2 Client (`client/src/Http2Client.cpp`)**
+
+- nghttp2-based session with Chrome-matching SETTINGS:
+  - `HEADER_TABLE_SIZE=65536`, `ENABLE_PUSH=1`, `MAX_CONCURRENT_STREAMS=1000`
+  - `INITIAL_WINDOW_SIZE=6291456`, `MAX_FRAME_SIZE=16384`, `MAX_HEADER_LIST_SIZE=262144`
+- Realistic POST headers matching Chrome 120+:
+  - `User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 ...`
+  - `Content-Type: application/octet-stream`
+  - `Accept: */*`
+- Data provider pattern for C2 payloads in DATA frames
+- SETTINGS ACK handling in `on_frame_recv` callback
+
+**4. HTTP/2 Server (`server/src/network/Http2Server.cpp`)**
+
+- nghttp2 server session with Chrome-compatible SETTINGS
+- TLS 1.3 with ALPN h2 selection
+- SETTINGS ACK submission on receiving client SETTINGS
+- Data callback feeds into existing packet processing pipeline
+- Self-signed certificate for development (production: Let's Encrypt / EV)
+
+**5. CMake Integration**
+
+- `find_path` / `find_library` for nghttp2
+- Conditional compilation: `INFERNO_HAVE_NGHTTP2` define
+- `TlsTransport.cpp` added to `inferno_common`
+- `Http2Client.cpp` added to `inferno_client` (when nghttp2 available)
+- `Http2Server.cpp` added to `inferno_server` (when nghttp2 available)
+- `inferno_http2_transport_test` test target with nghttp2 linkage
+
+### Deferred (out of scope for MVP)
+
+- gRPC over HTTP/2 (protobuf complexity too high)
+- PRIORITY frame steganography (over-engineered for dropper C2)
+- BoringSSL/utls swap (infrastructure-level decision)
+- JA4 bypass (requires BoringSSL)
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `common/include/Transport.hpp` | New: `ITransport` interface |
+| `common/include/TlsTransport.hpp` | New: OpenSSL TLS wrapper with Chrome fingerprint |
+| `common/src/TlsTransport.cpp` | New: TLS 1.3 connect/handshake/read/write |
+| `common/include/Socket.hpp` | Refactor: inherit from `ITransport` |
+| `common/src/Socket.cpp` | Refactor: add ITransport adapter methods |
+| `client/include/Http2Client.hpp` | New: HTTP/2 client header |
+| `client/src/Http2Client.cpp` | New: nghttp2-based client with Chrome SETTINGS |
+| `server/include/network/Http2Server.hpp` | New: HTTP/2 server header |
+| `server/src/network/Http2Server.cpp` | New: nghttp2 event-loop server |
+| `tests/http2_transport_test.cpp` | New: 6 transport tests |
+| `CMakeLists.txt` | nghttp2 detection, new source files, test target |
+| `docs/ROADMAP_FORWARD.md` | Enhanced Phase 5A DoD + test checklist |
+
+### Tests (6 new, 36 existing)
+
+| Test | What it verifies |
+|------|-----------------|
+| `test_transport_type_enum` | TransportType values |
+| `test_tcp_transport_interface` | Socket implements ITransport |
+| `test_tls_transport_default_state` | TlsTransport initial state |
+| `test_http2_client_default_state` | Http2Client initial state |
+| `test_packet_regression` | Packet serialize/deserialize (legacy no regression) |
+| `test_tls_transport_move` | TlsTransport move semantics |
+
+### Verification
+
+- Build: `cmake -B build -S .` succeeds with nghttp2 detection
+- All **42 tests** pass (36 existing + 6 new)
+- HTTP/2 transport tests cover: interface contract, TLS defaults, client lifecycle, packet roundtrip, move semantics
+- Legacy TCP transport unchanged (ITransport backward-compatible)

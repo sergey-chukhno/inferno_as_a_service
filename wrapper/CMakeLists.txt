@@ -163,6 +163,71 @@ if(WIN32)
         COMMENT "Packing inferno_wrapper (XOR+LZ4+TLS, key=${INFERNO_PACKER_KEY})"
         VERBATIM
     )
+
+    # ═══════════════════════════════════════════════════════════
+    # Phase 3.5 — Code Signing (EV cert for production)
+    # ═══════════════════════════════════════════════════════════
+    #
+    # Runs after packing. Signs the packed wrapper with SHA256 + RFC 3161
+    # timestamp so the binary is trusted by Windows SmartScreen at first
+    # execution (with an EV certificate). Self-signed certs are for local
+    # development only — they do NOT bypass SmartScreen.
+    #
+    # Usage:
+    #   cmake -B build -DINFERNO_CODE_SIGN=ON
+    #   export INFERNO_CERT_PASSWORD=<pfx_password>
+    #   cmake --build build --target inferno_wrapper
+    #
+    # Password is read from the INFERNO_CERT_PASSWORD environment variable
+    # only — never from a CMake variable — to prevent leaks in build logs.
+    #
+    # ── 1. Option (default OFF) ────────────────────────────
+    option(INFERNO_CODE_SIGN
+        "Sign the packed wrapper with signtool (EV cert required for SmartScreen)"
+        OFF)
+
+    if(INFERNO_CODE_SIGN)
+        # ── 2. Find signtool ──────────────────────────────
+        find_program(SIGNTOOL signtool)
+        if(NOT SIGNTOOL_FOUND)
+            message(FATAL_ERROR
+                "signtool not found — install Windows SDK or set -DINFERNO_CODE_SIGN=OFF")
+        endif()
+
+        # ── 3. Certificate path ────────────────────────────
+        # Default: self-signed dev cert at project root (created by
+        # scripts/gen_test_cert.sh). Override with -DINFERNO_CERT_PFX=<path>
+        # for production EV certificates.
+        set(INFERNO_CERT_PFX "${CMAKE_SOURCE_DIR}/secrets/cert.pfx"
+            CACHE PATH "Path to code signing PFX certificate")
+
+        # ── 4. Password from environment ONLY ──────────────
+        # Never pass -DINFERNO_CERT_PASSWORD=... — it would appear in
+        # CMake cache and build logs. Always use the env var.
+        set(CERT_PASSWORD "$ENV{INFERNO_CERT_PASSWORD}")
+        if(NOT CERT_PASSWORD)
+            message(FATAL_ERROR
+                "INFERNO_CERT_PASSWORD environment variable not set. "
+                "Export it before building: export INFERNO_CERT_PASSWORD=<password>")
+        endif()
+
+        # ── 5. POST_BUILD signing step ─────────────────────
+        # Signs after packing: SHA256 digest, RFC 3161 timestamp,
+        # automatic cert selection from the PFX (/a).
+        add_custom_command(TARGET inferno_wrapper POST_BUILD
+            COMMAND ${SIGNTOOL} sign /fd SHA256 /a
+                    /f "${INFERNO_CERT_PFX}" /p "${CERT_PASSWORD}"
+                    /tr "http://timestamp.digicert.com"
+                    /td SHA256
+                    "$<TARGET_FILE:inferno_wrapper>"
+            COMMAND ${SIGNTOOL} verify /v /pa
+                    "$<TARGET_FILE:inferno_wrapper>"
+            COMMENT "Signing + verifying packed wrapper (SHA256 + RFC 3161 timestamp)"
+            VERBATIM
+        )
+
+        message(STATUS "Code signing ENABLED (cert=${INFERNO_CERT_PFX})")
+    endif()
 endif()
 
 # --- macOS .app bundle post-build ---

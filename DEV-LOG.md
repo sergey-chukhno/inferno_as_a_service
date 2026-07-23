@@ -1278,3 +1278,87 @@ The fix isolates loader relocations from encrypted sections entirely:
 - `build_stub()` produces correct 8-field header with `descs_offset`, `reloc_offset`, `reloc_size`.
 - `inject_stub()` preserves `DYNAMIC_BASE` and writes valid minimal `.reloc` table.
 - No pre-existing tests regressed (build warning-free on macOS).
+
+---
+
+## 🔏 Phase 3.5: Code Signing — Defeat SmartScreen — [2026-07-21]
+
+**Objective**: Sign the packed wrapper binary with an EV code signing certificate to bypass Windows SmartScreen on first execution. The packer defeats static AV/YARA, but an unsigned binary still triggers "Windows protected your PC" — code signing closes the trust gap.
+
+### Certificate Strategy
+
+| Type | SmartScreen | Cost | Use |
+|------|-------------|------|-----|
+| **Self-signed** | ❌ Blocked immediately (Unknown Publisher) | Free | Local dev pipeline testing |
+| **OV (Organization Validation)** | ⚠️ Blocked until reputation builds (~weeks/months) | ~$200/yr | Not suitable for ephemeral dropper |
+| **EV (Extended Validation)** | ✅ Trusted immediately | ~$300/yr | **Production** — required for SmartScreen bypass |
+| **Microsoft Trusted Signing** | ✅ Trusted (cloud-signed) | Pay-per-signature | Alternative to EV, short-lived certs |
+
+Self-signed certificates are provided for **development only** — they exercise the `signtool` pipeline but do NOT bypass SmartScreen. Only EV certificates provide instant trust on first execution.
+
+### Technical Milestones
+
+**1. CMake Integration (`wrapper/CMakeLists.txt`)**
+
+- **`INFERNO_CODE_SIGN`** option (default OFF): enables the signing post-build step.
+- **`find_program(signtool)`** — fails with a clear error if missing.
+- **`INFERNO_CERT_PFX`** cache variable: defaults to `secrets/cert.pfx`, overridable for CI or production certs.
+- **Password via environment**: `$ENV{INFERNO_CERT_PASSWORD}` — never stored in CMake cache or visible in build logs.
+- **Signing command**: `signtool sign /fd SHA256 /a /f <pfx> /p <password> /tr http://timestamp.digicert.com /td SHA256 <binary>`
+  - `/fd SHA256` — SHA256 file digest
+  - `/a` — auto-select best certificate from the PFX
+  - `/tr` + `/td SHA256` — RFC 3161 timestamp (remains valid after cert expiry)
+- **Verification**: `signtool verify /v /pa <binary>` runs after signing to catch failures immediately.
+- Positioned **after** the packer step — signatures cover the final packed binary, not the intermediate linker output.
+
+**2. Self-Signed Dev Cert (`scripts/gen_test_cert.sh`)**
+
+- Uses `openssl` to generate a self-signed RSA-4096 certificate with `codeSigning` EKU.
+- Outputs PFX to `secrets/cert.pfx` with a configurable password (default: `inferno_dev`).
+- Documents the export commands for the build environment.
+
+**3. CI Release Signing (`inferno_ci.yml`)**
+
+- New **`sign-release`** job: runs only on `github.event_name == 'release'` (not on every push/PR).
+- Installs Windows SDK (`choco install windows-sdk`) for `signtool`.
+- Decodes the certificate from `secrets.INFERNO_CERT_PFX_B64` (stored as a GitHub Actions secret — the PFX is never in the repo).
+- Configures with `-DINFERNO_CODE_SIGN=ON` and the decoded PFX path.
+- Builds the wrapper (which triggers packer → signing → verification).
+- Runs `tests/verify_code_signing.cmake` as an independent pipeline validation.
+- Uploads the signed binary as a build artifact.
+
+**4. Signing Verification Script (`tests/verify_code_signing.cmake`)**
+
+Cross-platform CMake script that validates:
+- `signtool` is in PATH
+- PFX certificate file exists and is readable
+- `INFERNO_CERT_PASSWORD` environment variable is set
+- `signtool` can sign a minimal test binary
+- `signtool verify /v /pa` confirms the signature (SHA256, timestamp presence)
+
+### Security Architecture
+
+- **No secrets in repo**: the PFX is stored as a GitHub Actions secret (base64-encoded), never committed.
+- **Password via env var only**: CMake's `$ENV{}` syntax reads from the environment — never from a `-D` flag that could appear in logs.
+- **Release-gated**: the signing job only runs on `release` events, preventing accidental signing of every PR build.
+- **Per-build hash randomization**: the packer's random XOR key + padding already changes the binary hash every build, preventing hash-based SmartScreen blacklisting across builds.
+
+### Files Changed
+
+| File | Change |
+|------|--------|
+| `wrapper/CMakeLists.txt` | `INFERNO_CODE_SIGN` option, signtool POST_BUILD with env var password |
+| `.github/workflows/inferno_ci.yml` | New `sign-release` job (release events only) |
+| `.gitignore` | Added `secrets/cert.pfx` and `secrets/*.pem` |
+| `scripts/gen_test_cert.sh` | Self-signed PFX generator for local dev |
+| `tests/verify_code_signing.cmake` | Standalone signing pipeline validation |
+
+### Verification
+
+- CMake option `INFERNO_CODE_SIGN=OFF` (default): wrapper builds normally without signing — no regression.
+- CMake option `INFERNO_CODE_SIGN=ON` with missing `signtool`: clear `FATAL_ERROR` message.
+- CMake option `INFERNO_CODE_SIGN=ON` with missing password: clear `FATAL_ERROR` message.
+- `scripts/gen_test_cert.sh` produces a valid PFX on macOS/Linux with `openssl`.
+- `tests/verify_code_signing.cmake` validates the full signtool pipeline on Windows.
+- All 36 unit tests pass across macOS/Linux/Windows.
+- Release CI job is gated on `release` events — does not run on push/PR.

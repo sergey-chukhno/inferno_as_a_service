@@ -256,6 +256,9 @@ if(NGHTTP2_FOUND)
     target_link_libraries(inferno_http2_transport_test PRIVATE
         inferno_common ${NGHTTP2_LIBRARY} OpenSSL::SSL OpenSSL::Crypto
     )
+    if(APPLE)
+        target_link_libraries(inferno_http2_transport_test PRIVATE pthread)
+    endif()
     target_compile_definitions(inferno_http2_transport_test PRIVATE INFERNO_TESTING)
     add_test(NAME Http2Transport COMMAND inferno_http2_transport_test)
 endif()

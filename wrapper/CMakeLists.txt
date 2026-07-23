@@ -189,7 +189,7 @@ if(WIN32)
     if(INFERNO_CODE_SIGN)
         # ── 2. Find signtool ──────────────────────────────
         find_program(SIGNTOOL signtool)
-        if(NOT SIGNTOOL_FOUND)
+        if(NOT SIGNTOOL)
             message(FATAL_ERROR
                 "signtool not found — install Windows SDK or set -DINFERNO_CODE_SIGN=OFF")
         endif()

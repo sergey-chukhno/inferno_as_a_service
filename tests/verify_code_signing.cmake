@@ -28,7 +28,7 @@ endif()
 
 # ── 2. Verify signtool exists ─────────────────────────────────────
 find_program(SIGNTOOL signtool)
-if(NOT SIGNTOOL_FOUND)
+if(NOT SIGNTOOL)
     message(FATAL_ERROR "FAIL: signtool not found in PATH")
 endif()
 message(STATUS "PASS: signtool found at ${SIGNTOOL}")

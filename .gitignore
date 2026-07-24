@@ -72,3 +72,6 @@ design/
 # ==========================================
 secrets/cert.pfx
 secrets/*.pem
+*.crt
+*.key
+cert.pfx.b64

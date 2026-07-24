@@ -144,7 +144,7 @@ bool TlsTransport::tcpConnect() {
     for (struct addrinfo* rp = result; rp; rp = rp->ai_next) {
         m_fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
         if (m_fd == INVALID_SOCKET) continue;
-        if (::connect(m_fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
+        if (::connect(m_fd, rp->ai_addr, static_cast<int>(rp->ai_addrlen)) == 0) break;
         SOCKET_CLOSE(m_fd);
         m_fd = INVALID_SOCKET;
     }

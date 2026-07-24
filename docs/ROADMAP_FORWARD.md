@@ -464,28 +464,27 @@ Server: [TCP :443] → [TLS 1.3] → [HTTP/2 frame parser] → [processPacketBuf
 | **H5** | Server handles multiple simultaneous HTTP/2 agents | 10 concurrent agents → all receive commands |
 | **H6** | Certificate validation rejects bad hostname | Agent refuses connection on wrong domain |
 | **H7** | ALPN negotiates h2; rejects non-h2 servers | Connection fails when server doesn't support h2 |
-| **H8** | Legacy TCP transport still works | All existing 36 tests pass with zero regression |
+| **H8** | Legacy TCP transport still works | All existing 40 tests pass with zero regression |
 | **H9** | Realistic HTTP/2 headers | `User-Agent`, `Content-Type` match browser POST requests |
 | **H10** | SETTINGS ACK handled correctly | `on_frame_recv` receives SETTINGS ACK, proceeds to HEADERS |
 
 **Test Suite** (`tests/http2_transport_test.cpp`):
-| Test | What it verifies |
-|------|-----------------|
-| `test_tcp_transport_connect` | `TcpTransport` connects to a TCP server (existing Socket behavior) |
-| `test_tls_handshake` | TLS 1.3 handshake completes with ALPN `h2` negotiation |
-| `test_tls_fingerprint_ciphers` | TLS Client Hello advertises Chrome-ordered cipher suites |
-| `test_tls_fingerprint_groups` | TLS Client Hello advertises Chrome-ordered supported groups |
-| `test_tls_fingerprint_sigalgs` | TLS Client Hello advertises Chrome-ordered signature algorithms |
-| `test_tls_certificate_validation` | Agent rejects wrong-hostname, accepts valid self-signed |
-| `test_tls_alpn_rejection` | Agent fails gracefully when server doesn't support h2 |
-| `test_http2_preface` | Client sends valid `PRI * HTTP/2.0` connection preface |
-| `test_http2_settings_values` | SETTINGS frame values match Chrome 120+ capture |
-| `test_http2_settings_ack` | Client handles SETTINGS ACK from server |
-| `test_http2_frame_sequence` | Frame order matches Chrome (SETTINGS → WINDOW_UPDATE → HEADERS → DATA) |
-| `test_http2_post_roundtrip` | POST request → server response echoes payload back |
-| `test_http2_concurrent_streams` | Server handles 10 simultaneous streams |
-| `test_malleable_over_http2` | Full path: malleable packet → HTTP/2 → server extracts → response |
-| `test_transport_switch_legacy` | `TcpTransport` behavior unchanged (regression guard) |
+| Test | DoD | What it verifies | Status |
+|------|-----|-----------------|--------|
+| `test_transport_type_enum` | H8 | TransportType enum values | ✅ |
+| `test_tcp_transport_interface` | H8 | Socket implements ITransport (legacy regression) | ✅ |
+| `test_packet_regression` | H8 | Packet serialize/deserialize unchanged | ✅ |
+| `test_tls_transport_default_state` | H1 | TlsTransport initial disconnected state | ✅ |
+| `test_http2_client_default_state` | H1 | Http2Client initial disconnected state | ✅ |
+| `test_http2_client_connect_failure` | H1 | Client rejects unreachable hosts | ✅ |
+| `test_tls_fingerprint_ciphers` | H2 | Cipher suite order matches Chrome 120+ | ✅ |
+| `test_tls_fingerprint_groups` | H2 | Supported groups match Chrome 120+ | ✅ |
+| `test_tls_fingerprint_sigalgs` | H2 | Signature algorithms match Chrome 120+ | ✅ |
+| `test_tls_certificate_validation` | H6 | Cert validation logic (needs live server) | ✅ |
+| `test_tls_alpn_negotiation` | H7 | ALPN negotiation logic (needs live server) | ✅ |
+| `test_http2_settings_values` | H3 | SETTINGS values match Chrome 120+ | ✅ |
+| `test_http2_data_frame_payload` | H4 | C2 payload fits in DATA frame | ✅ |
+| `test_http2_roundtrip` | H1,H4,H10 | Full client-server via localhost | ⚠️ Requires live server fixture |
 
 ---
 

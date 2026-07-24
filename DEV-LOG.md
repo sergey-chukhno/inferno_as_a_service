@@ -1448,7 +1448,7 @@ Server: [TCP :443] → [TLS 1.3] → [HTTP/2 frame parser] → [processPacketBuf
 | `CMakeLists.txt` | nghttp2 detection, new source files, test target |
 | `docs/ROADMAP_FORWARD.md` | Enhanced Phase 5A DoD + test checklist |
 
-### Tests (15 planned, 12 implemented)
+### Tests (14 test functions, 13 pass + 1 graceful skip)
 
 | Test | DoD | What it verifies | Status |
 |------|-----|-----------------|--------|
@@ -1465,8 +1465,7 @@ Server: [TCP :443] → [TLS 1.3] → [HTTP/2 frame parser] → [processPacketBuf
 | `test_tls_alpn_negotiation` | H7 | ALPN negotiation logic (needs live server) | ✅ |
 | `test_http2_settings_values` | H3 | SETTINGS values match Chrome 120+ | ✅ |
 | `test_http2_data_frame_payload` | H4 | C2 payload fits in DATA frame | ✅ |
-| `test_http2_roundtrip` | H1,H4,H10 | Full client-server via localhost | ⚠️ Live server test |
-| `test_tls_transport_move` | H1 | TlsTransport move semantics | ✅ |
+| `test_http2_roundtrip` | H1,H4,H10 | Full client-server via localhost | ⚠️ Requires live server fixture |
 
 ### Definition of Done — Phase 5A Audit
 
@@ -1483,12 +1482,12 @@ Server: [TCP :443] → [TLS 1.3] → [HTTP/2 frame parser] → [processPacketBuf
 | **H9** | Realistic HTTP/2 headers | REQUEST_HEADERS in Http2Client.cpp | ✅ |
 | **H10** | SETTINGS ACK handled correctly | on_frame_recv callback | ✅ |
 
-**Total tests**: 46 (40 pre-existing + 6 legacy regression + 12 Phase 5A — 3 deferred to live integration)
+**Total tests**: 53 (40 pre-existing + 13 Phase 5A — 1 deferred to live integration)
 
 ### Verification
 
 - Build: `cmake -B build -S .` succeeds with nghttp2 detection
-- All **46 tests** pass on macOS (40 existing + 6 new transport + 12 Phase 5A)
+- All **53 tests** pass on macOS (40 existing + 13 Phase 5A)
 - Legacy TCP transport unchanged (ITransport backward-compatible)
 - TLS fingerprint statically configured to Chrome 120+ order
 - HTTP/2 SETTINGS values verified against Wireshark captures

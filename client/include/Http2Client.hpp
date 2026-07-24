@@ -24,6 +24,10 @@ public:
     Http2Client(Http2Client&&) noexcept;
     Http2Client& operator=(Http2Client&&) noexcept;
 
+    // Chrome 120+ HTTP/2 SETTINGS (exposed for testing)
+    static const nghttp2_settings_entry CHROME_SETTINGS[6];
+    static constexpr size_t NUM_CHROME_SETTINGS = 6;
+
     bool connect(const std::string& host, uint16_t port);
     void disconnect();
     bool isConnected() const;

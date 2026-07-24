@@ -4,7 +4,6 @@
 #include <vector>
 #include <string>
 
-
 #include "common/include/Transport.hpp"
 #include "common/include/TlsTransport.hpp"
 #include "common/include/Socket.hpp"
@@ -101,24 +100,37 @@ void test_tls_fingerprint_ciphers() {
     TEST("TLS 1.3 cipher suites match Chrome 120+ order (DoD H2)");
     inferno::TlsTransport tls;
     REQUIRE(tls.type() == inferno::TransportType::HTTP2);
-    // The cipher suite configuration is applied in the constructor.
-    // Verification of actual wire format requires a packet capture tool,
-    // but the configuration is statically set in TlsTransport::configureFingerprint().
-    // The cipher list we configure:
-    //   TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256
-    // matches Chrome 120+ order (verified against Wireshark captures).
+    REQUIRE(tls.context() != nullptr);
+    REQUIRE(tls.cipherList() ==
+        "TLS_AES_128_GCM_SHA256:"
+        "TLS_AES_256_GCM_SHA384:"
+        "TLS_CHACHA20_POLY1305_SHA256");
     PASS();
 }
 
 void test_tls_fingerprint_groups() {
     TEST("TLS supported groups match Chrome 120+ order (DoD H2)");
-    // Groups configured: X25519:P-256:P-384 (Chrome 120+ order)
+    inferno::TlsTransport tls;
+    REQUIRE(tls.type() == inferno::TransportType::HTTP2);
+    REQUIRE(tls.context() != nullptr);
+    REQUIRE(tls.groupsList() == "X25519:P-256:P-384");
     PASS();
 }
 
 void test_tls_fingerprint_sigalgs() {
     TEST("TLS signature algorithms match Chrome 120+ order (DoD H2)");
-    // Sigalgos configured: ECDSA+SHA256:RSA-PSS+SHA256:... (Chrome 120+ order)
+    inferno::TlsTransport tls;
+    REQUIRE(tls.type() == inferno::TransportType::HTTP2);
+    REQUIRE(tls.context() != nullptr);
+    REQUIRE(tls.sigalgsList() ==
+        "ECDSA+SHA256:"
+        "RSA-PSS+SHA256:"
+        "RSA-PSS+SHA384:"
+        "RSA-PSS+SHA512:"
+        "RSA+SHA256:"
+        "RSA+SHA384:"
+        "RSA+SHA512:"
+        "ECDSA+SHA384");
     PASS();
 }
 
@@ -152,12 +164,11 @@ void test_http2_client_connect_failure() {
 void test_tls_certificate_validation() {
     TEST("TLS certificate validation logic (DoD H6)");
     inferno::TlsTransport tls;
-    // Verify the object exists and has correct type
     REQUIRE(tls.type() == inferno::TransportType::HTTP2);
     REQUIRE(!tls.isConnected());
-    // Full certificate validation (X509_check_host + SSL_get_verify_result)
-    // is implemented in TlsTransport::connect(). A live server with a
-    // trusted cert is needed for the actual roundtrip test.
+    REQUIRE(tls.context() != nullptr);
+    // Full hostname + chain validation is performed in connect().
+    // Default verify mode is SSL_VERIFY_NONE (OpenSSL client default).
     PASS();
 }
 
@@ -167,9 +178,13 @@ void test_tls_certificate_validation() {
 void test_tls_alpn_negotiation() {
     TEST("ALPN negotiation logic (DoD H7)");
     inferno::TlsTransport tls;
-    REQUIRE(!tls.isAlpnH2());
-    // ALPN is verified after connect via SSL_get0_alpn_selected.
-    // A live server is required for the actual negotiation test.
+    REQUIRE(!tls.isAlpnH2());    // not negotiated without connect
+    REQUIRE(tls.context() != nullptr);
+    REQUIRE(tls.alpnProtosLen() == 12);  // "h2" + "http/1.1"
+    REQUIRE(tls.alpnProtos()[0] == 2);
+    REQUIRE(std::memcmp(tls.alpnProtos() + 1, "h2", 2) == 0);
+    REQUIRE(tls.alpnProtos()[3] == 8);
+    REQUIRE(std::memcmp(tls.alpnProtos() + 4, "http/1.1", 8) == 0);
     PASS();
 }
 
@@ -178,11 +193,21 @@ void test_tls_alpn_negotiation() {
 // ═══════════════════════════════════════════════════════════════════
 void test_http2_settings_values() {
     TEST("HTTP/2 SETTINGS match Chrome 120+ (DoD H3)");
-    // The constants are defined in Http2Client.cpp:
-    //   CHROME_SETTINGS[] matches Wireshark captures of Chrome 120.
-    //   HEADER_TABLE_SIZE=65536, ENABLE_PUSH=1,
-    //   MAX_CONCURRENT_STREAMS=1000, INITIAL_WINDOW_SIZE=6291456,
-    //   MAX_FRAME_SIZE=16384, MAX_HEADER_LIST_SIZE=262144
+    REQUIRE(inferno::Http2Client::NUM_CHROME_SETTINGS == 6);
+
+    auto const& s = inferno::Http2Client::CHROME_SETTINGS;
+    REQUIRE(s[0].settings_id == NGHTTP2_SETTINGS_HEADER_TABLE_SIZE);
+    REQUIRE(s[0].value == 65536);
+    REQUIRE(s[1].settings_id == NGHTTP2_SETTINGS_ENABLE_PUSH);
+    REQUIRE(s[1].value == 1);
+    REQUIRE(s[2].settings_id == NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS);
+    REQUIRE(s[2].value == 1000);
+    REQUIRE(s[3].settings_id == NGHTTP2_SETTINGS_INITIAL_WINDOW_SIZE);
+    REQUIRE(s[3].value == 6291456);
+    REQUIRE(s[4].settings_id == NGHTTP2_SETTINGS_MAX_FRAME_SIZE);
+    REQUIRE(s[4].value == 16384);
+    REQUIRE(s[5].settings_id == NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE);
+    REQUIRE(s[5].value == 262144);
     PASS();
 }
 
@@ -191,16 +216,11 @@ void test_http2_settings_values() {
 // ═══════════════════════════════════════════════════════════════════
 void test_http2_data_frame_payload() {
     TEST("Malleable C2 packet fits in HTTP/2 DATA frame (DoD H4)");
-    // The send() method in Http2Client wraps the payload in an HTTP/2
-    // DATA frame via nghttp2_submit_data() with a data_provider callback.
-    // The payload is passed as-is to the DATA frame body.
-    // The server extracts it via onDataChunkRecv and forwards to the
-    // existing processPacketBuffer pipeline.
     inferno::Http2Client client;
-    std::vector<uint8_t> payload = {'C', '2', 0x00, 0x01, 0xDE, 0xAD};
-    // Can't test the full flow without a server, but verify the
-    // send/recv interfaces compile and accept data
     REQUIRE(client.transport().type() == inferno::TransportType::HTTP2);
+    // send() returns -1 when not connected (no server needed for contract)
+    uint8_t buf[] = {0xDE, 0xAD};
+    REQUIRE(client.send(buf, 2) == -1);
     PASS();
 }
 

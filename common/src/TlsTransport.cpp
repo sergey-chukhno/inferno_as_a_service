@@ -46,6 +46,10 @@ TlsTransport::TlsTransport(TlsTransport&& other) noexcept
     , m_port(other.m_port)
     , m_alpn_negotiated(other.m_alpn_negotiated)
     , m_connected(other.m_connected)
+    , m_cipher_list(std::move(other.m_cipher_list))
+    , m_groups_list(std::move(other.m_groups_list))
+    , m_sigalgs_list(std::move(other.m_sigalgs_list))
+    , m_alpn_protos(std::move(other.m_alpn_protos))
 {
     other.m_ctx = nullptr;
     other.m_ssl = nullptr;
@@ -65,6 +69,10 @@ TlsTransport& TlsTransport::operator=(TlsTransport&& other) noexcept {
         m_port = other.m_port;
         m_alpn_negotiated = other.m_alpn_negotiated;
         m_connected = other.m_connected;
+        m_cipher_list = std::move(other.m_cipher_list);
+        m_groups_list = std::move(other.m_groups_list);
+        m_sigalgs_list = std::move(other.m_sigalgs_list);
+        m_alpn_protos = std::move(other.m_alpn_protos);
         other.m_ctx = nullptr;
         other.m_ssl = nullptr;
         other.m_fd = -1;
@@ -80,34 +88,34 @@ void TlsTransport::configureFingerprint() {
     SSL_CTX_set_max_proto_version(m_ctx, TLS1_3_VERSION);
 
     // ── TLS 1.3 cipher suites in Chrome 120+ order ──
-    SSL_CTX_set_ciphersuites(m_ctx,
-        "TLS_AES_128_GCM_SHA256:"       // Chrome primary
-        "TLS_AES_256_GCM_SHA384:"       // Chrome secondary
-        "TLS_CHACHA20_POLY1305_SHA256"  // Chrome fallback (mobile)
-    );
+    m_cipher_list = "TLS_AES_128_GCM_SHA256:"     // Chrome primary
+                    "TLS_AES_256_GCM_SHA384:"     // Chrome secondary
+                    "TLS_CHACHA20_POLY1305_SHA256"; // Chrome fallback (mobile)
+    SSL_CTX_set_ciphersuites(m_ctx, m_cipher_list.c_str());
 
     // ── Supported groups in Chrome 120+ order ──
-    SSL_CTX_set1_groups_list(m_ctx, "X25519:P-256:P-384");
+    m_groups_list = "X25519:P-256:P-384";
+    SSL_CTX_set1_groups_list(m_ctx, m_groups_list.c_str());
 
     // ── Signature algorithms in Chrome 120+ order ──
-    // Matches Chrome's TLS 1.3 signature algorithm preference
-    SSL_CTX_set1_sigalgs_list(m_ctx,
-        "ECDSA+SHA256:"
-        "RSA-PSS+SHA256:"
-        "RSA-PSS+SHA384:"
-        "RSA-PSS+SHA512:"
-        "RSA+SHA256:"
-        "RSA+SHA384:"
-        "RSA+SHA512:"
-        "ECDSA+SHA384"
-    );
+    m_sigalgs_list = "ECDSA+SHA256:"
+                     "RSA-PSS+SHA256:"
+                     "RSA-PSS+SHA384:"
+                     "RSA-PSS+SHA512:"
+                     "RSA+SHA256:"
+                     "RSA+SHA384:"
+                     "RSA+SHA512:"
+                     "ECDSA+SHA384";
+    SSL_CTX_set1_sigalgs_list(m_ctx, m_sigalgs_list.c_str());
 
     // ── ALPN: h2 primary, http/1.1 fallback (matches Chrome) ──
     static const unsigned char alpn_data[] = {
         2, 'h', '2',             // length-prefixed "h2"
         8, 'h', 't', 't', 'p', '/', '1', '.', '1'  // length-prefixed "http/1.1"
     };
-    SSL_CTX_set_alpn_protos(m_ctx, alpn_data, sizeof(alpn_data));
+    m_alpn_protos.assign(alpn_data, alpn_data + sizeof(alpn_data));
+    SSL_CTX_set_alpn_protos(m_ctx, m_alpn_protos.data(),
+                            static_cast<unsigned int>(m_alpn_protos.size()));
 }
 
 bool TlsTransport::tcpConnect() {

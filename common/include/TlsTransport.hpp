@@ -35,6 +35,14 @@ public:
     bool hasAlpn() const { return m_alpn_negotiated; }
     bool isAlpnH2() const;
 
+    // ── Testing support ────────────────────────────────────────────
+    struct ssl_ctx_st* context() const { return m_ctx; }
+    const std::string& cipherList() const { return m_cipher_list; }
+    const std::string& groupsList() const { return m_groups_list; }
+    const std::string& sigalgsList() const { return m_sigalgs_list; }
+    const unsigned char* alpnProtos() const { return m_alpn_protos.data(); }
+    size_t alpnProtosLen() const { return m_alpn_protos.size(); }
+
 private:
     struct ssl_ctx_st* m_ctx;
     struct ssl_st*     m_ssl;
@@ -43,6 +51,11 @@ private:
     uint16_t           m_port;
     bool               m_alpn_negotiated;
     bool               m_connected;
+
+    std::string              m_cipher_list;
+    std::string              m_groups_list;
+    std::string              m_sigalgs_list;
+    std::vector<unsigned char> m_alpn_protos;
 
     void configureFingerprint();
     bool tcpConnect();

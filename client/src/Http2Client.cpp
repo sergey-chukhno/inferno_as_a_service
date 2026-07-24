@@ -11,7 +11,7 @@
 namespace inferno {
 
 // ── Chrome 120+ HTTP/2 SETTINGS (captured from Wireshark) ─────────
-static const nghttp2_settings_entry CHROME_SETTINGS[] = {
+const nghttp2_settings_entry Http2Client::CHROME_SETTINGS[6] = {
     {NGHTTP2_SETTINGS_HEADER_TABLE_SIZE, 65536},
     {NGHTTP2_SETTINGS_ENABLE_PUSH, 1},
     {NGHTTP2_SETTINGS_MAX_CONCURRENT_STREAMS, 1000},
@@ -19,7 +19,6 @@ static const nghttp2_settings_entry CHROME_SETTINGS[] = {
     {NGHTTP2_SETTINGS_MAX_FRAME_SIZE, 16384},
     {NGHTTP2_SETTINGS_MAX_HEADER_LIST_SIZE, 262144},
 };
-static const size_t NUM_CHROME_SETTINGS = 6;
 
 // ── Realistic POST headers (Chrome-like) ───────────────────────────
 static const nghttp2_nv REQUEST_HEADERS[] = {

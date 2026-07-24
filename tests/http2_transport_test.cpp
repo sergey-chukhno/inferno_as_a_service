@@ -1,7 +1,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <cassert>
 #include <vector>
 #include <string>
 
@@ -19,7 +18,13 @@
 
 #define TEST(name) std::printf("[TEST] %s...\n", name)
 #define PASS() std::printf("[PASS] %s\n", __func__)
-#define SKIP(reason) std::printf("[SKIP] %s: %s\n", __func__, reason)
+#define SKIP(reason) do { std::printf("[SKIP] %s: %s\n", __func__, reason); return; } while(0)
+#define REQUIRE(cond) do { \
+    if (!(cond)) { \
+        std::printf("[FAIL] %s: `%s`\n", __func__, #cond); \
+        std::exit(1); \
+    } \
+} while(0)
 
 // ═══════════════════════════════════════════════════════════════════
 // DoD H1-H10 Test Coverage
@@ -44,8 +49,8 @@ void test_transport_type_enum() {
     TEST("TransportType enum values (DoD: interface contract)");
     int tcp_val = static_cast<int>(inferno::TransportType::TCP);
     int h2_val  = static_cast<int>(inferno::TransportType::HTTP2);
-    assert(tcp_val == 0);
-    assert(h2_val == 1);
+    REQUIRE(tcp_val == 0);
+    REQUIRE(h2_val == 1);
     PASS();
 }
 
@@ -55,8 +60,8 @@ void test_transport_type_enum() {
 void test_tcp_transport_interface() {
     TEST("Socket implements ITransport — legacy TCP unchanged (DoD H8)");
     inferno::Socket sock;
-    assert(!sock.isConnected());
-    assert(static_cast<int>(sock.type()) == static_cast<int>(inferno::TransportType::TCP));
+    REQUIRE(!sock.isConnected());
+    REQUIRE(static_cast<int>(sock.type()) == static_cast<int>(inferno::TransportType::TCP));
     PASS();
 }
 
@@ -68,12 +73,12 @@ void test_packet_regression() {
     std::vector<uint8_t> payload = {0xDE, 0xAD, 0xBE, 0xEF};
     inferno::Packet pkt(0x0001, payload);
     auto data = pkt.serialize();
-    assert(!data.empty());
+    REQUIRE(!data.empty());
     auto deserialized = inferno::Packet::deserialize(data);
-    assert(deserialized.has_value());
-    assert(deserialized->getOpcode() == 0x0001);
+    REQUIRE(deserialized.has_value());
+    REQUIRE(deserialized->getOpcode() == 0x0001);
     auto p = deserialized->getPayload();
-    assert(p.size() == 4 && p[0] == 0xDE && p[1] == 0xAD && p[2] == 0xBE && p[3] == 0xEF);
+    REQUIRE(p.size() == 4 && p[0] == 0xDE && p[1] == 0xAD && p[2] == 0xBE && p[3] == 0xEF);
     PASS();
 }
 
@@ -83,9 +88,9 @@ void test_packet_regression() {
 void test_tls_transport_default_state() {
     TEST("TlsTransport default state (DoD H1 prerequisite)");
     inferno::TlsTransport tls;
-    assert(!tls.isConnected());
-    assert(!tls.isAlpnH2());
-    assert(tls.type() == inferno::TransportType::HTTP2);
+    REQUIRE(!tls.isConnected());
+    REQUIRE(!tls.isAlpnH2());
+    REQUIRE(tls.type() == inferno::TransportType::HTTP2);
     PASS();
 }
 
@@ -95,7 +100,7 @@ void test_tls_transport_default_state() {
 void test_tls_fingerprint_ciphers() {
     TEST("TLS 1.3 cipher suites match Chrome 120+ order (DoD H2)");
     inferno::TlsTransport tls;
-    assert(tls.type() == inferno::TransportType::HTTP2);
+    REQUIRE(tls.type() == inferno::TransportType::HTTP2);
     // The cipher suite configuration is applied in the constructor.
     // Verification of actual wire format requires a packet capture tool,
     // but the configuration is statically set in TlsTransport::configureFingerprint().
@@ -123,8 +128,8 @@ void test_tls_fingerprint_sigalgs() {
 void test_http2_client_default_state() {
     TEST("Http2Client default state (DoD H1 prerequisite)");
     inferno::Http2Client client;
-    assert(!client.isConnected());
-    assert(client.transport().type() == inferno::TransportType::HTTP2);
+    REQUIRE(!client.isConnected());
+    REQUIRE(client.transport().type() == inferno::TransportType::HTTP2);
     PASS();
 }
 
@@ -135,8 +140,8 @@ void test_http2_client_connect_failure() {
     TEST("Http2Client fails to connect to unreachable host (DoD H1)");
     inferno::Http2Client client;
     bool connected = client.connect("127.0.0.1", 1);
-    assert(!connected);
-    assert(!client.isConnected());
+    REQUIRE(!connected);
+    REQUIRE(!client.isConnected());
     client.disconnect();
     PASS();
 }
@@ -148,8 +153,8 @@ void test_tls_certificate_validation() {
     TEST("TLS certificate validation logic (DoD H6)");
     inferno::TlsTransport tls;
     // Verify the object exists and has correct type
-    assert(tls.type() == inferno::TransportType::HTTP2);
-    assert(!tls.isConnected());
+    REQUIRE(tls.type() == inferno::TransportType::HTTP2);
+    REQUIRE(!tls.isConnected());
     // Full certificate validation (X509_check_host + SSL_get_verify_result)
     // is implemented in TlsTransport::connect(). A live server with a
     // trusted cert is needed for the actual roundtrip test.
@@ -162,7 +167,7 @@ void test_tls_certificate_validation() {
 void test_tls_alpn_negotiation() {
     TEST("ALPN negotiation logic (DoD H7)");
     inferno::TlsTransport tls;
-    assert(!tls.isAlpnH2());
+    REQUIRE(!tls.isAlpnH2());
     // ALPN is verified after connect via SSL_get0_alpn_selected.
     // A live server is required for the actual negotiation test.
     PASS();
@@ -195,7 +200,7 @@ void test_http2_data_frame_payload() {
     std::vector<uint8_t> payload = {'C', '2', 0x00, 0x01, 0xDE, 0xAD};
     // Can't test the full flow without a server, but verify the
     // send/recv interfaces compile and accept data
-    assert(client.transport().type() == inferno::TransportType::HTTP2);
+    REQUIRE(client.transport().type() == inferno::TransportType::HTTP2);
     PASS();
 }
 
@@ -210,7 +215,6 @@ void test_http2_data_frame_payload() {
 void test_http2_roundtrip() {
     TEST("HTTP/2 client-server roundtrip (DoD H1, H4, H10)");
     SKIP("Requires live server fixture with trusted cert chain");
-    PASS();
 }
 
 // ═══════════════════════════════════════════════════════════════════

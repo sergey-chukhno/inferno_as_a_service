@@ -6,19 +6,28 @@
 
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#define SOCKET_CLOSE(fd) ::closesocket(fd)
+#else
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <unistd.h>
-#include <fcntl.h>
+#define SOCKET_CLOSE(fd) ::close(fd)
+#endif
 
 namespace inferno {
 
 TlsTransport::TlsTransport()
     : m_ctx(nullptr)
     , m_ssl(nullptr)
-    , m_fd(-1)
+    , m_fd(INVALID_SOCKET)
     , m_host()
     , m_port(0)
     , m_alpn_negotiated(false)
@@ -53,7 +62,7 @@ TlsTransport::TlsTransport(TlsTransport&& other) noexcept
 {
     other.m_ctx = nullptr;
     other.m_ssl = nullptr;
-    other.m_fd = -1;
+    other.m_fd = INVALID_SOCKET;
     other.m_connected = false;
     other.m_alpn_negotiated = false;
 }
@@ -75,7 +84,7 @@ TlsTransport& TlsTransport::operator=(TlsTransport&& other) noexcept {
         m_alpn_protos = std::move(other.m_alpn_protos);
         other.m_ctx = nullptr;
         other.m_ssl = nullptr;
-        other.m_fd = -1;
+        other.m_fd = INVALID_SOCKET;
         other.m_connected = false;
         other.m_alpn_negotiated = false;
     }
@@ -134,14 +143,14 @@ bool TlsTransport::tcpConnect() {
 
     for (struct addrinfo* rp = result; rp; rp = rp->ai_next) {
         m_fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (m_fd < 0) continue;
+        if (m_fd == INVALID_SOCKET) continue;
         if (::connect(m_fd, rp->ai_addr, rp->ai_addrlen) == 0) break;
-        ::close(m_fd);
-        m_fd = -1;
+        SOCKET_CLOSE(m_fd);
+        m_fd = INVALID_SOCKET;
     }
     ::freeaddrinfo(result);
 
-    if (m_fd < 0) {
+    if (m_fd == INVALID_SOCKET) {
         std::fprintf(stderr, "[TlsTransport] TCP connect to %s:%u failed\n",
                      m_host.c_str(), m_port);
         return false;
@@ -159,7 +168,7 @@ bool TlsTransport::tlsHandshake() {
         return false;
     }
 
-    SSL_set_fd(m_ssl, m_fd);
+    SSL_set_fd(m_ssl, static_cast<int>(m_fd));
     SSL_set_tlsext_host_name(m_ssl, m_host.c_str());
 
     int ret = SSL_connect(m_ssl);
@@ -204,8 +213,8 @@ bool TlsTransport::connect(const std::string& host, uint16_t port) {
 
     if (!tcpConnect()) return false;
     if (!tlsHandshake()) {
-        ::close(m_fd);
-        m_fd = -1;
+        SOCKET_CLOSE(m_fd);
+        m_fd = INVALID_SOCKET;
         return false;
     }
 
@@ -219,16 +228,16 @@ void TlsTransport::disconnect() {
         SSL_free(m_ssl);
         m_ssl = nullptr;
     }
-    if (m_fd >= 0) {
-        ::close(m_fd);
-        m_fd = -1;
+    if (m_fd != INVALID_SOCKET) {
+        SOCKET_CLOSE(m_fd);
+        m_fd = INVALID_SOCKET;
     }
     m_alpn_negotiated = false;
     m_connected = false;
 }
 
 bool TlsTransport::isConnected() const {
-    return m_connected && m_ssl && m_fd >= 0;
+    return m_connected && m_ssl && m_fd != INVALID_SOCKET;
 }
 
 int TlsTransport::recv(uint8_t* buf, size_t len) {

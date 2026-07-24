@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <memory>
 
+#include "Socket.hpp"
 #include "Transport.hpp"
 
 struct ssl_ctx_st;
@@ -46,7 +47,7 @@ public:
 private:
     struct ssl_ctx_st* m_ctx;
     struct ssl_st*     m_ssl;
-    int                m_fd;
+    socket_t           m_fd;
     std::string        m_host;
     uint16_t           m_port;
     bool               m_alpn_negotiated;
